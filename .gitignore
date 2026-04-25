@@ -1,0 +1,34 @@
+# Binaries
+simulight
+simulight.exe
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Build and Tooling
+bin/
+dist/
+vendor/
+*.test
+*.out
+coverage.txt
+debug.log
+
+# IDEs and Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+.project
+.settings/
+.vscode/
+
+# macOS
+.DS_Store
+
+# Go specific
+# (Keep go.mod and go.sum in version control)
+# workspace file
+go.work
