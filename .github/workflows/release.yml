@@ -1,0 +1,42 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build and release
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build (darwin/amd64)
+        run: GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w -X main.version=${{ github.ref_name }}" -o dist/simmer-darwin-amd64 main.go
+
+      - name: Build (darwin/arm64)
+        run: GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w -X main.version=${{ github.ref_name }}" -o dist/simmer-darwin-arm64 main.go
+
+      - name: Create universal binary
+        run: lipo -create -output dist/simmer dist/simmer-darwin-amd64 dist/simmer-darwin-arm64
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/simmer
+            dist/simmer-darwin-amd64
+            dist/simmer-darwin-arm64
+          generate_release_notes: true
