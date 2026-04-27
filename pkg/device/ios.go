@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strings"
 )
 
 type iosManager struct{}
@@ -26,6 +27,21 @@ type simctlDevice struct {
 	DeviceTypeID    string `json:"deviceTypeIdentifier"`
 	DataPath        string `json:"dataPath"`
 	LogPath         string `json:"logPath"`
+}
+
+// ToolVersion returns the xcrun version string (e.g. "64").
+// Output of `xcrun --version` is "xcrun version 64.\n".
+func (m *iosManager) ToolVersion(ctx context.Context) (Platform, string) {
+	out, err := exec.CommandContext(ctx, "xcrun", "--version").Output()
+	if err != nil {
+		return PlatformIOS, "n/a"
+	}
+	s := strings.TrimSuffix(strings.TrimSpace(string(out)), ".")
+	parts := strings.Fields(s)
+	if len(parts) > 0 {
+		return PlatformIOS, parts[len(parts)-1]
+	}
+	return PlatformIOS, s
 }
 
 func (m *iosManager) ListDevices(ctx context.Context) ([]Device, error) {

@@ -3,7 +3,6 @@ package device
 
 import (
 	"context"
-	"sync"
 )
 
 // Platform represents the operating system of the device (e.g., iOS, Android).
@@ -42,10 +41,17 @@ type Manager interface {
 	ListDevices(ctx context.Context) ([]Device, error)
 }
 
+// ToolVersioner is an optional interface a Manager may implement to report
+// the version of its underlying CLI tool.
+type ToolVersioner interface {
+	ToolVersion(ctx context.Context) (Platform, string)
+}
+
 // DiscoveryResult holds the results of a multi-platform discovery operation.
 type DiscoveryResult struct {
-	Devices []Device
-	Errors  []error
+	Devices      []Device
+	Errors       []error
+	ToolVersions map[Platform]string
 }
 
 // Coordinator manages multiple Managers to perform concurrent device discovery.
@@ -61,41 +67,38 @@ func NewCoordinator(managers ...Manager) *Coordinator {
 // Discover fetches devices from all registered managers concurrently.
 // It returns a DiscoveryResult containing all found devices and any errors encountered.
 func (c *Coordinator) Discover(ctx context.Context) DiscoveryResult {
-	var (
-		wg      sync.WaitGroup
-		mu      sync.Mutex
-		res     DiscoveryResult
-		results = make(chan DiscoveryResult, len(c.Managers))
-	)
+	type managerResult struct {
+		devices     []Device
+		err         error
+		platform    Platform
+		toolVersion string
+		hasVersion  bool
+	}
+
+	ch := make(chan managerResult, len(c.Managers))
 
 	for _, mgr := range c.Managers {
-		wg.Add(1)
 		go func(m Manager) {
-			defer wg.Done()
-			devs, err := m.ListDevices(ctx)
-			results <- DiscoveryResult{
-				Devices: devs,
-				Errors:  []error{err},
+			r := managerResult{}
+			r.devices, r.err = m.ListDevices(ctx)
+			if tv, ok := m.(ToolVersioner); ok {
+				r.platform, r.toolVersion = tv.ToolVersion(ctx)
+				r.hasVersion = true
 			}
+			ch <- r
 		}(mgr)
 	}
 
-	// Closer
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	for r := range results {
-		mu.Lock()
-		res.Devices = append(res.Devices, r.Devices...)
-		for _, err := range r.Errors {
-			if err != nil {
-				res.Errors = append(res.Errors, err)
-			}
+	res := DiscoveryResult{ToolVersions: make(map[Platform]string)}
+	for range len(c.Managers) {
+		r := <-ch
+		res.Devices = append(res.Devices, r.devices...)
+		if r.err != nil {
+			res.Errors = append(res.Errors, r.err)
 		}
-		mu.Unlock()
+		if r.hasVersion {
+			res.ToolVersions[r.platform] = r.toolVersion
+		}
 	}
-
 	return res
 }

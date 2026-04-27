@@ -14,6 +14,18 @@ func NewAndroidManager() Manager {
 	return &androidManager{}
 }
 
+// ToolVersion returns the adb version string (e.g. "1.0.41").
+// First line of `adb version` is "Android Debug Bridge version 1.0.41".
+func (m *androidManager) ToolVersion(ctx context.Context) (Platform, string) {
+	out, err := exec.CommandContext(ctx, "adb", "version").Output()
+	if err != nil {
+		return PlatformAndroid, "n/a"
+	}
+	line := strings.SplitN(string(out), "\n", 2)[0]
+	const prefix = "Android Debug Bridge version "
+	return PlatformAndroid, strings.TrimPrefix(strings.TrimSpace(line), prefix)
+}
+
 func (m *androidManager) ListDevices(ctx context.Context) ([]Device, error) {
 	// 1. Get defined emulators
 	avds, err := m.getAVDs(ctx)
