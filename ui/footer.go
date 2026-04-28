@@ -26,11 +26,12 @@ var footerHints = []struct{ key, verb string }{
 	{"←→/hl", "pane"},
 	{"b", "boot"},
 	{"s", "shutdown"},
+	{"1-4", "tab"},
+	{"space", "load device"},
 	{"?", "help"},
 	{"q", "quit"},
 
 	// [TODO] feature ideas:
-	// {"1-4", "tab"},
 	// {"r", "reboot"},
 	// {"i", "install"},
 	// {"/", "cmd"},

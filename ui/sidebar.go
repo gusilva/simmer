@@ -32,9 +32,10 @@ type Sidebar struct {
 	iosAvail []device.Device
 	andAvail []device.Device
 
-	focused   SidebarPane
-	bootedIdx int
-	availIdx  int
+	focused      SidebarPane
+	outerFocused bool
+	bootedIdx    int
+	availIdx     int
 
 	iosCollapsed     bool
 	androidCollapsed bool
@@ -45,8 +46,13 @@ type Sidebar struct {
 
 // NewSidebar returns a sidebar with focus on the booted panel.
 func NewSidebar() Sidebar {
-	return Sidebar{focused: PaneBooted, width: DefaultSidebarWidth}
+	return Sidebar{focused: PaneBooted, outerFocused: true, width: DefaultSidebarWidth}
 }
+
+// SetFocused marks whether the sidebar holds the app's outer focus. When
+// unfocused, both panels render with the dim border color and inner pane
+// highlights are suppressed.
+func (s *Sidebar) SetFocused(f bool) { s.outerFocused = f }
 
 // SetSize sets the sidebar's outer width and total height.
 func (s *Sidebar) SetSize(w, h int) {
@@ -133,7 +139,7 @@ func (s Sidebar) View() string {
 		s.renderBootedRows(),
 		s.width,
 		0,
-		s.focused == PaneBooted,
+		s.outerFocused && s.focused == PaneBooted,
 	)
 
 	availHeight := 0
@@ -151,7 +157,7 @@ func (s Sidebar) View() string {
 		s.renderAvailableRows(),
 		s.width,
 		availHeight,
-		s.focused == PaneAvailable,
+		s.outerFocused && s.focused == PaneAvailable,
 	)
 	gap := lipgloss.NewStyle().Background(ColorBg).Width(s.width).Render("")
 	return lipgloss.JoinVertical(lipgloss.Left, bootedBox, gap, availBox)

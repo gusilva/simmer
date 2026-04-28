@@ -17,9 +17,19 @@ const appVersion = "v0.0.1"
 
 // ─── Model ────────────────────────────────────────────────────────────────
 
+type appFocus int
+
+const (
+	focusSidebar appFocus = iota
+	focusMain
+)
+
 type model struct {
 	sidebar      ui.Sidebar
+	mainPane     ui.MainPane
+	focus        appFocus
 	coordinator  *device.Coordinator
+	fs           device.FileSystem
 	loading      bool
 	errs         []error
 	quitting     bool
@@ -41,6 +51,12 @@ type bootResultMsg struct {
 
 type shutdownResultMsg struct {
 	device device.Device
+	err    error
+}
+
+type fileTreeMsg struct {
+	device device.Device
+	root   device.FileNode
 	err    error
 }
 
@@ -68,18 +84,38 @@ func (m model) shutdownDeviceCmd(dev device.Device) tea.Cmd {
 	}
 }
 
+func (m model) loadFileTreeCmd(dev device.Device) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		root, err := m.fs.Tree(ctx, dev)
+		return fileTreeMsg{device: dev, root: root, err: err}
+	}
+}
+
 func initialModel() model {
 	coord := device.NewCoordinator(
 		device.NewIOSManager(),
 		device.NewAndroidManager(),
 	)
 
-	return model{
+	m := model{
 		sidebar:      ui.NewSidebar(),
+		mainPane:     ui.NewMainPane(),
+		focus:        focusSidebar,
 		coordinator:  coord,
+		fs:           device.NewMockFileSystem(),
 		loading:      true,
 		toolVersions: make(map[device.Platform]string),
 	}
+	m.applyFocus()
+	return m
+}
+
+// applyFocus syncs the focus flag onto the sub-components.
+func (m *model) applyFocus() {
+	m.sidebar.SetFocused(m.focus == focusSidebar)
+	m.mainPane.SetFocused(m.focus == focusMain)
 }
 
 func (m model) Init() tea.Cmd {
@@ -91,16 +127,40 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		// Body wrapper applies 1 line of top padding around the sidebar; pass
-		// the remaining height so the Available panel can fill exactly.
-		m.sidebar.SetSize(ui.DefaultSidebarWidth, m.bodyHeight()-1)
+		// Body wrapper applies 1 line of top padding around each panel; pass
+		// the remaining height so panels fill exactly.
+		bodyH := m.bodyHeight() - 1
+		m.sidebar.SetSize(ui.DefaultSidebarWidth, bodyH)
+		// Sidebar wrapper: pad 1 left + 1 right around DefaultSidebarWidth.
+		// MainPane wrapper: pad 0 left + 1 right around its width.
+		mainW := m.width - (ui.DefaultSidebarWidth + 2) - 1
+		if mainW < 0 {
+			mainW = 0
+		}
+		m.mainPane.SetSize(mainW, bodyH)
 		return m, nil
 
 	case tea.KeyPressMsg:
+		// Global keys — fire regardless of focus.
 		switch msg.String() {
 		case "q", "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
+		}
+
+		if m.focus == focusMain {
+			if msg.String() == "esc" {
+				m.focus = focusSidebar
+				m.applyFocus()
+				return m, nil
+			}
+			var cmd tea.Cmd
+			m.mainPane, cmd = m.mainPane.Update(msg)
+			return m, cmd
+		}
+
+		// focus == focusSidebar
+		switch msg.String() {
 		case "r":
 			m.loading = true
 			m.errs = nil
@@ -123,6 +183,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, m.shutdownDeviceCmd(*sel)
+		case "space":
+			sel := m.sidebar.SelectedDevice()
+			if sel == nil {
+				return m, nil
+			}
+			m.focus = focusMain
+			m.applyFocus()
+			return m, m.loadFileTreeCmd(*sel)
 		}
 		var cmd tea.Cmd
 		m.sidebar, cmd = m.sidebar.Update(msg)
@@ -167,6 +235,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.loading = true
 		return m, m.fetchDevicesCmd()
+
+	case fileTreeMsg:
+		if msg.err != nil {
+			m.errs = append(m.errs, msg.err)
+			return m, nil
+		}
+		dev := msg.device
+		m.mainPane.SetDevice(&dev, &msg.root)
+		return m, nil
 	}
 
 	return m, nil
@@ -214,11 +291,11 @@ func (m model) View() tea.View {
 			Padding(1, 1, 0, 1).
 			Background(ui.ColorBg).
 			Render(m.sidebar.View())
-		rest := lipgloss.NewStyle().
+		mainPane := lipgloss.NewStyle().
+			Padding(1, 1, 0, 0).
 			Background(ui.ColorBg).
-			Width(max(m.width-lipgloss.Width(sidebar), 0)).
-			Render("")
-		body = lipgloss.JoinHorizontal(lipgloss.Top, sidebar, rest)
+			Render(m.mainPane.View())
+		body = lipgloss.JoinHorizontal(lipgloss.Top, sidebar, mainPane)
 	}
 
 	body = lipgloss.NewStyle().

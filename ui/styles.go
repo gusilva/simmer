@@ -16,8 +16,10 @@ var (
 	ColorAccent  = lipgloss.Color("#cba6f7")
 	ColorAccent2 = lipgloss.Color("#89dceb")
 
-	ColorOk  = lipgloss.Color("#a6e3a1")
-	ColorErr = lipgloss.Color("#f38ba8")
+	ColorOk   = lipgloss.Color("#a6e3a1")
+	ColorErr  = lipgloss.Color("#f38ba8")
+	ColorInfo = lipgloss.Color("#89b4fa")
+	ColorWarn = lipgloss.Color("#f9e2af")
 
 	ColorIOS     = lipgloss.Color("#89dceb")
 	ColorAndroid = lipgloss.Color("#a6e3a1")
