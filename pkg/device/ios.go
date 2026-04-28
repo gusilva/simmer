@@ -44,6 +44,39 @@ func (m *iosManager) ToolVersion(ctx context.Context) (Platform, string) {
 	return PlatformIOS, s
 }
 
+// Platform reports the platform this manager handles.
+func (m *iosManager) Platform() Platform { return PlatformIOS }
+
+// Boot starts the simulator with the given UDID via `xcrun simctl boot`.
+// simctl returns immediately after the boot is initiated; the caller can
+// re-list devices to observe the resulting state transition.
+func (m *iosManager) Boot(ctx context.Context, id string) error {
+	cmd := exec.CommandContext(ctx, "xcrun", "simctl", "boot", id)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			return fmt.Errorf("xcrun simctl boot %s: %w", id, err)
+		}
+		return fmt.Errorf("xcrun simctl boot %s: %w: %s", id, err, msg)
+	}
+	return nil
+}
+
+// Shutdown stops the simulator with the given UDID via `xcrun simctl shutdown`.
+func (m *iosManager) Shutdown(ctx context.Context, id string) error {
+	cmd := exec.CommandContext(ctx, "xcrun", "simctl", "shutdown", id)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			return fmt.Errorf("xcrun simctl shutdown %s: %w", id, err)
+		}
+		return fmt.Errorf("xcrun simctl shutdown %s: %w: %s", id, err, msg)
+	}
+	return nil
+}
+
 func (m *iosManager) ListDevices(ctx context.Context) ([]Device, error) {
 	cmd := exec.CommandContext(ctx, "xcrun", "simctl", "list", "devices", "available", "--json")
 	output, err := cmd.Output()
@@ -62,6 +95,7 @@ func parseSimctlOutput(output []byte) ([]Device, error) {
 
 	var devices []Device
 	for runtime, runtimeDevices := range list.Devices {
+		version := parseRuntimeVersion(runtime)
 		for _, d := range runtimeDevices {
 			status := StatusOff
 			if d.State == "Booted" {
@@ -72,12 +106,29 @@ func parseSimctlOutput(output []byte) ([]Device, error) {
 				ID:       d.UDID,
 				Name:     d.Name,
 				Platform: PlatformIOS,
-				Version:  runtime,
+				Version:  version,
 				Status:   status,
 			})
 		}
 	}
 
 	return devices, nil
+}
+
+// parseRuntimeVersion extracts a human-friendly version string from a simctl
+// runtime identifier. Examples:
+//
+//	"com.apple.CoreSimulator.SimRuntime.iOS-18-5"     -> "18.5"
+//	"com.apple.CoreSimulator.SimRuntime.watchOS-12-0" -> "12.0"
+//	"iOS 17.0"                                        -> "iOS 17.0" (passthrough)
+func parseRuntimeVersion(id string) string {
+	last := id
+	if i := strings.LastIndex(id, "."); i >= 0 {
+		last = id[i+1:]
+	}
+	if i := strings.Index(last, "-"); i >= 0 {
+		return strings.ReplaceAll(last[i+1:], "-", ".")
+	}
+	return last
 }
 

@@ -3,6 +3,7 @@ package device
 
 import (
 	"context"
+	"fmt"
 )
 
 // Platform represents the operating system of the device (e.g., iOS, Android).
@@ -47,6 +48,22 @@ type ToolVersioner interface {
 	ToolVersion(ctx context.Context) (Platform, string)
 }
 
+// Booter is an optional interface a Manager may implement to start a device.
+// Platform reports which Platform this booter handles so a Coordinator can
+// route boot requests to the right manager.
+type Booter interface {
+	Platform() Platform
+	Boot(ctx context.Context, id string) error
+}
+
+// Shutdowner is an optional interface a Manager may implement to stop a device.
+// Platform reports which Platform this shutdowner handles so a Coordinator can
+// route shutdown requests to the right manager.
+type Shutdowner interface {
+	Platform() Platform
+	Shutdown(ctx context.Context, id string) error
+}
+
 // DiscoveryResult holds the results of a multi-platform discovery operation.
 type DiscoveryResult struct {
 	Devices      []Device
@@ -62,6 +79,40 @@ type Coordinator struct {
 // NewCoordinator creates a coordinator with the provided managers.
 func NewCoordinator(managers ...Manager) *Coordinator {
 	return &Coordinator{Managers: managers}
+}
+
+// Boot starts the given device by routing to a Manager that implements
+// Booter for the device's Platform. Returns an error if no booter is
+// registered for the platform or if the underlying boot command fails.
+func (c *Coordinator) Boot(ctx context.Context, dev Device) error {
+	for _, m := range c.Managers {
+		b, ok := m.(Booter)
+		if !ok {
+			continue
+		}
+		if b.Platform() != dev.Platform {
+			continue
+		}
+		return b.Boot(ctx, dev.ID)
+	}
+	return fmt.Errorf("no booter registered for platform %s", dev.Platform)
+}
+
+// Shutdown stops the given device by routing to a Manager that implements
+// Shutdowner for the device's Platform. Returns an error if no shutdowner is
+// registered for the platform or if the underlying shutdown command fails.
+func (c *Coordinator) Shutdown(ctx context.Context, dev Device) error {
+	for _, m := range c.Managers {
+		s, ok := m.(Shutdowner)
+		if !ok {
+			continue
+		}
+		if s.Platform() != dev.Platform {
+			continue
+		}
+		return s.Shutdown(ctx, dev.ID)
+	}
+	return fmt.Errorf("no shutdowner registered for platform %s", dev.Platform)
 }
 
 // Discover fetches devices from all registered managers concurrently.

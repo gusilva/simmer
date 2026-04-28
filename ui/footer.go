@@ -24,13 +24,13 @@ type FooterParams struct {
 var footerHints = []struct{ key, verb string }{
 	{"↑↓/jk", "select"},
 	{"←→/hl", "pane"},
+	{"b", "boot"},
+	{"s", "shutdown"},
 	{"?", "help"},
 	{"q", "quit"},
 
 	// [TODO] feature ideas:
 	// {"1-4", "tab"},
-	// {"b", "boot"},
-	// {"s", "shutdown"},
 	// {"r", "reboot"},
 	// {"i", "install"},
 	// {"/", "cmd"},
