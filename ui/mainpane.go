@@ -81,7 +81,9 @@ func (m *MainPane) SetDevice(d *device.Device, root *device.FileNode) {
 // HasDevice reports whether a device is currently loaded.
 func (m MainPane) HasDevice() bool { return m.active != nil }
 
-// Update handles tab-switch keys. Other messages are ignored.
+// Update handles tab-switch keys plus, while on the Files tab, tree
+// navigation: up/down/j/k move the cursor and enter toggles expansion of the
+// selected directory.
 func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 	k, ok := msg.(tea.KeyPressMsg)
 	if !ok {
@@ -90,17 +92,58 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 	switch k.String() {
 	case "1":
 		m.tab = TabFiles
+		return m, nil
 	case "2":
 		m.tab = TabLogs
+		return m, nil
 	case "3":
 		m.tab = TabApps
+		return m, nil
 	case "4":
 		m.tab = TabInfo
+		return m, nil
+	}
+	if m.tab != TabFiles {
+		return m, nil
+	}
+	rows := m.flattenTree()
+	switch k.String() {
+	case "up", "k":
+		if m.treeIdx > 0 {
+			m.treeIdx--
+		}
+	case "down", "j":
+		if m.treeIdx < len(rows)-1 {
+			m.treeIdx++
+		}
+	case "home", "g":
+		m.treeIdx = 0
+	case "end", "G":
+		if len(rows) > 0 {
+			m.treeIdx = len(rows) - 1
+		}
+	case "enter":
+		if m.treeIdx < 0 || m.treeIdx >= len(rows) {
+			return m, nil
+		}
+		n := rows[m.treeIdx].node
+		if !n.IsDir {
+			return m, nil
+		}
+		m.expanded[n.Path] = !m.expanded[n.Path]
+		rows = m.flattenTree()
+		if m.treeIdx >= len(rows) {
+			m.treeIdx = len(rows) - 1
+		}
+		if m.treeIdx < 0 {
+			m.treeIdx = 0
+		}
 	}
 	return m, nil
 }
 
-// View renders the main pane.
+// View renders the main pane with a manually composed frame so the inner
+// divider rules can tee (┬/┴) into the vertical Files separator.
 func (m MainPane) View() string {
 	if m.width < 12 || m.height < 5 {
 		return ""
@@ -110,36 +153,79 @@ func (m MainPane) View() string {
 	if m.focused {
 		borderC = ColorBorderHi
 	}
-	border := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(borderC).
-		BorderBackground(ColorBg).
-		Background(ColorBg)
+	frame := lipgloss.NewStyle().Foreground(borderC).Background(ColorBg)
+	innerRule := lipgloss.NewStyle().Foreground(ColorBorder).Background(ColorBg)
 
 	innerW := m.width - 2
 	innerH := m.height - 2
 
+	treeW, _, _ := filesLayout(innerW)
+
+	rows := make([]string, 0, innerH)
 	if m.active == nil {
-		return border.Render(m.renderHint(innerW, innerH))
+		rows = append(rows, strings.Split(m.renderHint(innerW, innerH), "\n")...)
+	} else {
+		rows = append(rows, m.renderTitleRow(innerW))
+		rows = append(rows, hrule(innerW, -1, "", innerRule))
+		rows = append(rows, RenderTabs(mainTabs, int(m.tab), innerW))
+		junction := -1
+		if m.tab == TabFiles {
+			junction = treeW
+		}
+		rows = append(rows, hrule(innerW, junction, "┬", innerRule))
+
+		contentH := innerH - len(rows)
+		if contentH < 1 {
+			contentH = 1
+		}
+		rows = append(rows, strings.Split(m.renderTabContent(innerW, contentH), "\n")...)
 	}
 
-	title := m.renderTitleRow(innerW)
-	divider := lipgloss.NewStyle().
-		Foreground(ColorBorder).
-		Background(ColorBg).
-		Render(strings.Repeat("─", innerW))
-	tabs := RenderTabs(mainTabs, int(m.tab), innerW)
-
-	fixedH := lipgloss.Height(title) + lipgloss.Height(divider) +
-		lipgloss.Height(tabs) + lipgloss.Height(divider)
-	contentH := innerH - fixedH
-	if contentH < 1 {
-		contentH = 1
+	if len(rows) > innerH {
+		rows = rows[:innerH]
 	}
-	content := m.renderTabContent(innerW, contentH)
+	for len(rows) < innerH {
+		rows = append(rows, padBg(innerW))
+	}
 
-	inner := strings.Join([]string{title, divider, tabs, divider, content}, "\n")
-	return border.Render(inner)
+	side := frame.Render("│")
+	wrapped := make([]string, 0, innerH+2)
+	wrapped = append(wrapped, frame.Render("╭"+strings.Repeat("─", innerW)+"╮"))
+	for _, r := range rows {
+		wrapped = append(wrapped, side+r+side)
+	}
+
+	bottomDashes := strings.Repeat("─", innerW)
+	if m.active != nil && m.tab == TabFiles && treeW > 0 && treeW < innerW {
+		bottomDashes = strings.Repeat("─", treeW) + "┴" + strings.Repeat("─", innerW-treeW-1)
+	}
+	wrapped = append(wrapped, frame.Render("╰"+bottomDashes+"╯"))
+
+	return strings.Join(wrapped, "\n")
+}
+
+// hrule renders a horizontal rule of `width` cells, optionally inserting a
+// junction glyph at column `at`. Set at < 0 (or junction == "") for a plain rule.
+func hrule(width, at int, junction string, style lipgloss.Style) string {
+	if at < 0 || at >= width || junction == "" {
+		return style.Render(strings.Repeat("─", width))
+	}
+	return style.Render(strings.Repeat("─", at) + junction + strings.Repeat("─", width-at-1))
+}
+
+// filesLayout returns the column split used by the Files tab.
+func filesLayout(innerW int) (treeW, sepW, previewW int) {
+	sepW = 1
+	treeW = innerW * 52 / 100
+	if treeW < 24 {
+		treeW = 24
+	}
+	previewW = innerW - treeW - sepW
+	if previewW < 16 {
+		previewW = 16
+		treeW = innerW - sepW - previewW
+	}
+	return
 }
 
 // ── rendering helpers ──────────────────────────────────────────────────
@@ -183,10 +269,7 @@ func (m MainPane) renderTitleRow(innerW int) string {
 		Render("udid " + udidShort)
 
 	left := " " + dot + " " + name + " " + sep + " " + osLabel
-	gap := innerW - lipgloss.Width(left) - lipgloss.Width(udid) - 1
-	if gap < 1 {
-		gap = 1
-	}
+	gap := max(innerW-lipgloss.Width(left)-lipgloss.Width(udid)-1, 1)
 	return left + bg.Render(strings.Repeat(" ", gap)) + udid + bg.Render(" ")
 }
 
@@ -212,16 +295,7 @@ func (m MainPane) renderPlaceholder(innerW, innerH int) string {
 }
 
 func (m MainPane) renderFiles(innerW, innerH int) string {
-	const sepW = 1
-	treeW := innerW * 52 / 100
-	if treeW < 24 {
-		treeW = 24
-	}
-	previewW := innerW - treeW - sepW
-	if previewW < 16 {
-		previewW = 16
-		treeW = innerW - sepW - previewW
-	}
+	treeW, _, previewW := filesLayout(innerW)
 
 	treeLines := m.renderTreePane(treeW, innerH)
 	previewLines := m.renderPreviewPane(previewW, innerH)
@@ -232,7 +306,7 @@ func (m MainPane) renderFiles(innerW, innerH int) string {
 		Render("│")
 
 	rows := make([]string, 0, innerH)
-	for i := 0; i < innerH; i++ {
+	for i := range innerH {
 		t := padBg(treeW)
 		p := padBg(previewW)
 		if i < len(treeLines) {
@@ -275,18 +349,20 @@ func (m MainPane) flattenTree() []treeRow {
 }
 
 func (m MainPane) renderTreePane(w, h int) []string {
-	var lines []string
+	lines := []string{m.renderCrumb(w), padBg(w)}
 
-	crumb := m.renderCrumb(w)
-	lines = append(lines, crumb)
-	lines = append(lines, padBg(w))
-
+	visibleH := max(h-len(lines), 1)
 	rows := m.flattenTree()
-	for i, r := range rows {
-		lines = append(lines, m.renderTreeRow(r, w, i == m.treeIdx))
-		if len(lines) >= h {
-			break
-		}
+
+	// Window the slice so the cursor is always visible.
+	offset := 0
+	if m.treeIdx >= visibleH {
+		offset = m.treeIdx - visibleH + 1
+	}
+	end := min(offset+visibleH, len(rows))
+
+	for i := offset; i < end; i++ {
+		lines = append(lines, m.renderTreeRow(rows[i], w, i == m.treeIdx))
 	}
 	for len(lines) < h {
 		lines = append(lines, padBg(w))
@@ -296,16 +372,48 @@ func (m MainPane) renderTreePane(w, h int) []string {
 
 func (m MainPane) renderCrumb(w int) string {
 	bg := lipgloss.NewStyle().Background(ColorBg)
-	root := lipgloss.NewStyle().Foreground(ColorFgDim).Background(ColorBg).Render("~/")
-	name := lipgloss.NewStyle().Foreground(ColorFg).Background(ColorBg).Render(m.active.Name)
-	rest := ""
+
+	const lead = " "
+	const rootPrefix = "~/"
+	const sep = " · "
+
+	plainName := m.active.Name
+	plainPath := ""
 	if m.tree != nil {
+		plainPath = m.tree.Path
+	}
+
+	// Budget the plain text to fit `w` cells. Trim path first, then name.
+	avail := w - len(lead) - len(rootPrefix)
+	if avail < 1 {
+		return bg.Render(strings.Repeat(" ", w))
+	}
+	if plainPath != "" {
+		if budget := avail - lipgloss.Width(plainName) - len(sep); budget > 0 {
+			plainPath = truncateName(plainPath, budget)
+		} else {
+			plainPath = ""
+		}
+	}
+	if lipgloss.Width(plainName)+len(sep)+lipgloss.Width(plainPath) > avail {
+		nameBudget := avail - len(sep) - lipgloss.Width(plainPath)
+		if nameBudget < 1 {
+			nameBudget = avail
+			plainPath = ""
+		}
+		plainName = truncateName(plainName, nameBudget)
+	}
+
+	root := lipgloss.NewStyle().Foreground(ColorFgDim).Background(ColorBg).Render(rootPrefix)
+	name := lipgloss.NewStyle().Foreground(ColorFg).Background(ColorBg).Render(plainName)
+	rest := ""
+	if plainPath != "" {
 		rest = lipgloss.NewStyle().
 			Foreground(ColorFgFaint).
 			Background(ColorBg).
-			Render(" · " + m.tree.Path)
+			Render(sep + plainPath)
 	}
-	row := " " + root + name + rest
+	row := lead + root + name + rest
 	if pad := w - lipgloss.Width(row); pad > 0 {
 		row += bg.Render(strings.Repeat(" ", pad))
 	}
@@ -326,13 +434,6 @@ func (m MainPane) renderTreeRow(r treeRow, w int, selected bool) string {
 		}
 	}
 
-	icon := ""
-	iconC := ColorFgDim
-	if r.node.IsDir {
-		icon = ""
-		iconC = ColorInfo
-	}
-
 	meta := ""
 	if !r.node.IsDir {
 		meta = formatSize(r.node.Size)
@@ -340,26 +441,31 @@ func (m MainPane) renderTreeRow(r treeRow, w int, selected bool) string {
 		meta = "—"
 	}
 
+	// Layout: " " + indent + caret(1) + " " + name + GAP + meta + " "
+	prefixW := 1 + lipgloss.Width(indent) + 1 + 1
+	metaW := lipgloss.Width(meta)
+	const minGap = 1
+	const trailW = 1
+	nameMax := max(w-prefixW-metaW-trailW-minGap, 1)
+	nameStr := truncateName(r.node.Name, nameMax)
+	nameW := lipgloss.Width(nameStr)
+	gap := max(w-prefixW-nameW-metaW-trailW, minGap)
+
 	if selected {
 		sel := lipgloss.NewStyle().Foreground(ColorBg).Background(ColorAccent).Bold(true)
-		left := " " + indent + caretCh + " " + icon + " " + r.node.Name
-		gap := w - lipgloss.Width(left) - lipgloss.Width(meta) - 1
-		if gap < 1 {
-			gap = 1
-		}
-		return sel.Render(left + strings.Repeat(" ", gap) + meta + " ")
+		return sel.Render(" " + indent + caretCh + " " + nameStr +
+			strings.Repeat(" ", gap) + meta + " ")
 	}
 
+	nameC := ColorFg
+	if r.node.IsDir {
+		nameC = ColorInfo
+	}
 	caret := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg).Render(caretCh)
-	ic := lipgloss.NewStyle().Foreground(iconC).Background(ColorBg).Render(icon)
-	name := lipgloss.NewStyle().Foreground(ColorFg).Background(ColorBg).Render(r.node.Name)
+	name := lipgloss.NewStyle().Foreground(nameC).Background(ColorBg).Render(nameStr)
 	metaStyled := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg).Render(meta)
 
-	left := " " + indent + caret + " " + ic + " " + name
-	gap := w - lipgloss.Width(left) - lipgloss.Width(meta) - 1
-	if gap < 1 {
-		gap = 1
-	}
+	left := " " + indent + caret + " " + name
 	return left + bg.Render(strings.Repeat(" ", gap)) + metaStyled + bg.Render(" ")
 }
 
@@ -381,15 +487,17 @@ func (m MainPane) renderPreviewPane(w, h int) []string {
 			Background(ColorBg).
 			Render("preview"))
 	} else {
-		labelL := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg).Render("preview ")
-		labelN := lipgloss.NewStyle().Foreground(ColorFg).Background(ColorBg).Render(sel.Name)
+		const labelText = "preview "
+		nameBudget := w - 1 - len(labelText)
+		nameStr := truncateName(sel.Name, nameBudget)
+		labelL := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg).Render(labelText)
+		labelN := lipgloss.NewStyle().Foreground(ColorFg).Background(ColorBg).Render(nameStr)
 		lines = append(lines, " "+labelL+labelN)
 	}
 	lines = append(lines, padBg(w))
 
 	if sel != nil {
-		fields := previewFields(sel)
-		for _, f := range fields {
+		for _, f := range previewFields(sel) {
 			lines = append(lines, renderField(f.k, f.v, w))
 		}
 		lines = append(lines, padBg(w))
@@ -459,12 +567,18 @@ func previewContent(n *device.FileNode) []string {
 }
 
 func renderField(k, v string, w int) string {
-	keyW := 12
+	const keyW = 12
+	const trailW = 1
 	keyText := k
 	if len(keyText) > keyW {
 		keyText = keyText[:keyW]
 	}
 	keyText = padRight(keyText, keyW)
+
+	valBudget := max(w-1-keyW-1-trailW, 1)
+	if lipgloss.Width(v) > valBudget {
+		v = truncateName(v, valBudget)
+	}
 
 	keyStyled := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg).Render(keyText)
 	valStyled := lipgloss.NewStyle().Foreground(ColorFg).Background(ColorBg).Render(v)
@@ -476,6 +590,21 @@ func renderField(k, v string, w int) string {
 	return row
 }
 
+func padRight(s string, n int) string {
+	w := lipgloss.Width(s)
+	if w >= n {
+		return s
+	}
+	return s + strings.Repeat(" ", n-w)
+}
+
+func fileExtSuffix(name string) string {
+	if i := strings.LastIndex(name, "."); i >= 0 {
+		return "(" + name[i:] + ")"
+	}
+	return ""
+}
+
 // ── small utilities ────────────────────────────────────────────────────
 
 func padBg(n int) string {
@@ -483,14 +612,6 @@ func padBg(n int) string {
 		return ""
 	}
 	return lipgloss.NewStyle().Background(ColorBg).Render(strings.Repeat(" ", n))
-}
-
-func padRight(s string, n int) string {
-	w := lipgloss.Width(s)
-	if w >= n {
-		return s
-	}
-	return s + strings.Repeat(" ", n-w)
 }
 
 func formatSize(b int64) string {
@@ -504,11 +625,4 @@ func formatSize(b int64) string {
 	default:
 		return fmt.Sprintf("%d B", b)
 	}
-}
-
-func fileExtSuffix(name string) string {
-	if i := strings.LastIndex(name, "."); i >= 0 {
-		return "(" + name[i:] + ")"
-	}
-	return ""
 }

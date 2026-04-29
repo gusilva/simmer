@@ -104,7 +104,7 @@ func initialModel() model {
 		mainPane:     ui.NewMainPane(),
 		focus:        focusSidebar,
 		coordinator:  coord,
-		fs:           device.NewMockFileSystem(),
+		fs:           device.NewIOSFileSystem(),
 		loading:      true,
 		toolVersions: make(map[device.Platform]string),
 	}
@@ -185,7 +185,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.shutdownDeviceCmd(*sel)
 		case "space":
 			sel := m.sidebar.SelectedDevice()
-			if sel == nil {
+			if sel == nil || sel.Status != device.StatusRunning {
 				return m, nil
 			}
 			m.focus = focusMain

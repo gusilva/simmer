@@ -35,10 +35,7 @@ func RenderBox(title, badge, content string, width, height int, focused bool) st
 	titleW := lipgloss.Width(titleText)
 
 	leftDash := 2
-	rightDash := width - 2 - leftDash - 2 - titleW
-	if rightDash < 1 {
-		rightDash = 1
-	}
+	rightDash := max(width-2-leftDash-2-titleW, 1)
 
 	top := border.Render("╭"+strings.Repeat("─", leftDash)+" ") +
 		titleText +
@@ -48,7 +45,7 @@ func RenderBox(title, badge, content string, width, height int, focused bool) st
 
 	innerW := width - 2
 	var lines []string
-	for _, line := range strings.Split(content, "\n") {
+	for line := range strings.SplitSeq(content, "\n") {
 		w := lipgloss.Width(line)
 		if w > innerW {
 			line = lipgloss.NewStyle().MaxWidth(innerW).Render(line)
@@ -59,10 +56,7 @@ func RenderBox(title, badge, content string, width, height int, focused bool) st
 	}
 
 	if height > 0 {
-		innerH := height - 2
-		if innerH < 0 {
-			innerH = 0
-		}
+		innerH := max(height-2, 0)
 		if len(lines) > innerH {
 			lines = lines[:innerH]
 		} else {
