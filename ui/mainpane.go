@@ -11,24 +11,25 @@ import (
 )
 
 // MainTab identifies one of the top-level tabs in the main pane.
+// The iota values must stay in lockstep with the order of mainTabs.
 type MainTab int
 
 const (
-	// TabFiles shows the device filesystem tree + preview.
-	TabFiles MainTab = iota
+	// TabInfo shows device info key/value rows.
+	TabInfo MainTab = iota
+	// TabApps shows installed apps.
+	TabApps
 	// TabLogs shows device logs (not implemented).
 	TabLogs
-	// TabApps shows installed apps (not implemented).
-	TabApps
-	// TabInfo shows device info (not implemented).
-	TabInfo
+	// TabFiles shows the device filesystem tree + preview.
+	TabFiles
 )
 
 var mainTabs = []Tab{
-	{Key: "1", Label: "Files"},
-	{Key: "2", Label: "Logs"},
-	{Key: "3", Label: "Apps"},
-	{Key: "4", Label: "Info"},
+	{Key: "1", Label: "Info"},
+	{Key: "2", Label: "Apps"},
+	{Key: "3", Label: "Logs"},
+	{Key: "4", Label: "Files"},
 }
 
 // MainPane is the right-hand panel showing details for the active device.
@@ -42,6 +43,8 @@ type MainPane struct {
 	treeIdx  int
 	apps     []device.App
 	appsIdx  int
+	info     device.DeviceInfo
+	infoIdx  int
 	focused  bool
 
 	width  int
@@ -72,6 +75,8 @@ func (m *MainPane) SetDevice(d *device.Device, root *device.FileNode) {
 	m.treeIdx = 0
 	m.apps = nil
 	m.appsIdx = 0
+	m.info = device.DeviceInfo{}
+	m.infoIdx = 0
 
 	if root != nil {
 		m.expanded[root.Path] = true
@@ -92,6 +97,14 @@ func (m *MainPane) SetApps(apps []device.App) {
 	}
 }
 
+// SetInfo replaces the device info shown in the Info tab.
+func (m *MainPane) SetInfo(info device.DeviceInfo) {
+	m.info = info
+	if m.infoIdx >= len(info.Fields) {
+		m.infoIdx = 0
+	}
+}
+
 // HasDevice reports whether a device is currently loaded.
 func (m MainPane) HasDevice() bool { return m.active != nil }
 
@@ -105,16 +118,16 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 	}
 	switch k.String() {
 	case "1":
-		m.tab = TabFiles
+		m.tab = TabInfo
 		return m, nil
 	case "2":
-		m.tab = TabLogs
-		return m, nil
-	case "3":
 		m.tab = TabApps
 		return m, nil
+	case "3":
+		m.tab = TabLogs
+		return m, nil
 	case "4":
-		m.tab = TabInfo
+		m.tab = TabFiles
 		return m, nil
 	}
 	switch m.tab {
@@ -168,6 +181,29 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 			if len(m.apps) > 0 {
 				m.appsIdx = len(m.apps) - 1
 			}
+		}
+	case TabInfo:
+		n := len(m.info.Fields)
+		switch k.String() {
+		case "up", "k":
+			if m.infoIdx > 0 {
+				m.infoIdx--
+			}
+		case "down", "j":
+			if m.infoIdx < n-1 {
+				m.infoIdx++
+			}
+		case "home", "g":
+			m.infoIdx = 0
+		case "end", "G":
+			if n > 0 {
+				m.infoIdx = n - 1
+			}
+		case "space":
+			if m.infoIdx < 0 || m.infoIdx >= n {
+				return m, nil
+			}
+			return m, CopyToClipboardCmd(m.info.Fields[m.infoIdx].Value)
 		}
 	}
 	return m, nil
@@ -304,9 +340,102 @@ func (m MainPane) renderTabContent(innerW, innerH int) string {
 		return m.renderFiles(innerW, innerH)
 	case TabApps:
 		return m.renderApps(innerW, innerH)
+	case TabInfo:
+		return m.renderInfo(innerW, innerH)
 	default:
 		return m.renderPlaceholder(innerW, innerH)
 	}
+}
+
+// ── Info tab ───────────────────────────────────────────────────────────
+
+func (m MainPane) renderInfo(w, h int) string {
+	if len(m.info.Fields) == 0 {
+		hint := lipgloss.NewStyle().
+			Foreground(ColorFgFaint).
+			Background(ColorBg).
+			Render("  loading info…")
+		lines := []string{hint}
+		for len(lines) < h {
+			lines = append(lines, padBg(w))
+		}
+		return strings.Join(lines, "\n")
+	}
+
+	visibleH := h
+	if visibleH < 1 {
+		visibleH = 1
+	}
+	offset := 0
+	if m.infoIdx >= visibleH {
+		offset = m.infoIdx - visibleH + 1
+	}
+	end := offset + visibleH
+	if end > len(m.info.Fields) {
+		end = len(m.info.Fields)
+	}
+
+	keyW := infoKeyWidth(m.info.Fields)
+
+	lines := make([]string, 0, h)
+	for i := offset; i < end; i++ {
+		f := m.info.Fields[i]
+		lines = append(lines, renderInfoRow(f.Key, f.Value, keyW, w, i == m.infoIdx))
+	}
+	for len(lines) < h {
+		lines = append(lines, padBg(w))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// infoKeyWidth picks the column width for keys: longest visible key, capped at
+// 14 so a single long label doesn't squeeze the value column.
+func infoKeyWidth(fields []device.InfoField) int {
+	const cap_ = 14
+	w := 0
+	for _, f := range fields {
+		if kw := lipgloss.Width(f.Key); kw > w {
+			w = kw
+		}
+	}
+	if w > cap_ {
+		w = cap_
+	}
+	if w < 4 {
+		w = 4
+	}
+	return w
+}
+
+func renderInfoRow(k, v string, keyW, w int, selected bool) string {
+	bg := lipgloss.NewStyle().Background(ColorBg)
+
+	keyText := k
+	if lipgloss.Width(keyText) > keyW {
+		keyText = truncateName(keyText, keyW)
+	}
+	keyText = padRight(keyText, keyW)
+
+	const leadW = 1
+	const sepW = 1
+	const trailW = 1
+	valBudget := max(w-leadW-keyW-sepW-trailW, 1)
+	if lipgloss.Width(v) > valBudget {
+		v = truncateName(v, valBudget)
+	}
+
+	if selected {
+		sel := lipgloss.NewStyle().Foreground(ColorBg).Background(ColorAccent).Bold(true)
+		return sel.Render(" " + keyText + " " + v + strings.Repeat(" ", valBudget-lipgloss.Width(v)) + " ")
+	}
+
+	keyStyled := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg).Render(keyText)
+	valStyled := lipgloss.NewStyle().Foreground(ColorFg).Background(ColorBg).Render(v)
+	row := " " + keyStyled + " " + valStyled
+	if pad := w - lipgloss.Width(row) - trailW; pad > 0 {
+		row += bg.Render(strings.Repeat(" ", pad))
+	}
+	return row + bg.Render(" ")
 }
 
 // ── Apps tab ───────────────────────────────────────────────────────────

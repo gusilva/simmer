@@ -66,6 +66,12 @@ type appsListMsg struct {
 	err    error
 }
 
+type infoMsg struct {
+	device device.Device
+	info   device.DeviceInfo
+	err    error
+}
+
 func (m model) fetchDevicesCmd() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -110,6 +116,15 @@ func (m model) loadAppsCmd(dev device.Device) tea.Cmd {
 	}
 }
 
+func (m model) loadInfoCmd(dev device.Device) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		info, err := m.coordinator.Info(ctx, dev)
+		return infoMsg{device: dev, info: info, err: err}
+	}
+}
+
 func initialModel() model {
 	coord := device.NewCoordinator(
 		device.NewIOSManager(),
@@ -150,10 +165,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sidebar.SetSize(ui.DefaultSidebarWidth, bodyH)
 		// Sidebar wrapper: pad 1 left + 1 right around DefaultSidebarWidth.
 		// MainPane wrapper: pad 0 left + 1 right around its width.
-		mainW := m.width - (ui.DefaultSidebarWidth + 2) - 1
-		if mainW < 0 {
-			mainW = 0
-		}
+		mainW := max(m.width-(ui.DefaultSidebarWidth+2)-1, 0)
 		m.mainPane.SetSize(mainW, bodyH)
 		return m, nil
 
@@ -212,6 +224,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(
 				m.loadFileTreeCmd(*sel),
 				m.loadAppsCmd(*sel),
+				m.loadInfoCmd(*sel),
 			)
 		}
 		var cmd tea.Cmd
@@ -273,6 +286,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.mainPane.SetApps(msg.apps)
+		return m, nil
+
+	case infoMsg:
+		if msg.err != nil {
+			m.errs = append(m.errs, msg.err)
+			return m, nil
+		}
+		m.mainPane.SetInfo(msg.info)
+		return m, nil
+
+	case ui.ClipboardCopiedMsg:
+		if msg.Err != nil {
+			m.errs = append(m.errs, msg.Err)
+		}
 		return m, nil
 	}
 

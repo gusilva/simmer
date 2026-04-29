@@ -5,8 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -22,13 +25,13 @@ type simctlList struct {
 }
 
 type simctlDevice struct {
-	State           string `json:"state"`
-	IsAvailable     bool   `json:"isAvailable"`
-	Name            string `json:"name"`
-	UDID            string `json:"udid"`
-	DeviceTypeID    string `json:"deviceTypeIdentifier"`
-	DataPath        string `json:"dataPath"`
-	LogPath         string `json:"logPath"`
+	State        string `json:"state"`
+	IsAvailable  bool   `json:"isAvailable"`
+	Name         string `json:"name"`
+	UDID         string `json:"udid"`
+	DeviceTypeID string `json:"deviceTypeIdentifier"`
+	DataPath     string `json:"dataPath"`
+	LogPath      string `json:"logPath"`
 }
 
 // ToolVersion returns the xcrun version string (e.g. "64").
@@ -135,6 +138,140 @@ func (m *iosManager) ListApps(ctx context.Context, id string) ([]App, error) {
 	return apps, nil
 }
 
+// Info gathers details about a single iOS simulator from the local
+// CoreSimulator data directory plus, for booted devices, sw_vers via
+// `simctl spawn`. Best-effort: missing data is reported as "—".
+func (m *iosManager) Info(ctx context.Context, dev Device) (DeviceInfo, error) {
+	info := DeviceInfo{}
+	add := func(k, v string) {
+		if v == "" {
+			v = "—"
+		}
+		info.Fields = append(info.Fields, InfoField{Key: k, Value: v})
+	}
+
+	add("Name", dev.Name)
+	add("UDID", dev.ID)
+	add("Platform", string(dev.Platform))
+	add("Status", string(dev.Status))
+	add("Runtime", dev.Version)
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return info, nil
+	}
+	deviceDir := filepath.Join(home, "Library", "Developer", "CoreSimulator", "Devices", dev.ID)
+
+	if pl, err := readDevicePlist(ctx, filepath.Join(deviceDir, "device.plist")); err == nil {
+		if v, ok := pl["deviceType"].(string); ok {
+			add("Device Type", trimDevicePrefix(v))
+		}
+		if v, ok := pl["runtime"].(string); ok {
+			add("Runtime ID", trimDevicePrefix(v))
+		}
+		if v, ok := pl["state"].(float64); ok {
+			add("State", simctlStateName(int(v)))
+		}
+		if v, ok := pl["lastBootedAt"].(string); ok {
+			add("Last Booted", v)
+		}
+	}
+
+	add("Data Path", filepath.Join(deviceDir, "data"))
+	if size, err := dirSizeKB(ctx, filepath.Join(deviceDir, "data")); err == nil {
+		add("Data Size", formatBytes(size*1024))
+	}
+
+	if dev.Status == StatusRunning {
+		if out, err := exec.CommandContext(ctx, "xcrun", "simctl", "spawn", dev.ID, "sw_vers").Output(); err == nil {
+			for line := range strings.SplitSeq(string(out), "\n") {
+				k, v, ok := strings.Cut(line, ":")
+				if !ok {
+					continue
+				}
+				k = strings.TrimSpace(k)
+				v = strings.TrimSpace(v)
+				switch k {
+				case "ProductName":
+					add("OS Name", v)
+				case "ProductVersion":
+					add("OS Version", v)
+				case "BuildVersion":
+					add("OS Build", v)
+				}
+			}
+		}
+		if out, err := exec.CommandContext(ctx, "xcrun", "simctl", "spawn", dev.ID, "uname", "-m").Output(); err == nil {
+			add("Architecture", strings.TrimSpace(string(out)))
+		}
+	}
+
+	return info, nil
+}
+
+// readDevicePlist converts a binary/XML plist on disk to JSON via plutil and
+// returns it as a generic map.
+func readDevicePlist(ctx context.Context, path string) (map[string]any, error) {
+	out, err := exec.CommandContext(ctx, "plutil", "-convert", "json", "-o", "-", path).Output()
+	if err != nil {
+		return nil, fmt.Errorf("plutil %s: %w", path, err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(out, &m); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return m, nil
+}
+
+// dirSizeKB invokes `du -sk` and returns the directory's apparent size in KB.
+func dirSizeKB(ctx context.Context, path string) (int64, error) {
+	out, err := exec.CommandContext(ctx, "du", "-sk", path).Output()
+	if err != nil {
+		return 0, fmt.Errorf("du -sk %s: %w", path, err)
+	}
+	parts := strings.Fields(string(out))
+	if len(parts) < 1 {
+		return 0, fmt.Errorf("unexpected du output: %q", string(out))
+	}
+	kb, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse du size %q: %w", parts[0], err)
+	}
+	return kb, nil
+}
+
+// trimDevicePrefix strips the well-known SimDeviceType / SimRuntime DNS-style
+// prefix from a CoreSimulator identifier.
+func trimDevicePrefix(s string) string {
+	for _, p := range []string{
+		"com.apple.CoreSimulator.SimDeviceType.",
+		"com.apple.CoreSimulator.SimRuntime.",
+	} {
+		if strings.HasPrefix(s, p) {
+			return s[len(p):]
+		}
+	}
+	return s
+}
+
+// simctlStateName maps the integer state field in device.plist to a label.
+func simctlStateName(s int) string {
+	switch s {
+	case 0:
+		return "Creating"
+	case 1:
+		return "Shutdown"
+	case 2:
+		return "Booting"
+	case 3:
+		return "Booted"
+	case 4:
+		return "Shutting Down"
+	default:
+		return fmt.Sprintf("State(%d)", s)
+	}
+}
+
 func (m *iosManager) ListDevices(ctx context.Context) ([]Device, error) {
 	cmd := exec.CommandContext(ctx, "xcrun", "simctl", "list", "devices", "available", "--json")
 	output, err := cmd.Output()
@@ -184,9 +321,8 @@ func parseRuntimeVersion(id string) string {
 	if i := strings.LastIndex(id, "."); i >= 0 {
 		last = id[i+1:]
 	}
-	if i := strings.Index(last, "-"); i >= 0 {
-		return strings.ReplaceAll(last[i+1:], "-", ".")
+	if _, after, ok := strings.Cut(last, "-"); ok {
+		return strings.ReplaceAll(after, "-", ".")
 	}
 	return last
 }
-
