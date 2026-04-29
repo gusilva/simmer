@@ -6,6 +6,7 @@ import (
 
 	"simmer/pkg/device"
 
+	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
@@ -45,7 +46,10 @@ type MainPane struct {
 	appsIdx  int
 	info     device.DeviceInfo
 	infoIdx  int
-	focused  bool
+	logs      []string
+	logBundle string
+	logsVP    viewport.Model
+	focused   bool
 
 	width  int
 	height int
@@ -53,13 +57,27 @@ type MainPane struct {
 
 // NewMainPane returns an empty main pane.
 func NewMainPane() MainPane {
-	return MainPane{expanded: map[string]bool{}}
+	vp := viewport.New()
+	vp.SoftWrap = true
+	vp.Style = lipgloss.NewStyle().Foreground(ColorFgDim).Background(ColorBg)
+	return MainPane{expanded: map[string]bool{}, logsVP: vp}
 }
 
-// SetSize sets the outer width/height available to the pane.
+// SetSize sets the outer width/height available to the pane and rescales
+// child components (logs viewport) accordingly.
 func (m *MainPane) SetSize(w, h int) {
 	m.width = w
 	m.height = h
+
+	// Logs viewport sits inside: outer frame (2) + tab header (4 lines:
+	// title, divider, tabs, divider) + log header (2 lines: header + rule).
+	innerW := max(w-2, 1)
+	innerH := max(h-2, 1)
+	contentH := max(innerH-4, 1)
+	vpH := max(contentH-2, 1)
+	vpW := max(innerW-2, 1)
+	m.logsVP.SetWidth(vpW)
+	m.logsVP.SetHeight(vpH)
 }
 
 // SetFocused marks whether the main pane holds the app's outer focus.
@@ -77,6 +95,8 @@ func (m *MainPane) SetDevice(d *device.Device, root *device.FileNode) {
 	m.appsIdx = 0
 	m.info = device.DeviceInfo{}
 	m.infoIdx = 0
+	m.logs = nil
+	m.logBundle = ""
 
 	if root != nil {
 		m.expanded[root.Path] = true
@@ -105,6 +125,53 @@ func (m *MainPane) SetInfo(info device.DeviceInfo) {
 	}
 }
 
+// SelectedApp returns the app currently highlighted in the Apps tab, or nil.
+func (m MainPane) SelectedApp() *device.App {
+	if m.appsIdx < 0 || m.appsIdx >= len(m.apps) {
+		return nil
+	}
+	a := m.apps[m.appsIdx]
+	return &a
+}
+
+// SetLogBundle marks which app's logs are now being streamed and clears any
+// previously buffered lines + viewport content.
+func (m *MainPane) SetLogBundle(bundleID string) {
+	m.logBundle = bundleID
+	m.logs = nil
+	m.logsVP.SetContent("")
+	m.logsVP.GotoTop()
+}
+
+// AppendLog adds a line to the rolling log buffer. The buffer is capped at
+// the most recent 1000 lines. If the viewport was at the bottom before the
+// append, it scrolls to the new bottom; otherwise the user's scroll position
+// is preserved.
+func (m *MainPane) AppendLog(line string) {
+	const max = 1000
+	atBottom := m.logsVP.AtBottom()
+
+	m.logs = append(m.logs, line)
+	if len(m.logs) > max {
+		m.logs = m.logs[len(m.logs)-max:]
+	}
+	m.logsVP.SetContent(strings.Join(m.logs, "\n"))
+	if atBottom {
+		m.logsVP.GotoBottom()
+	}
+}
+
+// LogBundle returns the bundle identifier whose logs are currently buffered,
+// or "" if none.
+func (m MainPane) LogBundle() string { return m.logBundle }
+
+// RequestLogStreamMsg is dispatched by MainPane when the user enters the Logs
+// tab with an app selected. The parent program is expected to start streaming
+// logs for the given app and feed them back via AppendLog.
+type RequestLogStreamMsg struct {
+	App device.App
+}
+
 // HasDevice reports whether a device is currently loaded.
 func (m MainPane) HasDevice() bool { return m.active != nil }
 
@@ -125,6 +192,10 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 		return m, nil
 	case "3":
 		m.tab = TabLogs
+		if app := m.SelectedApp(); app != nil {
+			a := *app
+			return m, func() tea.Msg { return RequestLogStreamMsg{App: a} }
+		}
 		return m, nil
 	case "4":
 		m.tab = TabFiles
@@ -182,6 +253,10 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 				m.appsIdx = len(m.apps) - 1
 			}
 		}
+	case TabLogs:
+		var cmd tea.Cmd
+		m.logsVP, cmd = m.logsVP.Update(msg)
+		return m, cmd
 	case TabInfo:
 		n := len(m.info.Fields)
 		switch k.String() {
@@ -342,6 +417,8 @@ func (m MainPane) renderTabContent(innerW, innerH int) string {
 		return m.renderApps(innerW, innerH)
 	case TabInfo:
 		return m.renderInfo(innerW, innerH)
+	case TabLogs:
+		return m.renderLogs(innerW, innerH)
 	default:
 		return m.renderPlaceholder(innerW, innerH)
 	}
@@ -436,6 +513,51 @@ func renderInfoRow(k, v string, keyW, w int, selected bool) string {
 		row += bg.Render(strings.Repeat(" ", pad))
 	}
 	return row + bg.Render(" ")
+}
+
+// ── Logs tab ───────────────────────────────────────────────────────────
+
+func (m MainPane) renderLogs(w, h int) string {
+	bg := lipgloss.NewStyle().Background(ColorBg)
+
+	if m.logBundle == "" {
+		hint := lipgloss.NewStyle().
+			Foreground(ColorFgFaint).
+			Background(ColorBg).
+			Render("  pick an app on the Apps tab, then press 3 to stream its logs")
+		lines := []string{hint}
+		for len(lines) < h {
+			lines = append(lines, padBg(w))
+		}
+		return strings.Join(lines, "\n")
+	}
+
+	headerL := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg).Render("  streaming ")
+	headerN := lipgloss.NewStyle().Foreground(ColorFg).Background(ColorBg).Render(m.logBundle)
+	header := headerL + headerN
+	rule := lipgloss.NewStyle().
+		Foreground(ColorBorder).
+		Background(ColorBg).
+		Render(strings.Repeat("─", w))
+
+	lines := []string{header, rule}
+
+	for _, vpLine := range strings.Split(m.logsVP.View(), "\n") {
+		lines = append(lines, " "+vpLine)
+	}
+
+	for i, line := range lines {
+		if pad := w - lipgloss.Width(line); pad > 0 {
+			lines[i] = line + bg.Render(strings.Repeat(" ", pad))
+		}
+	}
+	for len(lines) < h {
+		lines = append(lines, padBg(w))
+	}
+	if len(lines) > h {
+		lines = lines[len(lines)-h:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // ── Apps tab ───────────────────────────────────────────────────────────

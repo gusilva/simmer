@@ -40,6 +40,10 @@ type model struct {
 	iosCount     int
 	androidCount int
 	lastRefresh  time.Time
+
+	logStream   *device.LogStream
+	logBundleID string
+	logDeviceID string
 }
 
 type discoveryMsg device.DiscoveryResult
@@ -70,6 +74,16 @@ type infoMsg struct {
 	device device.Device
 	info   device.DeviceInfo
 	err    error
+}
+
+type logLineMsg struct {
+	bundleID string
+	line     string
+}
+
+type logEndedMsg struct {
+	bundleID string
+	err      error
 }
 
 func (m model) fetchDevicesCmd() tea.Cmd {
@@ -122,6 +136,20 @@ func (m model) loadInfoCmd(dev device.Device) tea.Cmd {
 		defer cancel()
 		info, err := m.coordinator.Info(ctx, dev)
 		return infoMsg{device: dev, info: info, err: err}
+	}
+}
+
+// nextLogLineCmd reads one line from the active log stream and returns the
+// matching tea.Msg. The bundleID is carried in the msg so the handler can
+// drop stale messages from a stream that has since been replaced.
+func nextLogLineCmd(stream *device.LogStream, bundleID string) tea.Cmd {
+	return func() tea.Msg {
+		line, ok := <-stream.Lines
+		if !ok {
+			err := <-stream.Done
+			return logEndedMsg{bundleID: bundleID, err: err}
+		}
+		return logLineMsg{bundleID: bundleID, line: line}
 	}
 }
 
@@ -300,6 +328,47 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err != nil {
 			m.errs = append(m.errs, msg.Err)
 		}
+		return m, nil
+
+	case ui.RequestLogStreamMsg:
+		sel := m.sidebar.SelectedDevice()
+		if sel == nil {
+			return m, nil
+		}
+		bundleID := msg.App.BundleID
+		if m.logStream != nil && m.logBundleID == bundleID && m.logDeviceID == sel.ID {
+			return m, nil
+		}
+		if m.logStream != nil {
+			m.logStream.Stop()
+			m.logStream = nil
+		}
+		stream, err := m.coordinator.StreamLogs(context.Background(), *sel, msg.App)
+		if err != nil {
+			m.errs = append(m.errs, err)
+			return m, nil
+		}
+		m.logStream = stream
+		m.logBundleID = bundleID
+		m.logDeviceID = sel.ID
+		m.mainPane.SetLogBundle(bundleID)
+		return m, nextLogLineCmd(stream, bundleID)
+
+	case logLineMsg:
+		if msg.bundleID != m.logBundleID || m.logStream == nil {
+			return m, nil
+		}
+		m.mainPane.AppendLog(msg.line)
+		return m, nextLogLineCmd(m.logStream, m.logBundleID)
+
+	case logEndedMsg:
+		if msg.bundleID != m.logBundleID {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.errs = append(m.errs, msg.err)
+		}
+		m.logStream = nil
 		return m, nil
 	}
 

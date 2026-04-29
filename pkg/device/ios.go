@@ -1,16 +1,20 @@
 package device
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 type iosManager struct{}
@@ -136,6 +140,90 @@ func (m *iosManager) ListApps(ctx context.Context, id string) ([]App, error) {
 		return strings.ToLower(a) < strings.ToLower(b)
 	})
 	return apps, nil
+}
+
+// StreamLogs streams the unified log entries emitted by the given app. It
+// best-effort-launches the app first (no error if already running, since
+// modern iOS apps log via os_log/NSLog into the unified log rather than
+// stdout) then runs `simctl spawn <UDID> log stream` filtered by a predicate
+// covering process name, subsystem, and sender image path.
+func (m *iosManager) StreamLogs(parent context.Context, dev Device, app App) (*LogStream, error) {
+	ctx, cancel := context.WithCancel(parent)
+
+	// Make sure the app is running so it can emit logs. simctl launch returns
+	// quickly; we don't care if it errors (e.g. "already running").
+	launchCtx, launchCancel := context.WithTimeout(ctx, 5*time.Second)
+	_ = exec.CommandContext(launchCtx, "xcrun", "simctl", "launch", dev.ID, app.BundleID).Run()
+	launchCancel()
+
+	procName := app.Name
+	if procName == "" {
+		if i := strings.LastIndex(app.BundleID, "."); i >= 0 && i < len(app.BundleID)-1 {
+			procName = app.BundleID[i+1:]
+		} else {
+			procName = app.BundleID
+		}
+	}
+	predicate := fmt.Sprintf(
+		`(process == %q) OR (subsystem CONTAINS[cd] %q) OR (senderImagePath CONTAINS[cd] %q)`,
+		procName, app.BundleID, app.BundleID,
+	)
+
+	cmd := exec.CommandContext(ctx, "xcrun", "simctl", "spawn", dev.ID,
+		"log", "stream",
+		"--level=debug",
+		"--style=compact",
+		"--predicate", predicate,
+	)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("stdout pipe: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("stderr pipe: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		cancel()
+		return nil, fmt.Errorf("xcrun simctl spawn log stream %s: %w", dev.ID, err)
+	}
+
+	lines := make(chan string, 256)
+	done := make(chan error, 1)
+
+	scan := func(r io.Reader, wg *sync.WaitGroup) {
+		defer wg.Done()
+		s := bufio.NewScanner(r)
+		s.Buffer(make([]byte, 64*1024), 1024*1024)
+		for s.Scan() {
+			select {
+			case lines <- s.Text():
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go scan(stdout, &wg)
+	go scan(stderr, &wg)
+
+	go func() {
+		wg.Wait()
+		close(lines)
+		done <- cmd.Wait()
+		close(done)
+	}()
+
+	return &LogStream{
+		Lines: lines,
+		Done:  done,
+		Stop:  cancel,
+	}, nil
 }
 
 // Info gathers details about a single iOS simulator from the local
