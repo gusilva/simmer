@@ -8,7 +8,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 <p align="center">
-  <img src="./app.gif" width="350" alt="Simulight Demo">
+  <img src="./app.gif" width="720" alt="Simulight Demo">
 </p>
 
 ## 🚀 Features
