@@ -40,6 +40,8 @@ type MainPane struct {
 	tree     *device.FileNode
 	expanded map[string]bool
 	treeIdx  int
+	apps     []device.App
+	appsIdx  int
 	focused  bool
 
 	width  int
@@ -62,19 +64,31 @@ func (m *MainPane) SetSize(w, h int) {
 func (m *MainPane) SetFocused(f bool) { m.focused = f }
 
 // SetDevice loads a device and its filesystem root into the pane. Pass nil
-// for both to clear the pane.
+// for both to clear the pane. Resets the apps list as well.
 func (m *MainPane) SetDevice(d *device.Device, root *device.FileNode) {
 	m.active = d
 	m.tree = root
 	m.expanded = map[string]bool{}
 	m.treeIdx = 0
+	m.apps = nil
+	m.appsIdx = 0
+
 	if root != nil {
 		m.expanded[root.Path] = true
+
 		for _, c := range root.Children {
 			if c.IsDir {
 				m.expanded[c.Path] = true
 			}
 		}
+	}
+}
+
+// SetApps replaces the list of installed apps shown in the Apps tab.
+func (m *MainPane) SetApps(apps []device.App) {
+	m.apps = apps
+	if m.appsIdx >= len(apps) {
+		m.appsIdx = 0
 	}
 }
 
@@ -103,40 +117,57 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 		m.tab = TabInfo
 		return m, nil
 	}
-	if m.tab != TabFiles {
-		return m, nil
-	}
-	rows := m.flattenTree()
-	switch k.String() {
-	case "up", "k":
-		if m.treeIdx > 0 {
-			m.treeIdx--
-		}
-	case "down", "j":
-		if m.treeIdx < len(rows)-1 {
-			m.treeIdx++
-		}
-	case "home", "g":
-		m.treeIdx = 0
-	case "end", "G":
-		if len(rows) > 0 {
-			m.treeIdx = len(rows) - 1
-		}
-	case "enter":
-		if m.treeIdx < 0 || m.treeIdx >= len(rows) {
-			return m, nil
-		}
-		n := rows[m.treeIdx].node
-		if !n.IsDir {
-			return m, nil
-		}
-		m.expanded[n.Path] = !m.expanded[n.Path]
-		rows = m.flattenTree()
-		if m.treeIdx >= len(rows) {
-			m.treeIdx = len(rows) - 1
-		}
-		if m.treeIdx < 0 {
+	switch m.tab {
+	case TabFiles:
+		rows := m.flattenTree()
+		switch k.String() {
+		case "up", "k":
+			if m.treeIdx > 0 {
+				m.treeIdx--
+			}
+		case "down", "j":
+			if m.treeIdx < len(rows)-1 {
+				m.treeIdx++
+			}
+		case "home", "g":
 			m.treeIdx = 0
+		case "end", "G":
+			if len(rows) > 0 {
+				m.treeIdx = len(rows) - 1
+			}
+		case "enter":
+			if m.treeIdx < 0 || m.treeIdx >= len(rows) {
+				return m, nil
+			}
+			n := rows[m.treeIdx].node
+			if !n.IsDir {
+				return m, nil
+			}
+			m.expanded[n.Path] = !m.expanded[n.Path]
+			rows = m.flattenTree()
+			if m.treeIdx >= len(rows) {
+				m.treeIdx = len(rows) - 1
+			}
+			if m.treeIdx < 0 {
+				m.treeIdx = 0
+			}
+		}
+	case TabApps:
+		switch k.String() {
+		case "up", "k":
+			if m.appsIdx > 0 {
+				m.appsIdx--
+			}
+		case "down", "j":
+			if m.appsIdx < len(m.apps)-1 {
+				m.appsIdx++
+			}
+		case "home", "g":
+			m.appsIdx = 0
+		case "end", "G":
+			if len(m.apps) > 0 {
+				m.appsIdx = len(m.apps) - 1
+			}
 		}
 	}
 	return m, nil
@@ -174,10 +205,7 @@ func (m MainPane) View() string {
 		}
 		rows = append(rows, hrule(innerW, junction, "┬", innerRule))
 
-		contentH := innerH - len(rows)
-		if contentH < 1 {
-			contentH = 1
-		}
+		contentH := max(innerH-len(rows), 1)
 		rows = append(rows, strings.Split(m.renderTabContent(innerW, contentH), "\n")...)
 	}
 
@@ -216,10 +244,7 @@ func hrule(width, at int, junction string, style lipgloss.Style) string {
 // filesLayout returns the column split used by the Files tab.
 func filesLayout(innerW int) (treeW, sepW, previewW int) {
 	sepW = 1
-	treeW = innerW * 52 / 100
-	if treeW < 24 {
-		treeW = 24
-	}
+	treeW = max(innerW*52/100, 24)
 	previewW = innerW - treeW - sepW
 	if previewW < 16 {
 		previewW = 16
@@ -277,9 +302,73 @@ func (m MainPane) renderTabContent(innerW, innerH int) string {
 	switch m.tab {
 	case TabFiles:
 		return m.renderFiles(innerW, innerH)
+	case TabApps:
+		return m.renderApps(innerW, innerH)
 	default:
 		return m.renderPlaceholder(innerW, innerH)
 	}
+}
+
+// ── Apps tab ───────────────────────────────────────────────────────────
+
+func (m MainPane) renderApps(w, h int) string {
+	if len(m.apps) == 0 {
+		hint := lipgloss.NewStyle().
+			Foreground(ColorFgFaint).
+			Background(ColorBg).
+			Render("  no apps installed")
+		lines := []string{hint}
+		for len(lines) < h {
+			lines = append(lines, padBg(w))
+		}
+		return strings.Join(lines, "\n")
+	}
+
+	visibleH := max(h, 1)
+	offset := 0
+	if m.appsIdx >= visibleH {
+		offset = m.appsIdx - visibleH + 1
+	}
+	end := min(offset+visibleH, len(m.apps))
+
+	lines := make([]string, 0, h)
+	for i := offset; i < end; i++ {
+		lines = append(lines, m.renderAppRow(m.apps[i], w, i == m.appsIdx))
+	}
+	for len(lines) < h {
+		lines = append(lines, padBg(w))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m MainPane) renderAppRow(app device.App, w int, selected bool) string {
+	bg := lipgloss.NewStyle().Background(ColorBg)
+
+	label := app.Label()
+	meta := app.ShortVersion
+	if meta == "" {
+		meta = app.Version
+	}
+
+	const (
+		leadW  = 1
+		trailW = 1
+		minGap = 2
+	)
+
+	metaW := lipgloss.Width(meta)
+	nameMax := max(w-leadW-metaW-trailW-minGap, 1)
+	nameStr := truncateName(label, nameMax)
+	gap := max(w-leadW-lipgloss.Width(nameStr)-metaW-trailW, minGap)
+
+	if selected {
+		sel := lipgloss.NewStyle().Foreground(ColorBg).Background(ColorAccent).Bold(true)
+		return sel.Render(" " + nameStr + strings.Repeat(" ", gap) + meta + " ")
+	}
+
+	nameStyled := lipgloss.NewStyle().Foreground(ColorFg).Background(ColorBg).Render(nameStr)
+	metaStyled := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg).Render(meta)
+	return " " + nameStyled + bg.Render(strings.Repeat(" ", gap)) + metaStyled + bg.Render(" ")
 }
 
 func (m MainPane) renderPlaceholder(innerW, innerH int) string {

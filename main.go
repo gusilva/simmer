@@ -60,6 +60,12 @@ type fileTreeMsg struct {
 	err    error
 }
 
+type appsListMsg struct {
+	device device.Device
+	apps   []device.App
+	err    error
+}
+
 func (m model) fetchDevicesCmd() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -90,6 +96,17 @@ func (m model) loadFileTreeCmd(dev device.Device) tea.Cmd {
 		defer cancel()
 		root, err := m.fs.Tree(ctx, dev)
 		return fileTreeMsg{device: dev, root: root, err: err}
+	}
+}
+
+func (m model) loadAppsCmd(dev device.Device) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		apps, err := m.coordinator.ListApps(ctx, dev)
+
+		return appsListMsg{device: dev, apps: apps, err: err}
 	}
 }
 
@@ -188,9 +205,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if sel == nil || sel.Status != device.StatusRunning {
 				return m, nil
 			}
+
 			m.focus = focusMain
 			m.applyFocus()
-			return m, m.loadFileTreeCmd(*sel)
+
+			return m, tea.Batch(
+				m.loadFileTreeCmd(*sel),
+				m.loadAppsCmd(*sel),
+			)
 		}
 		var cmd tea.Cmd
 		m.sidebar, cmd = m.sidebar.Update(msg)
@@ -243,6 +265,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		dev := msg.device
 		m.mainPane.SetDevice(&dev, &msg.root)
+		return m, nil
+
+	case appsListMsg:
+		if msg.err != nil {
+			m.errs = append(m.errs, msg.err)
+			return m, nil
+		}
+		m.mainPane.SetApps(msg.apps)
 		return m, nil
 	}
 

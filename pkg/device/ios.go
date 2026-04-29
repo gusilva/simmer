@@ -1,10 +1,12 @@
 package device
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strings"
 )
 
@@ -75,6 +77,62 @@ func (m *iosManager) Shutdown(ctx context.Context, id string) error {
 		return fmt.Errorf("xcrun simctl shutdown %s: %w: %s", id, err, msg)
 	}
 	return nil
+}
+
+// ListApps runs `xcrun simctl listapps <UDID>` and converts the resulting
+// plist to JSON via `plutil` so it can be parsed without an extra dep.
+// Returns apps sorted alphabetically by display label.
+func (m *iosManager) ListApps(ctx context.Context, id string) ([]App, error) {
+	listCmd := exec.CommandContext(ctx, "xcrun", "simctl", "listapps", id)
+	listOut, err := listCmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("xcrun simctl listapps %s: %w", id, err)
+	}
+
+	plutilCmd := exec.CommandContext(ctx, "plutil", "-convert", "json", "-o", "-", "-")
+	plutilCmd.Stdin = bytes.NewReader(listOut)
+	jsonOut, err := plutilCmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("plutil convert json: %w", err)
+	}
+
+	var raw map[string]map[string]any
+	if err := json.Unmarshal(jsonOut, &raw); err != nil {
+		return nil, fmt.Errorf("parse listapps json: %w", err)
+	}
+
+	apps := make([]App, 0, len(raw))
+	for bundleID, info := range raw {
+		app := App{BundleID: bundleID}
+		if v, ok := info["CFBundleDisplayName"].(string); ok {
+			app.DisplayName = v
+		}
+		if v, ok := info["CFBundleName"].(string); ok {
+			app.Name = v
+		}
+		if v, ok := info["CFBundleVersion"].(string); ok {
+			app.Version = v
+		}
+		if v, ok := info["CFBundleShortVersionString"].(string); ok {
+			app.ShortVersion = v
+		}
+		if v, ok := info["ApplicationType"].(string); ok {
+			app.Type = v
+		}
+		if v, ok := info["Path"].(string); ok {
+			app.Path = v
+		}
+		apps = append(apps, app)
+	}
+
+	sort.SliceStable(apps, func(i, j int) bool {
+		a, b := apps[i].Label(), apps[j].Label()
+		if a == b {
+			return apps[i].BundleID < apps[j].BundleID
+		}
+		return strings.ToLower(a) < strings.ToLower(b)
+	})
+	return apps, nil
 }
 
 func (m *iosManager) ListDevices(ctx context.Context) ([]Device, error) {
