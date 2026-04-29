@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"simmer/pkg/device"
@@ -44,7 +45,13 @@ type model struct {
 	logStream   *device.LogStream
 	logBundleID string
 	logDeviceID string
+
+	status     string
+	statusKind ui.StatusKind
+	statusSeq  int
 }
+
+type clearStatusMsg int
 
 type discoveryMsg device.DiscoveryResult
 
@@ -178,6 +185,20 @@ func (m *model) applyFocus() {
 	m.mainPane.SetFocused(m.focus == focusMain)
 }
 
+// setStatus stamps a transient message onto the footer's right side and
+// returns a tea.Cmd that clears it after a few seconds. Each call bumps a
+// sequence counter so the auto-clear only fires for the last status.
+func (m *model) setStatus(text string, kind ui.StatusKind) tea.Cmd {
+	m.statusSeq++
+	m.status = text
+	m.statusKind = kind
+	seq := m.statusSeq
+
+	return tea.Tick(4*time.Second, func(_ time.Time) tea.Msg {
+		return clearStatusMsg(seq)
+	})
+}
+
 func (m model) Init() tea.Cmd {
 	return m.fetchDevicesCmd()
 }
@@ -286,48 +307,82 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case bootResultMsg:
 		if msg.err != nil {
 			m.errs = append(m.errs, msg.err)
-			return m, nil
+
+			return m, m.setStatus("boot failed: "+errPreview(msg.err), ui.StatusErr)
 		}
+
 		m.loading = true
-		return m, m.fetchDevicesCmd()
+
+		return m, tea.Batch(
+			m.fetchDevicesCmd(),
+			m.setStatus("booted "+msg.device.Name, ui.StatusOk),
+		)
 
 	case shutdownResultMsg:
 		if msg.err != nil {
 			m.errs = append(m.errs, msg.err)
-			return m, nil
+
+			return m, m.setStatus("shutdown failed: "+errPreview(msg.err), ui.StatusErr)
 		}
+
 		m.loading = true
-		return m, m.fetchDevicesCmd()
+
+		return m, tea.Batch(
+			m.fetchDevicesCmd(),
+			m.setStatus("shut down "+msg.device.Name, ui.StatusOk),
+		)
 
 	case fileTreeMsg:
 		if msg.err != nil {
 			m.errs = append(m.errs, msg.err)
-			return m, nil
+
+			return m, m.setStatus("files load failed: "+errPreview(msg.err), ui.StatusErr)
 		}
+
 		dev := msg.device
 		m.mainPane.SetDevice(&dev, &msg.root)
+
 		return m, nil
 
 	case appsListMsg:
 		if msg.err != nil {
 			m.errs = append(m.errs, msg.err)
-			return m, nil
+
+			return m, m.setStatus("apps load failed: "+errPreview(msg.err), ui.StatusErr)
 		}
+
 		m.mainPane.SetApps(msg.apps)
+
 		return m, nil
 
 	case infoMsg:
 		if msg.err != nil {
 			m.errs = append(m.errs, msg.err)
-			return m, nil
+
+			return m, m.setStatus("info load failed: "+errPreview(msg.err), ui.StatusErr)
 		}
+
 		m.mainPane.SetInfo(msg.info)
+
 		return m, nil
 
 	case ui.ClipboardCopiedMsg:
 		if msg.Err != nil {
 			m.errs = append(m.errs, msg.Err)
+
+			return m, m.setStatus("copy failed: "+errPreview(msg.Err), ui.StatusErr)
 		}
+
+		return m, m.setStatus("copied "+textPreview(msg.Text, 40), ui.StatusOk)
+
+	case ui.AppFocusedMsg:
+		return m, m.setStatus("app: "+msg.App.Label(), ui.StatusInfo)
+
+	case clearStatusMsg:
+		if int(msg) == m.statusSeq {
+			m.status = ""
+		}
+
 		return m, nil
 
 	case ui.RequestLogStreamMsg:
@@ -346,13 +401,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		stream, err := m.coordinator.StreamLogs(context.Background(), *sel, msg.App)
 		if err != nil {
 			m.errs = append(m.errs, err)
-			return m, nil
+			return m, m.setStatus("stream failed: "+errPreview(err), ui.StatusErr)
 		}
 		m.logStream = stream
 		m.logBundleID = bundleID
 		m.logDeviceID = sel.ID
 		m.mainPane.SetLogBundle(bundleID)
-		return m, nextLogLineCmd(stream, bundleID)
+		return m, tea.Batch(
+			nextLogLineCmd(stream, bundleID),
+			m.setStatus("streaming "+bundleID, ui.StatusOk),
+		)
 
 	case logLineMsg:
 		if msg.bundleID != m.logBundleID || m.logStream == nil {
@@ -365,14 +423,35 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.bundleID != m.logBundleID {
 			return m, nil
 		}
+		m.logStream = nil
 		if msg.err != nil {
 			m.errs = append(m.errs, msg.err)
+			return m, m.setStatus("stream ended: "+errPreview(msg.err), ui.StatusWarn)
 		}
-		m.logStream = nil
-		return m, nil
+		return m, m.setStatus("stream ended", ui.StatusInfo)
 	}
 
 	return m, nil
+}
+
+// errPreview returns a short, single-line excerpt of err's message, suitable
+// for the status bar.
+func errPreview(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	return textPreview(err.Error(), 60)
+}
+
+// textPreview clips s to max visible characters with a trailing ellipsis.
+func textPreview(s string, max int) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	if len([]rune(s)) <= max {
+		return s
+	}
+	r := []rune(s)
+	return string(r[:max-1]) + "…"
 }
 
 func (m model) bodyHeight() int {
@@ -391,17 +470,10 @@ func (m model) View() tea.View {
 		ToolVersions: m.toolVersions,
 	})
 
-	var footerDevice *ui.FooterDevice
-	if sel := m.sidebar.SelectedDevice(); sel != nil {
-		footerDevice = &ui.FooterDevice{
-			Name:     sel.Name,
-			Platform: sel.Platform,
-			Status:   sel.Status,
-		}
-	}
 	footer := ui.RenderFooter(ui.FooterParams{
-		Width:        m.width,
-		ActiveDevice: footerDevice,
+		Width:  m.width,
+		Status: m.status,
+		Kind:   m.statusKind,
 	})
 
 	bodyH := max(m.height-lipgloss.Height(topBar)-lipgloss.Height(footer), 0)

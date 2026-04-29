@@ -172,6 +172,12 @@ type RequestLogStreamMsg struct {
 	App device.App
 }
 
+// AppFocusedMsg is dispatched whenever the cursor lands on an app row in the
+// Apps tab. Useful for surfacing the selection in a status bar.
+type AppFocusedMsg struct {
+	App device.App
+}
+
 // HasDevice reports whether a device is currently loaded.
 func (m MainPane) HasDevice() bool { return m.active != nil }
 
@@ -189,6 +195,10 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 		return m, nil
 	case "2":
 		m.tab = TabApps
+		if app := m.SelectedApp(); app != nil {
+			a := *app
+			return m, func() tea.Msg { return AppFocusedMsg{App: a} }
+		}
 		return m, nil
 	case "3":
 		m.tab = TabLogs
@@ -237,6 +247,7 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 			}
 		}
 	case TabApps:
+		prev := m.appsIdx
 		switch k.String() {
 		case "up", "k":
 			if m.appsIdx > 0 {
@@ -251,6 +262,12 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 		case "end", "G":
 			if len(m.apps) > 0 {
 				m.appsIdx = len(m.apps) - 1
+			}
+		}
+		if m.appsIdx != prev {
+			if app := m.SelectedApp(); app != nil {
+				a := *app
+				return m, func() tea.Msg { return AppFocusedMsg{App: a} }
 			}
 		}
 	case TabLogs:
