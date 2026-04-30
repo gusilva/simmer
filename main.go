@@ -83,6 +83,11 @@ type infoMsg struct {
 	err    error
 }
 
+type bootPollMsg struct {
+	device    device.Device
+	remaining int
+}
+
 type logLineMsg struct {
 	bundleID string
 	line     string
@@ -149,6 +154,17 @@ func (m model) loadInfoCmd(dev device.Device) tea.Cmd {
 // nextLogLineCmd reads one line from the active log stream and returns the
 // matching tea.Msg. The bundleID is carried in the msg so the handler can
 // drop stale messages from a stream that has since been replaced.
+// scheduleBootPoll returns a Cmd that fires bootPollMsg after 4 seconds.
+// Used to keep refreshing after an Android emulator boot until adb sees it.
+func scheduleBootPoll(dev device.Device, remaining int) tea.Cmd {
+	if remaining <= 0 {
+		return nil
+	}
+	return tea.Tick(4*time.Second, func(_ time.Time) tea.Msg {
+		return bootPollMsg{device: dev, remaining: remaining}
+	})
+}
+
 func nextLogLineCmd(stream *device.LogStream, bundleID string) tea.Cmd {
 	return func() tea.Msg {
 		line, ok := <-stream.Lines
@@ -248,16 +264,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if sel == nil || sel.Status == device.StatusRunning {
 				return m, nil
 			}
-			if sel.Platform != device.PlatformIOS {
-				return m, nil
-			}
 			return m, m.bootDeviceCmd(*sel)
 		case "s":
 			sel := m.sidebar.SelectedDevice()
 			if sel == nil || sel.Status != device.StatusRunning {
-				return m, nil
-			}
-			if sel.Platform != device.PlatformIOS {
 				return m, nil
 			}
 			return m, m.shutdownDeviceCmd(*sel)
@@ -313,9 +323,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.loading = true
 
-		return m, tea.Batch(
+		cmds := []tea.Cmd{
 			m.fetchDevicesCmd(),
 			m.setStatus("booted "+msg.device.Name, ui.StatusOk),
+		}
+
+		if msg.device.Platform == device.PlatformAndroid {
+			// Emulator registers with adb asynchronously; poll until it appears.
+			cmds = append(cmds, scheduleBootPoll(msg.device, 15))
+		}
+
+		return m, tea.Batch(cmds...)
+
+	case bootPollMsg:
+		// Check if the device now shows as running; if so, stop polling.
+		for _, dev := range m.sidebar.Devices() {
+			if dev.ID == msg.device.ID && dev.Status == device.StatusRunning {
+				return m, nil
+			}
+		}
+
+		return m, tea.Batch(
+			m.fetchDevicesCmd(),
+			scheduleBootPoll(msg.device, msg.remaining-1),
 		)
 
 	case shutdownResultMsg:

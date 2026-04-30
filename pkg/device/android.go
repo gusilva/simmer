@@ -14,6 +14,79 @@ func NewAndroidManager() Manager {
 	return &androidManager{}
 }
 
+// Platform reports the platform this manager handles.
+func (m *androidManager) Platform() Platform { return PlatformAndroid }
+
+// Boot launches the emulator for the given AVD name. The emulator process is
+// started detached (we don't wait for it) because it runs until explicitly
+// closed; the context is intentionally not forwarded to the child process so
+// the 30-second boot timeout doesn't kill the emulator window.
+func (m *androidManager) Boot(_ context.Context, id string) error {
+	cmd := exec.Command("emulator", "-avd", id) //nolint:gosec
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("emulator -avd %s: %w", id, err)
+	}
+
+	go cmd.Wait()
+	return nil
+}
+
+// Shutdown sends a kill command to the running emulator whose AVD name matches
+// id. It maps the AVD name back to an adb serial via `adb -s <serial> emu avd
+// name`, then issues `adb -s <serial> emu kill`.
+func (m *androidManager) Shutdown(ctx context.Context, id string) error {
+	serial, err := m.findSerial(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.CommandContext(ctx, "adb", "-s", serial, "emu", "kill")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			return fmt.Errorf("adb -s %s emu kill: %w", serial, err)
+		}
+
+		return fmt.Errorf("adb -s %s emu kill: %w: %s", serial, err, msg)
+	}
+
+	return nil
+}
+
+// findSerial returns the adb serial (e.g. "emulator-5554") for the running
+// emulator whose AVD name matches avdName.
+func (m *androidManager) findSerial(ctx context.Context, avdName string) (string, error) {
+	out, err := exec.CommandContext(ctx, "adb", "devices").Output()
+	if err != nil {
+		return "", fmt.Errorf("adb devices: %w", err)
+	}
+	for line := range strings.SplitSeq(string(out), "\n") {
+		if !strings.Contains(line, "\tdevice") {
+			continue
+		}
+
+		parts := strings.Fields(line)
+		if len(parts) == 0 {
+			continue
+		}
+
+		serial := parts[0]
+		nameOut, err := exec.CommandContext(ctx, "adb", "-s", serial, "emu", "avd", "name").Output()
+		if err != nil {
+			continue
+		}
+
+		// Output is "<name>\nOK\n" — take first line only.
+		firstLine := strings.TrimSpace(strings.SplitN(string(nameOut), "\n", 2)[0])
+		if firstLine == avdName {
+			return serial, nil
+		}
+	}
+
+	return "", fmt.Errorf("no running emulator found for AVD %q", avdName)
+}
+
 // ToolVersion returns the adb version string (e.g. "1.0.41").
 // First line of `adb version` is "Android Debug Bridge version 1.0.41".
 func (m *androidManager) ToolVersion(ctx context.Context) (Platform, string) {
@@ -21,8 +94,10 @@ func (m *androidManager) ToolVersion(ctx context.Context) (Platform, string) {
 	if err != nil {
 		return PlatformAndroid, "n/a"
 	}
+
 	line := strings.SplitN(string(out), "\n", 2)[0]
 	const prefix = "Android Debug Bridge version "
+
 	return PlatformAndroid, strings.TrimPrefix(strings.TrimSpace(line), prefix)
 }
 
@@ -82,7 +157,6 @@ func parseAVDs(output []byte) []string {
 	return avds
 }
 
-
 func (m *androidManager) getRunningDevices(ctx context.Context) (map[string]bool, error) {
 	cmd := exec.CommandContext(ctx, "adb", "devices")
 	output, err := cmd.Output()
@@ -91,8 +165,8 @@ func (m *androidManager) getRunningDevices(ctx context.Context) (map[string]bool
 	}
 
 	running := make(map[string]bool)
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(string(output), "\n")
+	for line := range lines {
 		if strings.Contains(line, "\tdevice") {
 			parts := strings.Fields(line)
 			if len(parts) > 0 {
@@ -100,14 +174,15 @@ func (m *androidManager) getRunningDevices(ctx context.Context) (map[string]bool
 				// Mapping this back to AVD name requires 'adb -s <serial> emu avd name'
 				// For now, we'll just mark it as potentially running if we find it
 				serial := parts[0]
-				
-				// Try to get the actual AVD name for this serial
+
+				// Try to get the actual AVD name for this serial.
+				// Output is "<name>\nOK\n" — take first line only.
 				nameCmd := exec.CommandContext(ctx, "adb", "-s", serial, "emu", "avd", "name")
 				nameOut, err := nameCmd.Output()
 				if err == nil {
-					avdName := strings.TrimSpace(string(nameOut))
-					if avdName != "" {
-						running[avdName] = true
+					firstLine := strings.TrimSpace(strings.SplitN(string(nameOut), "\n", 2)[0])
+					if firstLine != "" {
+						running[firstLine] = true
 						continue
 					}
 				}

@@ -89,6 +89,15 @@ func (s *Sidebar) SetDevices(devs []device.Device) {
 
 // SelectedDevice returns the device under the cursor in the focused pane,
 // or nil if the focused pane is empty.
+// Devices returns all devices currently loaded in the sidebar (booted + available).
+func (s Sidebar) Devices() []device.Device {
+	out := make([]device.Device, 0, len(s.booted)+len(s.iosAvail)+len(s.andAvail))
+	out = append(out, s.booted...)
+	out = append(out, s.iosAvail...)
+	out = append(out, s.andAvail...)
+	return out
+}
+
 func (s Sidebar) SelectedDevice() *device.Device {
 	switch s.focused {
 	case PaneBooted:
@@ -145,10 +154,7 @@ func (s Sidebar) View() string {
 	availHeight := 0
 	if s.height > 0 {
 		const gapLines = 1
-		availHeight = s.height - lipgloss.Height(bootedBox) - gapLines
-		if availHeight < 3 {
-			availHeight = 3
-		}
+		availHeight = max(s.height-lipgloss.Height(bootedBox)-gapLines, 3)
 	}
 
 	availBox := RenderBox(
@@ -367,10 +373,7 @@ func renderDeviceRow(dev device.Device, selected bool, innerW int, indent bool) 
 		prefixW := len(leftPad) + lipgloss.Width(pglyph) + 1
 		nameMax := innerW - prefixW - minNameVerGap - verW - len(rightPad)
 		nameStr := truncateName(dev.Name, nameMax)
-		gap := innerW - prefixW - lipgloss.Width(nameStr) - verW - len(rightPad)
-		if gap < minNameVerGap {
-			gap = minNameVerGap
-		}
+		gap := max(innerW-prefixW-lipgloss.Width(nameStr)-verW-len(rightPad), minNameVerGap)
 		bg := lipgloss.NewStyle().
 			Foreground(ColorBg).
 			Background(ColorAccent).
@@ -382,10 +385,7 @@ func renderDeviceRow(dev device.Device, selected bool, innerW int, indent bool) 
 	prefixW := len(leftPad) + 1 + 1 + lipgloss.Width(pglyph) + 1
 	nameMax := innerW - prefixW - minNameVerGap - verW - len(rightPad)
 	nameStr := truncateName(dev.Name, nameMax)
-	gap := innerW - prefixW - lipgloss.Width(nameStr) - verW - len(rightPad)
-	if gap < minNameVerGap {
-		gap = minNameVerGap
-	}
+	gap := max(innerW-prefixW-lipgloss.Width(nameStr)-verW-len(rightPad), minNameVerGap)
 
 	dot := lipgloss.NewStyle().Foreground(dotC).Background(ColorBg).Render("●")
 	glyph := lipgloss.NewStyle().Foreground(pgC).Background(ColorBg).Render(pglyph)
@@ -416,10 +416,7 @@ func renderGroupHeader(glyph, label string, count int, c color.Color, innerW int
 	if selected {
 		sel := lipgloss.NewStyle().Foreground(ColorBg).Background(ColorAccent).Bold(true)
 		text := leftPad + caretCh + " " + labelText + " " + fmt.Sprintf("(%d)", count)
-		gap := innerW - lipgloss.Width(text) - len(rightPad)
-		if gap < 1 {
-			gap = 1
-		}
+		gap := max(innerW-lipgloss.Width(text)-len(rightPad), 1)
 		return sel.Render(text + strings.Repeat(" ", gap) + rightPad)
 	}
 
