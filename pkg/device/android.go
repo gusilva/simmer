@@ -1,9 +1,12 @@
 package device
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -191,4 +194,165 @@ func (m *androidManager) getRunningDevices(ctx context.Context) (map[string]bool
 		}
 	}
 	return running, nil
+}
+
+// Info implements InfoLister for Android emulators. It reads static metadata
+// from the AVD config.ini on disk and, when the device is running, queries
+// live properties via `adb shell getprop`.
+func (m *androidManager) Info(ctx context.Context, dev Device) (DeviceInfo, error) {
+	info := DeviceInfo{}
+	add := func(k, v string) {
+		if v == "" {
+			v = "—"
+		}
+		info.Fields = append(info.Fields, InfoField{Key: k, Value: v})
+	}
+
+	add("Name", dev.Name)
+	add("AVD", dev.ID)
+	add("Platform", string(dev.Platform))
+	add("Status", string(dev.Status))
+
+	// Parse config.ini for static AVD metadata.
+	cfg := avdConfig(dev.ID)
+
+	if api := apiFromSysdir(cfg["image.sysdir.1"]); api != "" {
+		add("API Level", api)
+	}
+	if v := cfg["tag.display"]; v != "" {
+		add("Type", v)
+	}
+	if v := cfg["abi.type"]; v != "" {
+		add("Architecture", v)
+	}
+	if v := cfg["hw.cpu.ncore"]; v != "" {
+		add("CPU Cores", v)
+	}
+	if ram := cfg["hw.ramSize"]; ram != "" {
+		add("RAM", ram+" MB")
+	}
+	if w, h := cfg["hw.lcd.width"], cfg["hw.lcd.height"]; w != "" && h != "" {
+		add("Resolution", w+"×"+h)
+	}
+	if d := cfg["hw.lcd.density"]; d != "" {
+		add("Density", d+" dpi")
+	}
+	if sz := cfg["disk.dataPartition.size"]; sz != "" {
+		add("Storage", formatPartitionSize(sz))
+	}
+	if dev := cfg["hw.device.name"]; dev != "" {
+		add("Device", dev)
+	}
+
+	// Live properties — only when the emulator is running.
+	if dev.Status == StatusRunning {
+		if serial, err := m.findSerial(ctx, dev.ID); err == nil {
+			props := adbProps(ctx, serial, []string{
+				"ro.build.version.release",
+				"ro.build.version.sdk",
+				"ro.build.display.id",
+				"ro.product.model",
+			})
+			if v := props["ro.build.version.release"]; v != "" {
+				add("Android", v)
+			}
+			if v := props["ro.build.version.sdk"]; v != "" {
+				add("SDK", v)
+			}
+			if v := props["ro.build.display.id"]; v != "" {
+				add("Build", v)
+			}
+			if v := props["ro.product.model"]; v != "" {
+				add("Model", v)
+			}
+			add("ADB Serial", serial)
+		}
+	}
+
+	return info, nil
+}
+
+// avdConfig reads ~/.android/avd/<name>.avd/config.ini and returns a key→value
+// map. Missing file or parse errors produce an empty map (best-effort).
+func avdConfig(avdName string) map[string]string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return map[string]string{}
+	}
+	path := filepath.Join(home, ".android", "avd", avdName+".avd", "config.ini")
+	f, err := os.Open(path)
+	if err != nil {
+		return map[string]string{}
+	}
+	defer f.Close()
+
+	cfg := make(map[string]string)
+	s := bufio.NewScanner(f)
+	for s.Scan() {
+		k, v, ok := strings.Cut(s.Text(), "=")
+		if !ok {
+			continue
+		}
+		cfg[strings.TrimSpace(k)] = strings.TrimSpace(v)
+	}
+	return cfg
+}
+
+// apiFromSysdir extracts the API level from a sysdir path like
+// "system-images/android-33/google_apis_playstore/x86_64/".
+func apiFromSysdir(sysdir string) string {
+	for _, part := range strings.Split(sysdir, "/") {
+		if after, ok := strings.CutPrefix(part, "android-"); ok && after != "" {
+			return after
+		}
+	}
+	return ""
+}
+
+// adbProps fetches the given getprop keys from a running emulator in a single
+// shell invocation and returns a key→value map.
+func adbProps(ctx context.Context, serial string, keys []string) map[string]string {
+	// Build a one-liner: getprop k1; getprop k2; ...
+	cmds := make([]string, len(keys))
+	for i, k := range keys {
+		cmds[i] = "getprop " + k
+	}
+	out, err := exec.CommandContext(ctx, "adb", "-s", serial, "shell",
+		strings.Join(cmds, "; ")).Output()
+	if err != nil {
+		return map[string]string{}
+	}
+	result := make(map[string]string, len(keys))
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	for i, k := range keys {
+		if i < len(lines) {
+			result[k] = strings.TrimSpace(lines[i])
+		}
+	}
+	return result
+}
+
+// formatPartitionSize converts a raw size string (bytes or with K/M/G suffix)
+// from config.ini into a human-readable form.
+func formatPartitionSize(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) == 0 {
+		return s
+	}
+	suffix := s[len(s)-1]
+	switch suffix {
+	case 'K', 'k':
+		return s[:len(s)-1] + " KB"
+	case 'M', 'm':
+		return s[:len(s)-1] + " MB"
+	case 'G', 'g':
+		return s[:len(s)-1] + " GB"
+	}
+	// Raw bytes
+	var b int64
+	fmt.Sscanf(s, "%d", &b)
+	if b == 0 {
+		return s
+	}
+	return formatBytes(b)
 }

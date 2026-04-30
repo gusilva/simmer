@@ -280,11 +280,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.focus = focusMain
 			m.applyFocus()
 
-			return m, tea.Batch(
-				m.loadFileTreeCmd(*sel),
-				m.loadAppsCmd(*sel),
-				m.loadInfoCmd(*sel),
-			)
+			dev := *sel
+			m.mainPane.SetDevice(&dev, nil)
+
+			cmds := []tea.Cmd{m.loadInfoCmd(dev)}
+			if dev.Platform == device.PlatformIOS {
+				cmds = append(cmds, m.loadFileTreeCmd(dev), m.loadAppsCmd(dev))
+			}
+			return m, tea.Batch(cmds...)
 		}
 		var cmd tea.Cmd
 		m.sidebar, cmd = m.sidebar.Update(msg)
@@ -369,8 +372,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.setStatus("files load failed: "+errPreview(msg.err), ui.StatusErr)
 		}
 
-		dev := msg.device
-		m.mainPane.SetDevice(&dev, &msg.root)
+		m.mainPane.SetTree(&msg.root)
 
 		return m, nil
 

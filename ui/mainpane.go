@@ -111,6 +111,22 @@ func (m *MainPane) SetDevice(d *device.Device, root *device.FileNode) {
 	}
 }
 
+// SetTree replaces only the filesystem tree without resetting the rest of the
+// pane state. Use this when the tree loads asynchronously after SetDevice.
+func (m *MainPane) SetTree(root *device.FileNode) {
+	m.tree = root
+	m.expanded = map[string]bool{}
+	m.treeIdx = 0
+	if root != nil {
+		m.expanded[root.Path] = true
+		for _, c := range root.Children {
+			if c.IsDir {
+				m.expanded[c.Path] = true
+			}
+		}
+	}
+}
+
 // SetApps replaces the list of installed apps shown in the Apps tab.
 func (m *MainPane) SetApps(apps []device.App) {
 	m.apps = apps
