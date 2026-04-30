@@ -283,9 +283,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			dev := *sel
 			m.mainPane.SetDevice(&dev, nil)
 
-			cmds := []tea.Cmd{m.loadInfoCmd(dev)}
+			cmds := []tea.Cmd{m.loadInfoCmd(dev), m.loadAppsCmd(dev)}
 			if dev.Platform == device.PlatformIOS {
-				cmds = append(cmds, m.loadFileTreeCmd(dev), m.loadAppsCmd(dev))
+				cmds = append(cmds, m.loadFileTreeCmd(dev))
 			}
 			return m, tea.Batch(cmds...)
 		}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -194,6 +195,102 @@ func (m *androidManager) getRunningDevices(ctx context.Context) (map[string]bool
 		}
 	}
 	return running, nil
+}
+
+// ListApps implements AppLister for Android emulators. It fetches user-installed
+// packages via `pm list packages -3 -f`, then enriches version info from
+// `dumpsys package packages` in a single additional adb call.
+func (m *androidManager) ListApps(ctx context.Context, id string) ([]App, error) {
+	serial, err := m.findSerial(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("find serial for %s: %w", id, err)
+	}
+
+	pkgOut, err := exec.CommandContext(ctx, "adb", "-s", serial,
+		"shell", "pm", "list", "packages", "-3", "-f").Output()
+	if err != nil {
+		return nil, fmt.Errorf("pm list packages -3 -f: %w", err)
+	}
+
+	type entry struct{ path string }
+	byID := map[string]entry{}
+
+	for _, line := range strings.Split(strings.TrimSpace(string(pkgOut)), "\n") {
+		line = strings.TrimSpace(line)
+		after, ok := strings.CutPrefix(line, "package:")
+		if !ok {
+			continue
+		}
+		// format: /data/app/~~xxx/com.example.app-1/base.apk=com.example.app
+		eq := strings.LastIndex(after, "=")
+		if eq < 0 {
+			continue
+		}
+		bundleID := strings.TrimSpace(after[eq+1:])
+		path := after[:eq]
+		if bundleID != "" {
+			byID[bundleID] = entry{path: path}
+		}
+	}
+
+	if len(byID) == 0 {
+		return nil, nil
+	}
+
+	versions := androidFetchVersions(ctx, serial, byID)
+
+	apps := make([]App, 0, len(byID))
+	for bundleID, e := range byID {
+		apps = append(apps, App{
+			BundleID:     bundleID,
+			Path:         e.path,
+			Type:         "User",
+			ShortVersion: versions[bundleID],
+		})
+	}
+
+	sort.SliceStable(apps, func(i, j int) bool {
+		a, b := strings.ToLower(apps[i].Label()), strings.ToLower(apps[j].Label())
+		if a == b {
+			return apps[i].BundleID < apps[j].BundleID
+		}
+		return a < b
+	})
+	return apps, nil
+}
+
+// androidFetchVersions returns a bundleID→versionName map by parsing a single
+// `dumpsys package packages` call, skipping lines for packages not in byID.
+func androidFetchVersions[E any](ctx context.Context, serial string, byID map[string]E) map[string]string {
+	out, err := exec.CommandContext(ctx, "adb", "-s", serial,
+		"shell", "dumpsys", "package", "packages").Output()
+	if err != nil {
+		return map[string]string{}
+	}
+
+	result := make(map[string]string, len(byID))
+	cur := ""
+	for _, line := range strings.Split(string(out), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if after, ok := strings.CutPrefix(trimmed, "Package ["); ok {
+			if end := strings.Index(after, "]"); end >= 0 {
+				cur = after[:end]
+			}
+			continue
+		}
+		if cur == "" {
+			continue
+		}
+		if _, want := byID[cur]; !want {
+			continue
+		}
+		if after, ok := strings.CutPrefix(trimmed, "versionName="); ok {
+			if parts := strings.Fields(after); len(parts) > 0 {
+				result[cur] = parts[0]
+			}
+		}
+	}
+	return result
 }
 
 // Info implements InfoLister for Android emulators. It reads static metadata
