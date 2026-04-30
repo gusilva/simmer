@@ -193,6 +193,13 @@ type RequestLogStreamMsg struct {
 // StopLogStreamMsg is dispatched when the user deselects the streaming app.
 type StopLogStreamMsg struct{}
 
+// RequestFileTreeMsg is dispatched when the Files tab is opened for an Android
+// device that has a selected app. The parent program should load and return
+// the file tree for the given app's sandbox.
+type RequestFileTreeMsg struct {
+	App device.App
+}
+
 // AppFocusedMsg is dispatched whenever the cursor lands on an app row in the
 // Apps tab. Useful for surfacing the selection in a status bar.
 type AppFocusedMsg struct {
@@ -226,6 +233,10 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 		return m, nil
 	case "4":
 		m.tab = TabFiles
+		if m.active != nil && m.active.Platform == device.PlatformAndroid && m.selectedApp != nil {
+			app := *m.selectedApp
+			return m, func() tea.Msg { return RequestFileTreeMsg{App: app} }
+		}
 		return m, nil
 	}
 	switch m.tab {
@@ -757,6 +768,21 @@ func (m MainPane) flattenTree() []treeRow {
 
 func (m MainPane) renderTreePane(w, h int) []string {
 	lines := []string{m.renderCrumb(w), padBg(w)}
+
+	if m.tree == nil && m.active != nil && m.active.Platform == device.PlatformAndroid {
+		var hint string
+		if m.selectedApp == nil {
+			hint = "  select an app in the Apps tab to browse its files"
+		} else {
+			hint = "  loading files…"
+		}
+		lines = append(lines, lipgloss.NewStyle().
+			Foreground(ColorFgFaint).Background(ColorBg).Render(hint))
+		for len(lines) < h {
+			lines = append(lines, padBg(w))
+		}
+		return lines
+	}
 
 	visibleH := max(h-len(lines), 1)
 	rows := m.flattenTree()

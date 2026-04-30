@@ -42,7 +42,7 @@ func (m *androidManager) Boot(_ context.Context, id string) error {
 // id. It maps the AVD name back to an adb serial via `adb -s <serial> emu avd
 // name`, then issues `adb -s <serial> emu kill`.
 func (m *androidManager) Shutdown(ctx context.Context, id string) error {
-	serial, err := m.findSerial(ctx, id)
+	serial, err := findAndroidSerial(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -61,9 +61,10 @@ func (m *androidManager) Shutdown(ctx context.Context, id string) error {
 	return nil
 }
 
-// findSerial returns the adb serial (e.g. "emulator-5554") for the running
-// emulator whose AVD name matches avdName.
-func (m *androidManager) findSerial(ctx context.Context, avdName string) (string, error) {
+// findAndroidSerial returns the adb serial (e.g. "emulator-5554") for the
+// running emulator whose AVD name matches avdName. Package-level so both
+// androidManager and AndroidFileSystem can use it.
+func findAndroidSerial(ctx context.Context, avdName string) (string, error) {
 	out, err := exec.CommandContext(ctx, "adb", "devices").Output()
 	if err != nil {
 		return "", fmt.Errorf("adb devices: %w", err)
@@ -72,25 +73,21 @@ func (m *androidManager) findSerial(ctx context.Context, avdName string) (string
 		if !strings.Contains(line, "\tdevice") {
 			continue
 		}
-
 		parts := strings.Fields(line)
 		if len(parts) == 0 {
 			continue
 		}
-
 		serial := parts[0]
 		nameOut, err := exec.CommandContext(ctx, "adb", "-s", serial, "emu", "avd", "name").Output()
 		if err != nil {
 			continue
 		}
-
 		// Output is "<name>\nOK\n" — take first line only.
 		firstLine := strings.TrimSpace(strings.SplitN(string(nameOut), "\n", 2)[0])
 		if firstLine == avdName {
 			return serial, nil
 		}
 	}
-
 	return "", fmt.Errorf("no running emulator found for AVD %q", avdName)
 }
 
@@ -204,7 +201,7 @@ func (m *androidManager) getRunningDevices(ctx context.Context) (map[string]bool
 // packages via `pm list packages -3 -f`, then enriches version info from
 // `dumpsys package packages` in a single additional adb call.
 func (m *androidManager) ListApps(ctx context.Context, id string) ([]App, error) {
-	serial, err := m.findSerial(ctx, id)
+	serial, err := findAndroidSerial(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("find serial for %s: %w", id, err)
 	}
@@ -303,7 +300,7 @@ func androidFetchVersions[E any](ctx context.Context, serial string, byID map[st
 func (m *androidManager) StreamLogs(parent context.Context, dev Device, app App) (*LogStream, error) {
 	ctx, cancel := context.WithCancel(parent)
 
-	serial, err := m.findSerial(ctx, dev.ID)
+	serial, err := findAndroidSerial(ctx, dev.ID)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("find serial for %s: %w", dev.ID, err)
@@ -423,7 +420,7 @@ func (m *androidManager) Info(ctx context.Context, dev Device) (DeviceInfo, erro
 
 	// Live properties — only when the emulator is running.
 	if dev.Status == StatusRunning {
-		if serial, err := m.findSerial(ctx, dev.ID); err == nil {
+		if serial, err := findAndroidSerial(ctx, dev.ID); err == nil {
 			props := adbProps(ctx, serial, []string{
 				"ro.build.version.release",
 				"ro.build.version.sdk",

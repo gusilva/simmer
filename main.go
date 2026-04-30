@@ -131,6 +131,16 @@ func (m model) loadFileTreeCmd(dev device.Device) tea.Cmd {
 	}
 }
 
+func (m model) loadAndroidFileTreeCmd(dev device.Device, app device.App) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		fs := device.NewAndroidFileSystem(app.BundleID)
+		root, err := fs.Tree(ctx, dev)
+		return fileTreeMsg{device: dev, root: root, err: err}
+	}
+}
+
 func (m model) loadAppsCmd(dev device.Device) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -416,6 +426,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		return m, nil
+
+	case ui.RequestFileTreeMsg:
+		sel := m.sidebar.SelectedDevice()
+		if sel == nil {
+			return m, nil
+		}
+		return m, m.loadAndroidFileTreeCmd(*sel, msg.App)
 
 	case ui.StopLogStreamMsg:
 		if m.logStream != nil {
