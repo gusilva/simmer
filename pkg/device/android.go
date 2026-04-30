@@ -4,11 +4,14 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 )
 
 type androidManager struct{}
@@ -291,6 +294,83 @@ func androidFetchVersions[E any](ctx context.Context, serial string, byID map[st
 		}
 	}
 	return result
+}
+
+// StreamLogs implements LogStreamer for Android emulators. It launches the app
+// via `adb shell monkey`, resolves its PID with `pidof`, then streams
+// `adb logcat --pid=<pid>`. If the PID cannot be resolved, logcat runs
+// unfiltered for the device.
+func (m *androidManager) StreamLogs(parent context.Context, dev Device, app App) (*LogStream, error) {
+	ctx, cancel := context.WithCancel(parent)
+
+	serial, err := m.findSerial(ctx, dev.ID)
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("find serial for %s: %w", dev.ID, err)
+	}
+
+	// Best-effort launch so the process exists before we ask for its PID.
+	launchCtx, launchCancel := context.WithTimeout(ctx, 5*time.Second)
+	_ = exec.CommandContext(launchCtx, "adb", "-s", serial, "shell",
+		"monkey", "-p", app.BundleID,
+		"-c", "android.intent.category.LAUNCHER", "1").Run()
+	launchCancel()
+
+	// Build logcat args; add --pid filter when we can resolve it.
+	logcatArgs := []string{"-s", serial, "logcat", "-v", "time"}
+	if pidOut, err := exec.CommandContext(ctx, "adb", "-s", serial,
+		"shell", "pidof", "-s", app.BundleID).Output(); err == nil {
+		if pid := strings.TrimSpace(string(pidOut)); pid != "" {
+			logcatArgs = append(logcatArgs, "--pid="+pid)
+		}
+	}
+
+	cmd := exec.CommandContext(ctx, "adb", logcatArgs...)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("stdout pipe: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("stderr pipe: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		cancel()
+		return nil, fmt.Errorf("adb logcat: %w", err)
+	}
+
+	lines := make(chan string, 256)
+	done := make(chan error, 1)
+
+	scan := func(r io.Reader, wg *sync.WaitGroup) {
+		defer wg.Done()
+		s := bufio.NewScanner(r)
+		s.Buffer(make([]byte, 64*1024), 1024*1024)
+		for s.Scan() {
+			select {
+			case lines <- s.Text():
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go scan(stdout, &wg)
+	go scan(stderr, &wg)
+
+	go func() {
+		wg.Wait()
+		close(lines)
+		done <- cmd.Wait()
+		close(done)
+	}()
+
+	return &LogStream{Lines: lines, Done: done, Stop: cancel}, nil
 }
 
 // Info implements InfoLister for Android emulators. It reads static metadata
