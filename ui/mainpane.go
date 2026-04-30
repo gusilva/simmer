@@ -37,19 +37,20 @@ var mainTabs = []Tab{
 // It is a pure UI component: callers pass in the active device and a loaded
 // filesystem tree via SetDevice.
 type MainPane struct {
-	active   *device.Device
-	tab      MainTab
-	tree     *device.FileNode
-	expanded map[string]bool
-	treeIdx  int
-	apps     []device.App
-	appsIdx  int
-	info     device.DeviceInfo
-	infoIdx  int
-	logs      []string
-	logBundle string
-	logsVP    viewport.Model
-	focused   bool
+	active      *device.Device
+	tab         MainTab
+	tree        *device.FileNode
+	expanded    map[string]bool
+	treeIdx     int
+	apps        []device.App
+	appsIdx     int
+	selectedApp *device.App
+	info        device.DeviceInfo
+	infoIdx     int
+	logs        []string
+	logBundle   string
+	logsVP      viewport.Model
+	focused     bool
 
 	width  int
 	height int
@@ -93,6 +94,7 @@ func (m *MainPane) SetDevice(d *device.Device, root *device.FileNode) {
 	m.treeIdx = 0
 	m.apps = nil
 	m.appsIdx = 0
+	m.selectedApp = nil
 	m.info = device.DeviceInfo{}
 	m.infoIdx = 0
 	m.logs = nil
@@ -165,12 +167,15 @@ func (m *MainPane) AppendLog(line string) {
 // or "" if none.
 func (m MainPane) LogBundle() string { return m.logBundle }
 
-// RequestLogStreamMsg is dispatched by MainPane when the user enters the Logs
-// tab with an app selected. The parent program is expected to start streaming
-// logs for the given app and feed them back via AppendLog.
+// RequestLogStreamMsg is dispatched by MainPane when the user selects an app
+// for log streaming. The parent program is expected to start streaming logs
+// for the given app and feed them back via AppendLog.
 type RequestLogStreamMsg struct {
 	App device.App
 }
+
+// StopLogStreamMsg is dispatched when the user deselects the streaming app.
+type StopLogStreamMsg struct{}
 
 // AppFocusedMsg is dispatched whenever the cursor lands on an app row in the
 // Apps tab. Useful for surfacing the selection in a status bar.
@@ -202,10 +207,6 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 		return m, nil
 	case "3":
 		m.tab = TabLogs
-		if app := m.SelectedApp(); app != nil {
-			a := *app
-			return m, func() tea.Msg { return RequestLogStreamMsg{App: a} }
-		}
 		return m, nil
 	case "4":
 		m.tab = TabFiles
@@ -263,6 +264,21 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 			if len(m.apps) > 0 {
 				m.appsIdx = len(m.apps) - 1
 			}
+		case "space":
+			if len(m.apps) == 0 {
+				return m, nil
+			}
+
+			app := m.apps[m.appsIdx]
+			if m.selectedApp != nil && m.selectedApp.BundleID == app.BundleID {
+				m.selectedApp = nil
+				return m, func() tea.Msg { return StopLogStreamMsg{} }
+			}
+
+			a := app
+			m.selectedApp = &a
+
+			return m, func() tea.Msg { return RequestLogStreamMsg{App: a} }
 		}
 		if m.appsIdx != prev {
 			if app := m.SelectedApp(); app != nil {
@@ -541,7 +557,7 @@ func (m MainPane) renderLogs(w, h int) string {
 		hint := lipgloss.NewStyle().
 			Foreground(ColorFgFaint).
 			Background(ColorBg).
-			Render("  pick an app on the Apps tab, then press 3 to stream its logs")
+			Render("  no selected app — press space on an app to start streaming")
 		lines := []string{hint}
 		for len(lines) < h {
 			lines = append(lines, padBg(w))
@@ -601,7 +617,8 @@ func (m MainPane) renderApps(w, h int) string {
 
 	lines := make([]string, 0, h)
 	for i := offset; i < end; i++ {
-		lines = append(lines, m.renderAppRow(m.apps[i], w, i == m.appsIdx))
+		streaming := m.selectedApp != nil && m.selectedApp.BundleID == m.apps[i].BundleID
+		lines = append(lines, m.renderAppRow(m.apps[i], w, i == m.appsIdx, streaming))
 	}
 	for len(lines) < h {
 		lines = append(lines, padBg(w))
@@ -609,13 +626,24 @@ func (m MainPane) renderApps(w, h int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m MainPane) renderAppRow(app device.App, w int, selected bool) string {
+func (m MainPane) renderAppRow(app device.App, w int, cursor bool, streaming bool) string {
 	bg := lipgloss.NewStyle().Background(ColorBg)
 
 	label := app.Label()
 	meta := app.ShortVersion
 	if meta == "" {
 		meta = app.Version
+	}
+
+	// ⊙ = broadcast/signal indicator; 2 cells: space + glyph
+	const streamIcon = " ⊙"
+	const streamIconW = 2
+
+	iconStr := ""
+	iconW := 0
+	if streaming {
+		iconStr = streamIcon
+		iconW = streamIconW
 	}
 
 	const (
@@ -625,17 +653,23 @@ func (m MainPane) renderAppRow(app device.App, w int, selected bool) string {
 	)
 
 	metaW := lipgloss.Width(meta)
-	nameMax := max(w-leadW-metaW-trailW-minGap, 1)
+	nameMax := max(w-leadW-iconW-metaW-trailW-minGap, 1)
 	nameStr := truncateName(label, nameMax)
-	gap := max(w-leadW-lipgloss.Width(nameStr)-metaW-trailW, minGap)
+	gap := max(w-leadW-lipgloss.Width(nameStr)-iconW-metaW-trailW, minGap)
 
-	if selected {
+	if cursor {
 		sel := lipgloss.NewStyle().Foreground(ColorBg).Background(ColorAccent).Bold(true)
-		return sel.Render(" " + nameStr + strings.Repeat(" ", gap) + meta + " ")
+		return sel.Render(" " + nameStr + iconStr + strings.Repeat(" ", gap) + meta + " ")
 	}
 
 	nameStyled := lipgloss.NewStyle().Foreground(ColorFg).Background(ColorBg).Render(nameStr)
 	metaStyled := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg).Render(meta)
+
+	if streaming {
+		iconStyled := lipgloss.NewStyle().Foreground(ColorOk).Background(ColorBg).Render(iconStr)
+		return " " + nameStyled + iconStyled + bg.Render(strings.Repeat(" ", gap)) + metaStyled + bg.Render(" ")
+	}
+
 	return " " + nameStyled + bg.Render(strings.Repeat(" ", gap)) + metaStyled + bg.Render(" ")
 }
 

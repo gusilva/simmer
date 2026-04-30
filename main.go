@@ -385,6 +385,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, nil
 
+	case ui.StopLogStreamMsg:
+		if m.logStream != nil {
+			m.logStream.Stop()
+			m.logStream = nil
+		}
+		m.logBundleID = ""
+		m.logDeviceID = ""
+		m.mainPane.SetLogBundle("")
+
+		return m, nil
+
 	case ui.RequestLogStreamMsg:
 		sel := m.sidebar.SelectedDevice()
 		if sel == nil {
