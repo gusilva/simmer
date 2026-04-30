@@ -233,7 +233,7 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 		return m, nil
 	case "4":
 		m.tab = TabFiles
-		if m.active != nil && m.active.Platform == device.PlatformAndroid && m.selectedApp != nil {
+		if m.active != nil && m.selectedApp != nil {
 			app := *m.selectedApp
 			return m, func() tea.Msg { return RequestFileTreeMsg{App: app} }
 		}
@@ -299,11 +299,13 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 			app := m.apps[m.appsIdx]
 			if m.selectedApp != nil && m.selectedApp.BundleID == app.BundleID {
 				m.selectedApp = nil
+				m.tree = nil
 				return m, func() tea.Msg { return StopLogStreamMsg{} }
 			}
 
 			a := app
 			m.selectedApp = &a
+			m.tree = nil
 
 			return m, func() tea.Msg { return RequestLogStreamMsg{App: a} }
 		}
@@ -371,7 +373,7 @@ func (m MainPane) View() string {
 		rows = append(rows, hrule(innerW, -1, "", innerRule))
 		rows = append(rows, RenderTabs(mainTabs, int(m.tab), innerW))
 		junction := -1
-		if m.tab == TabFiles {
+		if m.tab == TabFiles && m.tree != nil {
 			junction = treeW
 		}
 		rows = append(rows, hrule(innerW, junction, "┬", innerRule))
@@ -395,7 +397,7 @@ func (m MainPane) View() string {
 	}
 
 	bottomDashes := strings.Repeat("─", innerW)
-	if m.active != nil && m.tab == TabFiles && treeW > 0 && treeW < innerW {
+	if m.active != nil && m.tab == TabFiles && m.tree != nil && treeW > 0 && treeW < innerW {
 		bottomDashes = strings.Repeat("─", treeW) + "┴" + strings.Repeat("─", innerW-treeW-1)
 	}
 	wrapped = append(wrapped, frame.Render("╰"+bottomDashes+"╯"))
@@ -581,11 +583,14 @@ func (m MainPane) renderLogs(w, h int) string {
 	bg := lipgloss.NewStyle().Background(ColorBg)
 
 	if m.logBundle == "" {
-		hint := lipgloss.NewStyle().
+		rendered := lipgloss.NewStyle().
 			Foreground(ColorFgFaint).
 			Background(ColorBg).
 			Render("  no selected app — press space on an app to start streaming")
-		lines := []string{hint}
+		if pad := w - lipgloss.Width(rendered); pad > 0 {
+			rendered += lipgloss.NewStyle().Background(ColorBg).Render(strings.Repeat(" ", pad))
+		}
+		lines := []string{rendered}
 		for len(lines) < h {
 			lines = append(lines, padBg(w))
 		}
@@ -713,6 +718,11 @@ func (m MainPane) renderPlaceholder(innerW, innerH int) string {
 }
 
 func (m MainPane) renderFiles(innerW, innerH int) string {
+	if m.tree == nil {
+		lines := m.renderTreePane(innerW, innerH)
+		return strings.Join(lines, "\n")
+	}
+
 	treeW, _, previewW := filesLayout(innerW)
 
 	treeLines := m.renderTreePane(treeW, innerH)
@@ -769,15 +779,19 @@ func (m MainPane) flattenTree() []treeRow {
 func (m MainPane) renderTreePane(w, h int) []string {
 	lines := []string{m.renderCrumb(w), padBg(w)}
 
-	if m.tree == nil && m.active != nil && m.active.Platform == device.PlatformAndroid {
+	if m.tree == nil && m.active != nil {
 		var hint string
 		if m.selectedApp == nil {
 			hint = "  select an app in the Apps tab to browse its files"
 		} else {
 			hint = "  loading files…"
 		}
-		lines = append(lines, lipgloss.NewStyle().
-			Foreground(ColorFgFaint).Background(ColorBg).Render(hint))
+		rendered := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg).Render(hint)
+		pad := w - lipgloss.Width(rendered)
+		if pad > 0 {
+			rendered += lipgloss.NewStyle().Background(ColorBg).Render(strings.Repeat(" ", pad))
+		}
+		lines = append(lines, rendered)
 		for len(lines) < h {
 			lines = append(lines, padBg(w))
 		}

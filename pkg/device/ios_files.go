@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // IOSFileSystem reads the local CoreSimulator data directory for a booted
@@ -113,4 +115,48 @@ func walkNode(ctx context.Context, path string, info os.FileInfo, depth, maxDept
 
 	n.Children = children
 	return n, nil
+}
+
+// IOSAppFileSystem resolves a single app's data container via
+// `xcrun simctl get_app_container` and walks it locally — the same host-side
+// walk used by IOSFileSystem, scoped to one bundle.
+type IOSAppFileSystem struct {
+	BundleID string
+	MaxDepth int
+}
+
+// NewIOSAppFileSystem returns a FileSystem scoped to the given app's data
+// container on an iOS simulator.
+func NewIOSAppFileSystem(bundleID string) FileSystem {
+	return &IOSAppFileSystem{BundleID: bundleID, MaxDepth: 4}
+}
+
+// Tree resolves the app's data container path and walks it up to MaxDepth.
+func (f *IOSAppFileSystem) Tree(ctx context.Context, dev Device) (FileNode, error) {
+	out, err := exec.CommandContext(ctx,
+		"xcrun", "simctl", "get_app_container", dev.ID, f.BundleID, "data",
+	).Output()
+	if err != nil {
+		return FileNode{}, fmt.Errorf("get_app_container %s %s: %w", dev.ID, f.BundleID, err)
+	}
+	root := strings.TrimSpace(string(out))
+	if root == "" {
+		return FileNode{}, fmt.Errorf("get_app_container returned empty path for %s", f.BundleID)
+	}
+
+	info, err := os.Stat(root)
+	if err != nil {
+		return FileNode{}, fmt.Errorf("stat %s: %w", root, err)
+	}
+
+	maxD := f.MaxDepth
+	if maxD <= 0 {
+		maxD = 4
+	}
+	node, err := walkNode(ctx, root, info, 0, maxD)
+	if err != nil {
+		return FileNode{}, err
+	}
+	node.Name = f.BundleID
+	return node, nil
 }

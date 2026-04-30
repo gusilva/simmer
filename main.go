@@ -30,7 +30,6 @@ type model struct {
 	mainPane     ui.MainPane
 	focus        appFocus
 	coordinator  *device.Coordinator
-	fs           device.FileSystem
 	loading      bool
 	errs         []error
 	quitting     bool
@@ -122,11 +121,12 @@ func (m model) shutdownDeviceCmd(dev device.Device) tea.Cmd {
 	}
 }
 
-func (m model) loadFileTreeCmd(dev device.Device) tea.Cmd {
+func (m model) loadIOSAppFileTreeCmd(dev device.Device, app device.App) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		root, err := m.fs.Tree(ctx, dev)
+		fs := device.NewIOSAppFileSystem(app.BundleID)
+		root, err := fs.Tree(ctx, dev)
 		return fileTreeMsg{device: dev, root: root, err: err}
 	}
 }
@@ -197,7 +197,6 @@ func initialModel() model {
 		mainPane:     ui.NewMainPane(),
 		focus:        focusSidebar,
 		coordinator:  coord,
-		fs:           device.NewIOSFileSystem(),
 		loading:      true,
 		toolVersions: make(map[device.Platform]string),
 	}
@@ -293,11 +292,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			dev := *sel
 			m.mainPane.SetDevice(&dev, nil)
 
-			cmds := []tea.Cmd{m.loadInfoCmd(dev), m.loadAppsCmd(dev)}
-			if dev.Platform == device.PlatformIOS {
-				cmds = append(cmds, m.loadFileTreeCmd(dev))
-			}
-			return m, tea.Batch(cmds...)
+			return m, tea.Batch(m.loadInfoCmd(dev), m.loadAppsCmd(dev))
 		}
 		var cmd tea.Cmd
 		m.sidebar, cmd = m.sidebar.Update(msg)
@@ -432,7 +427,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if sel == nil {
 			return m, nil
 		}
-		return m, m.loadAndroidFileTreeCmd(*sel, msg.App)
+
+		switch sel.Platform {
+		case device.PlatformIOS:
+			return m, m.loadIOSAppFileTreeCmd(*sel, msg.App)
+		case device.PlatformAndroid:
+			return m, m.loadAndroidFileTreeCmd(*sel, msg.App)
+		}
+
+		return m, nil
 
 	case ui.StopLogStreamMsg:
 		if m.logStream != nil {
