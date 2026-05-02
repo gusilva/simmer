@@ -37,30 +37,30 @@ var mainTabs = []Tab{
 // It is a pure UI component: callers pass in the active device and a loaded
 // filesystem tree via SetDevice.
 type MainPane struct {
-	active      *device.Device
-	tab         MainTab
-	tree        *device.FileNode
-	expanded    map[string]bool
-	treeIdx     int
-	apps        []device.App
-	appsIdx     int
-	selectedApp *device.App
-	info        device.DeviceInfo
-	infoIdx     int
-	logs        []string
-	logBundle   string
-	logsVP      viewport.Model
-	focused     bool
-
-	width  int
-	height int
+	active      *device.Device    // Which device is selected (nil = none)
+	tab         MainTab           // Which tab is active: Info, Apps, Logs, Files
+	tree        *device.FileNode  // Filesystem tree for Files Tab
+	expanded    map[string]bool   // Which dirs are open in the tree
+	treeIdx     int               // Cursor row in the tree
+	apps        []device.App      // List of installed apps
+	appsIdx     int               // Cursor row in the apps list
+	selectedApp *device.App       // The app with log streaming ON
+	info        device.DeviceInfo // Device info fields for the Info tab
+	infoIdx     int               // Cursor row in the info list
+	logs        []string          // Buffered log lines
+	logBundle   string            // Which app's logs we're streaming
+	logsVP      viewport.Model    // Scrollable viewport for logs
+	focused     bool              // Does this pane have keyboard focus?
+	width       int               // Outer width available to the pane (including borders)
+	height      int               // Outer height available to the pane (including borders)
 }
 
 // NewMainPane returns an empty main pane.
 func NewMainPane() MainPane {
-	vp := viewport.New()
+	vp := viewport.New() // scrollable text area
 	vp.SoftWrap = true
 	vp.Style = lipgloss.NewStyle().Foreground(ColorFgDim).Background(ColorBg)
+
 	return MainPane{expanded: map[string]bool{}, logsVP: vp}
 }
 
@@ -77,6 +77,7 @@ func (m *MainPane) SetSize(w, h int) {
 	contentH := max(innerH-4, 1)
 	vpH := max(contentH-2, 1)
 	vpW := max(innerW-2, 1)
+
 	m.logsVP.SetWidth(vpW)
 	m.logsVP.SetHeight(vpH)
 }
@@ -489,15 +490,22 @@ func (m MainPane) renderTabContent(innerW, innerH int) string {
 // ── Info tab ───────────────────────────────────────────────────────────
 
 func (m MainPane) renderInfo(w, h int) string {
+
 	if len(m.info.Fields) == 0 {
 		hint := lipgloss.NewStyle().
 			Foreground(ColorFgFaint).
 			Background(ColorBg).
 			Render("  loading info…")
+
+		if pad := w - lipgloss.Width(hint); pad > 0 {
+			hint += lipgloss.NewStyle().Background(ColorBg).Render(strings.Repeat(" ", pad))
+		}
+
 		lines := []string{hint}
 		for len(lines) < h {
 			lines = append(lines, padBg(w))
 		}
+
 		return strings.Join(lines, "\n")
 	}
 
@@ -633,10 +641,16 @@ func (m MainPane) renderApps(w, h int) string {
 			Foreground(ColorFgFaint).
 			Background(ColorBg).
 			Render("  no apps installed")
+
+		if pad := w - lipgloss.Width(hint); pad > 0 {
+			hint += lipgloss.NewStyle().Background(ColorBg).Render(strings.Repeat(" ", pad))
+		}
+
 		lines := []string{hint}
 		for len(lines) < h {
 			lines = append(lines, padBg(w))
 		}
+
 		return strings.Join(lines, "\n")
 	}
 
@@ -645,16 +659,18 @@ func (m MainPane) renderApps(w, h int) string {
 	if m.appsIdx >= visibleH {
 		offset = m.appsIdx - visibleH + 1
 	}
-	end := min(offset+visibleH, len(m.apps))
 
+	end := min(offset+visibleH, len(m.apps))
 	lines := make([]string, 0, h)
 	for i := offset; i < end; i++ {
 		streaming := m.selectedApp != nil && m.selectedApp.BundleID == m.apps[i].BundleID
 		lines = append(lines, m.renderAppRow(m.apps[i], w, i == m.appsIdx, streaming))
 	}
+
 	for len(lines) < h {
 		lines = append(lines, padBg(w))
 	}
+
 	return strings.Join(lines, "\n")
 }
 
