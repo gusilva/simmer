@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"simmer/pkg/device"
+	"simmer/internal/device"
 
 	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/textinput"

@@ -1,4 +1,4 @@
-## `ui/overlays.go` — modal overlays for device create/delete
+## `internal/ui/overlays.go` — modal overlays for device create/delete
 
 This file contains all overlay UI components and the messages that drive them.
 Overlays are rendered **on top of** the normal TUI layout using the
@@ -9,7 +9,7 @@ Lip Gloss v2 compositor layer API — they are not part of the Bubble Tea compon
 ## Architecture overview
 
 ```
-Sidebar                  main.go (Model)              overlays.go
+Sidebar                  internal/app/app.go (Model)              overlays.go
   │  'a' pressed    ──▶  ShowPlatformPickerMsg
   │  'd' pressed    ──▶  ShowDeleteSimulatorMsg
   │
@@ -29,7 +29,7 @@ Sidebar                  main.go (Model)              overlays.go
 ```
 
 **Key design:** overlays are self-contained components. They emit messages;
-they never call platform tools directly. The parent model (`main.go`) holds a
+they never call platform tools directly. The parent model (`internal/app/app.go`) holds a
 nullable pointer to the active overlay and routes key events to it first.
 
 ---
@@ -323,7 +323,7 @@ starts after the user commits to a platform.
 sequenceDiagram
     participant U as User
     participant Sb as Sidebar
-    participant M as main.go Model
+    participant M as internal/app/app.go Model
     participant O as Overlay (modal/alert)
     participant D as device.Coordinator
 

@@ -21,10 +21,10 @@ jobs:
           go-version-file: go.mod
 
       - name: Build (darwin/amd64)
-        run: GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w -X main.version=${{ github.ref_name }}" -o dist/simmer-darwin-amd64 main.go
+        run: mkdir -p dist && GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w -X main.version=${{ github.ref_name }}" -o dist/simmer-darwin-amd64 ./cmd/simmer
 
       - name: Build (darwin/arm64)
-        run: GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w -X main.version=${{ github.ref_name }}" -o dist/simmer-darwin-arm64 main.go
+        run: GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w -X main.version=${{ github.ref_name }}" -o dist/simmer-darwin-arm64 ./cmd/simmer
 
       - name: Create universal binary
         run: lipo -create -output dist/simmer dist/simmer-darwin-amd64 dist/simmer-darwin-arm64

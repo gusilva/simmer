@@ -1,4 +1,4 @@
-## `pkg/device/` manage logic for iOS/Android interaction.
+## `internal/device/` manage logic for iOS/Android interaction.
 
 This package is the **domain layer** — no UI code here, only the logic for 
 talking to `iOS/Android` tools. 
@@ -503,7 +503,7 @@ you've seen all its children.
 ## Summary — the full dependency graph
 
 ```
-main.go / model.go
+internal/app/app.go / model.go
     │
     └── device.Coordinator
             │
