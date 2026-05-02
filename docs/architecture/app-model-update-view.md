@@ -1,4 +1,4 @@
-## `main.go` heart of app. 
+## `internal/app/app.go` heart of app. 
 
 Use Bubble Tea v2. Orchestrate `ui` components and `device` logic.
 
@@ -16,7 +16,7 @@ type tea.Model interface {
 }
 ```
 
-`model` in `main.go` implements all three.
+`model` in `internal/app/app.go` implements all three.
 Everything else is supporting infrastructure.
 
 
@@ -58,7 +58,7 @@ State container:
 
 ## Why This Way?
 
-- **Async I/O:** CLI tools slow. `main.go` run them as `tea.Cmd` (goroutines) so 
+- **Async I/O:** CLI tools slow. `internal/app/app.go` run them as `tea.Cmd` (goroutines) so 
   UI never hang.
 - **Coordination:** `MainPane` tell `model` it want files → `model` call
   `Coordinator` → `model` send data back to `MainPane`. Component stay decoupled.

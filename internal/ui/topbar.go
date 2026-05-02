@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"simmer/pkg/device"
+	"simmer/internal/device"
 
 	"charm.land/lipgloss/v2"
 )

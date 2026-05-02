@@ -21,7 +21,15 @@ jobs:
       - name: Run tests with coverage
         run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Build CLI
+        run: go build ./cmd/simmer
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
           files: coverage.out
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true

@@ -60,7 +60,7 @@ go install github.com/gusilva/simmer@latest
 
 ### Running locally
 ```bash
-go run main.go
+go run ./cmd/simmer
 ```
 
 ### Keybindings
@@ -72,8 +72,13 @@ go run main.go
 
 ### Building for production
 ```bash
-go build -o simmer main.go
+go build -o simmer ./cmd/simmer
 ```
+
+### Versioning
+
+Release binaries embed the git tag as the app version (for example, `v1.2.3`), injected at build time by the release workflow.
+Local builds default to `dev` unless you set the linker variable manually.
 
 ### Running Tests
 ```bash
@@ -82,8 +87,22 @@ go test ./... -v
 
 ## 🏗 Project Structure
 
-- `main.go`: Application entry point and TUI state management (Model-Update-View).
-- `pkg/device/`: 
-    - `device.go`: Core interfaces and the concurrent `Coordinator`.
-    - `ios.go`: `xcrun simctl` integration and parsing.
-    - `android.go`: `adb` and `emulator` integration.
+- `cmd/simmer/main.go`: CLI entry point.
+- `internal/app/`: Bubble Tea app model/update/view orchestration.
+- `internal/ui/`: TUI components (sidebar, main pane, overlays, styles).
+- `internal/device/`: Device domain contracts, coordinator, and platform integrations.
+
+## 📚 Documentation
+
+- **Architecture**
+  - [App model/update/view flow](docs/architecture/app-model-update-view.md)
+  - [Device layer design](docs/architecture/device-layer.md)
+- **UI Components**
+  - [Main pane](docs/ui/mainpane.md)
+  - [Sidebar](docs/ui/sidebar.md)
+  - [Overlays](docs/ui/overlays.md)
+  - [Top bar](docs/ui/topbar.md)
+  - [Footer](docs/ui/footer.md)
+  - [Tabs](docs/ui/tabs.md)
+  - [Delegate](docs/ui/delegate.md)
+  - [Box](docs/ui/box.md)

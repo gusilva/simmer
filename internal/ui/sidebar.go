@@ -5,7 +5,7 @@ import (
 	"image/color"
 	"strings"
 
-	"simmer/pkg/device"
+	"simmer/internal/device"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"

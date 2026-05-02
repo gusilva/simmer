@@ -1,20 +1,17 @@
-package main
+package app
 
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
-	"simmer/pkg/device"
-	"simmer/ui"
+	"simmer/internal/device"
+	"simmer/internal/ui"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
-
-const appVersion = "v0.0.1"
 
 // ─── Model ────────────────────────────────────────────────────────────────
 
@@ -40,6 +37,7 @@ type model struct {
 	iosCount     int
 	androidCount int
 	lastRefresh  time.Time
+	appVersion   string
 
 	logStream   *device.LogStream
 	logBundleID string
@@ -290,7 +288,7 @@ func nextLogLineCmd(stream *device.LogStream, bundleID string) tea.Cmd {
 	}
 }
 
-func initialModel() model {
+func initialModel(version string) model {
 	coord := device.NewCoordinator(
 		device.NewIOSManager(),
 		device.NewAndroidManager(),
@@ -303,6 +301,7 @@ func initialModel() model {
 		coordinator:  coord,
 		loading:      true,
 		toolVersions: make(map[device.Platform]string),
+		appVersion:   version,
 	}
 	m.applyFocus()
 	return m
@@ -783,7 +782,7 @@ func (m model) bodyHeight() int {
 func (m model) View() tea.View {
 	topBar := ui.RenderTopBar(ui.TopBarParams{
 		Width:        m.width,
-		AppVersion:   appVersion,
+		AppVersion:   m.appVersion,
 		BootedCount:  m.bootedCount,
 		IOSCount:     m.iosCount,
 		AndroidCount: m.androidCount,
@@ -852,11 +851,12 @@ func (m model) View() tea.View {
 	return v
 }
 
-func main() {
-	m := initialModel()
+func Run(version string) error {
+	m := initialModel(version)
 	p := tea.NewProgram(m)
 	if _, err := p.Run(); err != nil {
-		fmt.Printf("Fatal error: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("run program: %w", err)
 	}
+
+	return nil
 }
