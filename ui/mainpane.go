@@ -456,6 +456,11 @@ func (m MainPane) renderHint(innerW, innerH int) string {
 		Foreground(ColorFgFaint).
 		Background(ColorBg).
 		Render("  press space on a device to load")
+
+	if pad := innerW - lipgloss.Width(hint); pad > 0 {
+		hint += lipgloss.NewStyle().Background(ColorBg).Render(strings.Repeat(" ", pad))
+	}
+
 	lines := []string{hint}
 	for len(lines) < innerH {
 		lines = append(lines, padBg(innerW))

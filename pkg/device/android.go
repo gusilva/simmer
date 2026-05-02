@@ -29,7 +29,7 @@ func (m *androidManager) Platform() Platform { return PlatformAndroid }
 // closed; the context is intentionally not forwarded to the child process so
 // the 30-second boot timeout doesn't kill the emulator window.
 func (m *androidManager) Boot(_ context.Context, id string) error {
-	cmd := exec.Command("emulator", "-avd", id) //nolint:gosec
+	cmd := exec.Command("emulator", "-avd", id)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("emulator -avd %s: %w", id, err)
 	}
@@ -214,7 +214,7 @@ func androidSDKPath() string {
 func parseAVDManagerDevices(out []byte) []DeviceType {
 	var devices []DeviceType
 	var curID, curName string
-	for _, line := range strings.Split(string(out), "\n") {
+	for line := range strings.SplitSeq(string(out), "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "id:") {
 			if i := strings.Index(line, `"`); i >= 0 {
@@ -236,6 +236,34 @@ func parseAVDManagerDevices(out []byte) []DeviceType {
 		devices = append(devices, DeviceType{Name: curName, Identifier: curID})
 	}
 	return devices
+}
+
+func avdAPILevel(avdName string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	path := filepath.Join(home, ".android", "avd", avdName+".ini")
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	s := bufio.NewScanner(f)
+	for s.Scan() {
+		k, v, ok := strings.Cut(s.Text(), "=")
+		if !ok {
+			continue
+		}
+
+		if strings.TrimSpace(k) == "target" {
+			return strings.TrimPrefix(strings.TrimSpace(v), "android-")
+		}
+	}
+
+	return ""
 }
 
 func (m *androidManager) ListDevices(ctx context.Context) ([]Device, error) {
@@ -265,7 +293,7 @@ func (m *androidManager) ListDevices(ctx context.Context) ([]Device, error) {
 			ID:       name,
 			Name:     name,
 			Platform: PlatformAndroid,
-			Version:  "Unknown", // AVD list doesn't easily give version without more commands
+			Version:  avdAPILevel(name), // AVD list doesn't easily give version without more commands
 			Status:   status,
 		})
 	}
@@ -348,7 +376,7 @@ func (m *androidManager) ListApps(ctx context.Context, id string) ([]App, error)
 	type entry struct{ path string }
 	byID := map[string]entry{}
 
-	for _, line := range strings.Split(strings.TrimSpace(string(pkgOut)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(pkgOut)), "\n") {
 		line = strings.TrimSpace(line)
 		after, ok := strings.CutPrefix(line, "package:")
 		if !ok {
@@ -403,11 +431,11 @@ func androidFetchVersions[E any](ctx context.Context, serial string, byID map[st
 
 	result := make(map[string]string, len(byID))
 	cur := ""
-	for _, line := range strings.Split(string(out), "\n") {
+	for line := range strings.SplitSeq(string(out), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if after, ok := strings.CutPrefix(trimmed, "Package ["); ok {
-			if end := strings.Index(after, "]"); end >= 0 {
-				cur = after[:end]
+			if before, _, ok0 := strings.Cut(after, "]"); ok0 {
+				cur = before
 			}
 			continue
 		}
@@ -608,7 +636,7 @@ func avdConfig(avdName string) map[string]string {
 // apiFromSysdir extracts the API level from a sysdir path like
 // "system-images/android-33/google_apis_playstore/x86_64/".
 func apiFromSysdir(sysdir string) string {
-	for _, part := range strings.Split(sysdir, "/") {
+	for part := range strings.SplitSeq(sysdir, "/") {
 		if after, ok := strings.CutPrefix(part, "android-"); ok && after != "" {
 			return after
 		}

@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>simctl — Footer / Status bar</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --tui-bg:        #0d0e16;
+    --tui-panel:     #0d0e16;
+    --tui-border:    #2a2c3a;
+    --tui-border-hi: #cba6f7;
+    --tui-fg:        #e6e6f0;
+    --tui-fg-dim:    #9da0b3;
+    --tui-fg-faint:  #5a5d72;
+    --tui-accent:    #cba6f7;
+    --tui-accent-2:  #89dceb;
+    --tui-ok:        #a6e3a1;
+    --tui-warn:      #f9e2af;
+    --tui-err:       #f38ba8;
+    --tui-info:      #89b4fa;
+  }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--tui-bg);
+    color: var(--tui-fg);
+    font-family: "JetBrains Mono", "SF Mono", "Menlo", "Consolas", monospace;
+    font-size: 13px;
+    line-height: 1.45;
+  }
+  body { padding: 24px; }
+
+  /* ──────── Footer / status bar ──────── */
+  .footer {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 3px 10px;
+    border-top: 1px solid var(--tui-border);
+    background: var(--tui-bg);
+    font-size: 11px;
+    color: var(--tui-fg-faint);
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  /* Key hint — bold accent key + dim verb */
+  .hint { font-size: 11px; }
+  .hint .k {
+    color: var(--tui-border-hi);
+    font-weight: 600;
+  }
+  .hint .v {
+    color: var(--tui-fg-dim);
+    margin-left: 4px;
+  }
+
+  .spacer { flex: 1; }
+
+  /* Active device summary (right-aligned) */
+  .device .ok   { color: var(--tui-ok); }
+  .device .name { color: var(--tui-fg); }
+  .device .meta { color: var(--tui-fg-faint); }
+
+  /* Stream indicator pill */
+  .stream.live   { color: var(--tui-ok); }
+  .stream.paused { color: var(--tui-warn); }
+</style>
+</head>
+<body>
+  <!-- ──────────────── Footer / status bar ──────────────── -->
+  <div class="footer">
+    <span class="hint"><span class="k">↑↓/jk</span><span class="v">select</span></span>
+    <span class="hint"><span class="k">←→/hl</span><span class="v">pane</span></span>
+    <span class="hint"><span class="k">1-4</span><span class="v">tab</span></span>
+    <span class="hint"><span class="k">b</span><span class="v">boot</span></span>
+    <span class="hint"><span class="k">s</span><span class="v">shutdown</span></span>
+    <span class="hint"><span class="k">r</span><span class="v">reboot</span></span>
+    <span class="hint"><span class="k">i</span><span class="v">install</span></span>
+    <span class="hint"><span class="k">/</span><span class="v">cmd</span></span>
+    <span class="hint"><span class="k">?</span><span class="v">help</span></span>
+    <span class="hint"><span class="k">q</span><span class="v">quit</span></span>
+
+    <span class="spacer"></span>
+
+    <span class="device">
+      <span class="ok">●</span>
+      <span class="name">iPhone 17 Pro</span>
+      <span class="meta">· cpu 12.4% · mem 482MB · up 00:42:18</span>
+    </span>
+
+    <span class="stream live">● logs live</span>
+  </div>
+</body>
+</html>
