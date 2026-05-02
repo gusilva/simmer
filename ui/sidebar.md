@@ -38,6 +38,8 @@ iOS/Android groups can collapse.
 - **Vertical (J/K/Up/Down):** Move cursor within `focused` pane.
 - **Switch (Tab/H/L/Arrows):** Swap focus between Booted and Available panels.
 - **Action (Enter):** If cursor on group header in Available pane, toggle `collapsed` state.
+- **Add (`a`):** If in Available pane, emit `ShowPlatformPickerMsg{}` — parent opens platform picker overlay.
+- **Delete (`d`):** If in Available pane and cursor on a device row, emit `ShowDeleteSimulatorMsg{Device}` — parent opens delete confirmation overlay.
 
 ### 3. View (Render)
 
@@ -176,7 +178,7 @@ Without re-anchoring, the cursor would point to a different row.
 
 ---
 
-## 6. `Update` (lines 117–139)
+## 6. `Update` (lines 117–151)
 
 ```go
 func (s Sidebar) Update(msg tea.Msg) (Sidebar, tea.Cmd) {
@@ -191,16 +193,36 @@ func (s Sidebar) Update(msg tea.Msg) (Sidebar, tea.Cmd) {
         if s.focused == PaneBooted { s.focused = PaneAvailable } else { s.focused = PaneBooted }
     case "enter":
         if s.focused == PaneAvailable { s.toggleCurrentGroup() }
+    case "a":
+        if s.focused == PaneAvailable {
+            return s, func() tea.Msg { return ShowPlatformPickerMsg{} }
+        }
+    case "d":
+        if s.focused == PaneAvailable {
+            dev := s.availDeviceAt(s.availIdx)
+            if dev != nil {
+                d := *dev
+                return s, func() tea.Msg { return ShowDeleteSimulatorMsg{Device: d} }
+            }
+        }
     }
     return s, nil
 }
 ```
 
-Sidebar emits **no commands** — it never needs to trigger async work itself.
+Most keys return `nil` command — sidebar never triggers async work itself.
 The parent reads `SelectedDevice()` after each update to decide what to load.
-Clean separation.
 
-`moveCursor` (lines 174–185) routes to the right index based on `s.focused`.
+**`a` — add device:** emits `ShowPlatformPickerMsg{}`. The parent opens
+a `PlatformPickerModal` overlay; no platform decision is made here.
+Only fires when focus is in the Available pane (adding a running device makes no sense).
+
+**`d` — delete device:** emits `ShowDeleteSimulatorMsg{Device: d}` carrying
+a **copy** of the device (`d := *dev` — captures by value so the message is safe
+even if the slice later changes). `availDeviceAt` returns `nil` on a group header,
+so deletion is silently skipped when the cursor sits on a header row.
+
+`moveCursor` (lines 186–197) routes to the right index based on `s.focused`.
 
 ---
 
@@ -289,8 +311,9 @@ Parent calls View()
   Returns string
 ```
 
-The sidebar **owns** selection state but **never fetches data**. 
-All communication to the rest of the app goes through `SelectedDevice()` — a pull model, not push. The parent polls it after every `Update`.
+The sidebar **owns** selection state but **never fetches data**.
+Most communication goes through `SelectedDevice()` — a pull model, the parent polls it after every `Update`.
+Device creation and deletion are the exceptions: the sidebar emits `ShowPlatformPickerMsg` and `ShowDeleteSimulatorMsg` as commands, which the parent handles by opening the appropriate overlay.
 
 ### Sidebar Data & Focus Flow
 

@@ -64,6 +64,44 @@ type Shutdowner interface {
 	Shutdown(ctx context.Context, id string) error
 }
 
+// DeviceType represents a simulator device type template (e.g. "iPhone 16 Pro").
+type DeviceType struct {
+	Name       string
+	Identifier string
+}
+
+// Runtime represents a simulator runtime (e.g. "iOS 18.5").
+type Runtime struct {
+	Name        string
+	Identifier  string
+	Version     string
+	IsAvailable bool
+}
+
+// Creator is an optional interface for creating new simulators/emulators.
+type Creator interface {
+	Platform() Platform
+	Create(ctx context.Context, name, deviceTypeID, runtimeID string) (string, error)
+}
+
+// Deleter is an optional interface for deleting simulators/emulators.
+type Deleter interface {
+	Platform() Platform
+	Delete(ctx context.Context, id string) error
+}
+
+// DeviceTypeLister enumerates available device type templates.
+type DeviceTypeLister interface {
+	Platform() Platform
+	ListDeviceTypes(ctx context.Context) ([]DeviceType, error)
+}
+
+// RuntimeLister enumerates available runtimes.
+type RuntimeLister interface {
+	Platform() Platform
+	ListRuntimes(ctx context.Context) ([]Runtime, error)
+}
+
 // DiscoveryResult holds the results of a multi-platform discovery operation.
 type DiscoveryResult struct {
 	Devices      []Device
@@ -152,4 +190,53 @@ func (c *Coordinator) Discover(ctx context.Context) DiscoveryResult {
 		}
 	}
 	return res
+}
+
+// Create creates a new simulator for the given platform, routing to a Manager
+// that implements Creator. Returns the new simulator's UDID.
+func (c *Coordinator) Create(ctx context.Context, platform Platform, name, deviceTypeID, runtimeID string) (string, error) {
+	for _, m := range c.Managers {
+		cr, ok := m.(Creator)
+		if !ok || cr.Platform() != platform {
+			continue
+		}
+		return cr.Create(ctx, name, deviceTypeID, runtimeID)
+	}
+	return "", fmt.Errorf("no creator registered for platform %s", platform)
+}
+
+// Delete removes the given simulator, routing to a Manager that implements Deleter.
+func (c *Coordinator) Delete(ctx context.Context, dev Device) error {
+	for _, m := range c.Managers {
+		d, ok := m.(Deleter)
+		if !ok || d.Platform() != dev.Platform {
+			continue
+		}
+		return d.Delete(ctx, dev.ID)
+	}
+	return fmt.Errorf("no deleter registered for platform %s", dev.Platform)
+}
+
+// ListDeviceTypes returns available device type templates for the given platform.
+func (c *Coordinator) ListDeviceTypes(ctx context.Context, platform Platform) ([]DeviceType, error) {
+	for _, m := range c.Managers {
+		l, ok := m.(DeviceTypeLister)
+		if !ok || l.Platform() != platform {
+			continue
+		}
+		return l.ListDeviceTypes(ctx)
+	}
+	return nil, fmt.Errorf("no device type lister for platform %s", platform)
+}
+
+// ListRuntimes returns available runtimes for the given platform.
+func (c *Coordinator) ListRuntimes(ctx context.Context, platform Platform) ([]Runtime, error) {
+	for _, m := range c.Managers {
+		l, ok := m.(RuntimeLister)
+		if !ok || l.Platform() != platform {
+			continue
+		}
+		return l.ListRuntimes(ctx)
+	}
+	return nil, fmt.Errorf("no runtime lister for platform %s", platform)
 }

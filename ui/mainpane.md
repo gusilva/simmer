@@ -115,15 +115,16 @@ These are called by the **parent model** when async data arrives.
 The pane itself never fetches data — it only displays what's handed to it.
 That's **separation of concerns**.
 
-| Setter         | What it does                                                  |
-| -------------- | ------------------------------------------------------------- |
-| `SetSize`      | Recalculates inner dimensions and resizes the log viewport    |
-| `SetDevice`    | Loads a device; resets all state (tree, apps, logs, cursor)   |
-| `SetTree`      | Replaces only the file tree (loaded async after device loads) |
-| `SetApps`      | Loads the app list; clamps cursor if list shrinks             |
-| `SetInfo`      | Loads device info fields                                      |
-| `SetLogBundle` | Marks which app is streaming; clears old log buffer           |
-| `AppendLog`    | Appends a line to the rolling 1000-line buffer                |
+| Setter              | What it does                                                       |
+| ------------------- | ------------------------------------------------------------------ |
+| `SetSize`           | Recalculates inner dimensions and resizes the log viewport         |
+| `SetDevice`         | Loads a device; resets all state (tree, apps, logs, cursor)        |
+| `SetTree`           | Replaces only the file tree (loaded async after device loads)      |
+| `SetApps`           | Loads the app list; clamps cursor if list shrinks                  |
+| `SetInfo`           | Loads device info fields                                           |
+| `SetLogBundle`      | Marks which app is streaming; clears old log buffer                |
+| `AppendLog`         | Appends a line to the rolling 1000-line buffer                     |
+| `SyncActiveDevice`  | Syncs active device status from a refreshed list without full reset|
 
 **Why rolling buffer?** Lines 172–175:
 ```go
@@ -136,6 +137,46 @@ Prevents unbounded memory growth during long log sessions.
 **Auto-scroll trick** (lines 169–179): saves `atBottom` *before* appending,
 then re-scrolls only if the user was already at the bottom.
 If they scrolled up to read, their position is preserved.
+
+---
+
+### `SyncActiveDevice` — live status sync without full reset (lines 118–135)
+
+Called by the parent on every `discoveryMsg` (periodic device refresh).
+Different from `SetDevice`: preserves all pane state (tab, tree, apps, logs, cursor).
+Only updates the fields that come from discovery.
+
+```go
+func (m *MainPane) SyncActiveDevice(devs []device.Device) {
+    if m.active == nil { return }
+    for _, d := range devs {
+        if d.ID == m.active.ID {
+            *m.active = d                         // update Device struct (title-row dot)
+            for i := range m.info.Fields {
+                if m.info.Fields[i].Key == "Status" {
+                    m.info.Fields[i].Value = string(d.Status)  // update cached Info tab string
+                    break
+                }
+            }
+            return
+        }
+    }
+    m.active = nil   // device no longer in list (deleted externally)
+}
+```
+
+**Why two separate updates?** The device status appears in two places:
+
+| Where | Source | How it renders |
+|---|---|---|
+| Title-row dot (green/dim) | `m.active.Status` | Read live each `View()` call |
+| Info tab "Status" row | `m.info.Fields[i].Value` | Baked in as a string when `loadInfoCmd` ran |
+
+`*m.active = d` fixes the title-row dot (pointer dereference — all `View()` callers reading `m.active.Status` now see the new value).
+The `m.info.Fields` loop fixes the Info tab — that string was set once by `SetInfo` and never automatically re-derived from `m.active`.
+
+If the device disappears from the list entirely (e.g. deleted by another tool),
+`m.active` is set to `nil` so the pane shows its empty state.
 
 ---
 

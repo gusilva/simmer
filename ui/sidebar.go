@@ -134,6 +134,18 @@ func (s Sidebar) Update(msg tea.Msg) (Sidebar, tea.Cmd) {
 		if s.focused == PaneAvailable {
 			s.toggleCurrentGroup()
 		}
+	case "a":
+		if s.focused == PaneAvailable {
+			return s, func() tea.Msg { return ShowPlatformPickerMsg{} }
+		}
+	case "d":
+		if s.focused == PaneAvailable {
+			dev := s.availDeviceAt(s.availIdx)
+			if dev != nil {
+				d := *dev
+				return s, func() tea.Msg { return ShowDeleteSimulatorMsg{Device: d} }
+			}
+		}
 	}
 	return s, nil
 }

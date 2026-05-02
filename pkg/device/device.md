@@ -27,6 +27,10 @@ android_files.go   — AndroidFileSystem + ls -laR parser
 The `Coordinator` in `device.go` routes calls to whichever manager handles that
 platform.
 
+New capabilities (create/delete/list device types/list runtimes) follow the same
+pattern: interface defined in `device.go`, implemented in `ios.go` and `android.go`,
+routed via type assertion in the Coordinator.
+
 
 ## Core Models (`device.go`, `info.go`)
 
@@ -90,7 +94,7 @@ type Device struct {
 `Platform` and `Status` are **typed strings** — same reason as `StatusKind` in the UI:
 the type system documents valid values and prevents passing arbitrary strings.
 
-### The interface family (lines 38–65)
+### The interface family
 
 ```go
 type Manager interface {
@@ -98,15 +102,43 @@ type Manager interface {
 }
 
 // Optional extensions:
-type ToolVersioner interface { ToolVersion(ctx context.Context) (Platform, string) }
-type Booter        interface { Platform() Platform; Boot(ctx, id) error }
-type Shutdowner    interface { Platform() Platform; Shutdown(ctx, id) error }
+type ToolVersioner    interface { ToolVersion(ctx context.Context) (Platform, string) }
+type Booter           interface { Platform() Platform; Boot(ctx, id string) error }
+type Shutdowner       interface { Platform() Platform; Shutdown(ctx, id string) error }
+type Creator          interface { Platform() Platform; Create(ctx context.Context, name, deviceTypeID, runtimeID string) (string, error) }
+type Deleter          interface { Platform() Platform; Delete(ctx context.Context, id string) error }
+type DeviceTypeLister interface { Platform() Platform; ListDeviceTypes(ctx context.Context) ([]DeviceType, error) }
+type RuntimeLister    interface { Platform() Platform; ListRuntimes(ctx context.Context) ([]Runtime, error) }
 ```
 
-`Manager` is the base contract. `Booter`, `Shutdowner`, `ToolVersioner` are
-**optional** — a manager implements them if it can, skips them if not.
+`Manager` is the base contract. All others are **optional** — a manager
+implements them if it can, skips them if not.
 This is the **interface segregation principle**:
 callers only depend on what they actually need.
+
+`Creator` / `Deleter` handle device lifecycle (create and delete simulators/emulators).
+`DeviceTypeLister` / `RuntimeLister` supply the data needed to populate create-device forms.
+
+### New domain types
+
+```go
+type DeviceType struct {
+    Name       string   // display name, e.g. "iPhone 16 Pro"
+    Identifier string   // opaque ID passed to Create, e.g. "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro"
+}
+
+type Runtime struct {
+    Name        string   // display name, e.g. "iOS 18.4"
+    Identifier  string   // opaque ID passed to Create
+    Version     string   // semver string
+    IsAvailable bool     // false = runtime installed but broken/incomplete
+}
+```
+
+`DeviceType` and `Runtime` are the two required inputs for creating a new iOS simulator.
+For Android, `Runtime.Identifier` carries the full system-image package ID
+(`system-images;android-34;google_apis;x86_64`) and `DeviceType.Identifier`
+carries the AVD hardware profile ID.
 
 ### The Coordinator (lines 74–155)
 
@@ -128,7 +160,9 @@ func (c *Coordinator) Boot(ctx context.Context, dev Device) error {
 }
 ```
 
-Same pattern for `Shutdown`, `ListApps`, `StreamLogs`, `Info`. **Why?** Adding a new platform means writing a new manager and registering it — zero changes to the coordinator.
+Same pattern for `Shutdown`, `ListApps`, `StreamLogs`, `Info`, `Create`, `Delete`,
+`ListDeviceTypes`, `ListRuntimes`. **Why?** Adding a new platform means writing
+a new manager and registering it — zero changes to the coordinator.
 
 ### `Discover` — concurrent fetching (lines 120–155)
 
@@ -344,6 +378,68 @@ One `adb shell` invocation instead of N — each adb call has connection
 overhead (~50ms). Batching all props into one semicolon-joined shell 
 command is a significant speedup.
 
+### Create / Delete / ListDeviceTypes / ListRuntimes
+
+```
+xcrun simctl list devicetypes --json  →  []DeviceType (Name, Identifier)
+xcrun simctl list runtimes --json     →  []Runtime (Name, Identifier, Version, IsAvailable)
+xcrun simctl create <name> <dtID> <rtID>  →  UDID string
+xcrun simctl delete <UDID>
+```
+
+`ListRuntimes` filters out runtimes where `IsAvailable == false` — these are
+entries in the JSON that are corrupted or have missing files.
+The UI only shows available runtimes in the create-simulator form.
+
+---
+
+## 5b. `android.go` — create / delete / list
+
+### `ListDeviceTypes` — hardware profiles
+
+```
+avdmanager list device   →  verbose text output
+```
+
+Parsed by `parseAVDManagerDevices`: iterates lines looking for:
+- `id: N or "identifier"` → captures the string ID
+- `Name: label` → captures the display name
+- `---` separator → commits the current record
+
+Returns `[]DeviceType{Name, Identifier}` pairs for the create-emulator form.
+Device profile is **optional** in `avdmanager create avd` — passing one 
+selects a hardware preset (screen size, RAM etc.).
+
+### `ListRuntimes` — system images
+
+Scans `$ANDROID_SDK/system-images/android-<api>/<tag>/<abi>/` on disk.
+Builds package IDs like `system-images;android-34;google_apis;x86_64` — the
+exact format `avdmanager create avd --package` expects.
+
+SDK root lookup order:
+1. `$ANDROID_HOME` env var
+2. `$ANDROID_SDK_ROOT` env var  
+3. `~/Library/Android/sdk` (Android Studio default on macOS)
+
+### `Create` — `avdmanager create avd`
+
+```
+avdmanager create avd --name <name> --package <sysPkg> [--device <profile>] --force
+```
+
+Pipes `"no\n"` to stdin — `avdmanager` always prompts
+"Do you wish to create a custom hardware profile?"; the `no` answer skips it
+so the process doesn't block waiting for interactive input.
+`--force` overwrites an existing AVD with the same name.
+
+### `Delete` — `avdmanager delete avd`
+
+```
+avdmanager delete avd --name <name>
+```
+
+Android uses AVD names as the delete key (not UDIDs as iOS does).
+
 ---
 
 ## 6. `ios_files.go` — host-side walk
@@ -412,19 +508,27 @@ main.go / model.go
     └── device.Coordinator
             │
             ├── iosManager
-            │     ListDevices → xcrun simctl list
-            │     Boot/Shutdown → xcrun simctl boot/shutdown
-            │     ListApps → xcrun simctl listapps | plutil
-            │     StreamLogs → xcrun simctl spawn log stream
-            │     Info → device.plist + xcrun simctl spawn sw_vers
+            │     ListDevices      → xcrun simctl list
+            │     Boot/Shutdown    → xcrun simctl boot/shutdown
+            │     Create           → xcrun simctl create
+            │     Delete           → xcrun simctl delete
+            │     ListDeviceTypes  → xcrun simctl list devicetypes --json
+            │     ListRuntimes     → xcrun simctl list runtimes --json
+            │     ListApps         → xcrun simctl listapps | plutil
+            │     StreamLogs       → xcrun simctl spawn log stream
+            │     Info             → device.plist + xcrun simctl spawn sw_vers
             │
             ├── androidManager
-            │     ListDevices → emulator -list-avds + adb devices
-            │     Boot → emulator -avd (detached)
-            │     Shutdown → adb emu kill
-            │     ListApps → adb pm list packages + dumpsys
-            │     StreamLogs → adb logcat
-            │     Info → config.ini + adb getprop
+            │     ListDevices      → emulator -list-avds + adb devices
+            │     Boot             → emulator -avd (detached)
+            │     Shutdown         → adb emu kill
+            │     Create           → avdmanager create avd (stdin: "no\n")
+            │     Delete           → avdmanager delete avd
+            │     ListDeviceTypes  → avdmanager list device (parsed)
+            │     ListRuntimes     → SDK system-images dir scan
+            │     ListApps         → adb pm list packages + dumpsys
+            │     StreamLogs       → adb logcat
+            │     Info             → config.ini + adb getprop
             │
             ├── IOSAppFileSystem   → xcrun get_app_container + os.ReadDir
             └── AndroidFileSystem  → adb run-as ls -laR + parser
@@ -433,7 +537,7 @@ main.go / model.go
 - **Interface routing** via type assertions in the Coordinator — extensible without 
   modifying existing code
 - **Concurrent discovery** with a buffered channel instead of WaitGroup
-- **Optional capabilities** as separate small interfaces (`Booter`, `AppLister`, etc.)
+- **Optional capabilities** as separate small interfaces (`Booter`, `AppLister`, `Creator`, `Deleter`, `DeviceTypeLister`, `RuntimeLister`, etc.)
 - **Receive-only channels** (`<-chan`) to enforce producer/consumer roles
 - **Best-effort error handling** — partial data beats total failure for UI-facing code
 - **Generics** (`androidFetchVersions[E any]`) for reuse without repeating logic

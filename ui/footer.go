@@ -33,6 +33,8 @@ var footerHints = []struct{ key, verb string }{
 	{"←→/hl", "pane"},
 	{"b", "boot"},
 	{"s", "shutdown"},
+	{"a", "add"},
+	{"d", "delete"},
 	{"1-4", "tab"},
 	{"space", "load device"},
 	{"?", "help"},

@@ -112,6 +112,28 @@ func (m *MainPane) SetDevice(d *device.Device, root *device.FileNode) {
 	}
 }
 
+// SyncActiveDevice updates the active device's fields from the refreshed list.
+// All other pane state (tabs, tree, apps, info, logs) is preserved.
+// If the active device is no longer in the list (e.g. deleted), the pane is cleared.
+func (m *MainPane) SyncActiveDevice(devs []device.Device) {
+	if m.active == nil {
+		return
+	}
+	for _, d := range devs {
+		if d.ID == m.active.ID {
+			*m.active = d
+			for i := range m.info.Fields {
+				if m.info.Fields[i].Key == "Status" {
+					m.info.Fields[i].Value = string(d.Status)
+					break
+				}
+			}
+			return
+		}
+	}
+	m.active = nil
+}
+
 // SetTree replaces only the filesystem tree without resetting the rest of the
 // pane state. Use this when the tree loads asynchronously after SetDevice.
 func (m *MainPane) SetTree(root *device.FileNode) {

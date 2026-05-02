@@ -69,14 +69,20 @@ With `StatusKind`, the type system documents the valid values. `statusColor()` h
 
 ---
 
-## 3. `footerHints` — package-level slice (lines 31–45)
+## 3. `footerHints` — package-level slice (lines 31–47)
 
 ```go
 var footerHints = []struct{ key, verb string }{
     {"↑↓/jk", "select"},
     {"←→/hl", "pane"},
     {"b", "boot"},
-    ...
+    {"s", "shutdown"},
+    {"a", "add"},
+    {"d", "delete"},
+    {"1-4", "tab"},
+    {"space", "load device"},
+    {"?", "help"},
+    {"q", "quit"},
 }
 ```
 

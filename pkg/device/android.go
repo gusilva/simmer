@@ -105,6 +105,139 @@ func (m *androidManager) ToolVersion(ctx context.Context) (Platform, string) {
 	return PlatformAndroid, strings.TrimPrefix(strings.TrimSpace(line), prefix)
 }
 
+func (m *androidManager) Create(ctx context.Context, name, deviceProfileID, systemImagePkg string) (string, error) {
+	args := []string{"create", "avd", "--name", name, "--package", systemImagePkg, "--force"}
+	if deviceProfileID != "" {
+		args = append(args, "--device", deviceProfileID)
+	}
+	cmd := exec.CommandContext(ctx, "avdmanager", args...)
+	// avdmanager may prompt "Do you wish to create a custom hardware profile?"
+	cmd.Stdin = strings.NewReader("no\n")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			return "", fmt.Errorf("avdmanager create avd: %w", err)
+		}
+		return "", fmt.Errorf("avdmanager create avd: %w: %s", err, msg)
+	}
+	return name, nil
+}
+
+func (m *androidManager) Delete(ctx context.Context, id string) error {
+	cmd := exec.CommandContext(ctx, "avdmanager", "delete", "avd", "--name", id)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			return fmt.Errorf("avdmanager delete avd %s: %w", id, err)
+		}
+		return fmt.Errorf("avdmanager delete avd %s: %w: %s", id, err, msg)
+	}
+	return nil
+}
+
+// ListDeviceTypes returns Android device profiles via `avdmanager list device`.
+func (m *androidManager) ListDeviceTypes(ctx context.Context) ([]DeviceType, error) {
+	out, err := exec.CommandContext(ctx, "avdmanager", "list", "device").Output()
+	if err != nil {
+		return nil, fmt.Errorf("avdmanager list device: %w", err)
+	}
+	return parseAVDManagerDevices(out), nil
+}
+
+// ListRuntimes returns installed Android system images by scanning the SDK directory.
+func (m *androidManager) ListRuntimes(ctx context.Context) ([]Runtime, error) {
+	sdkPath := androidSDKPath()
+	if sdkPath == "" {
+		return nil, fmt.Errorf("Android SDK not found; set ANDROID_HOME or ANDROID_SDK_ROOT")
+	}
+	sysImagesDir := filepath.Join(sdkPath, "system-images")
+	apiEntries, err := os.ReadDir(sysImagesDir)
+	if err != nil {
+		return nil, fmt.Errorf("read system-images dir: %w", err)
+	}
+
+	var runtimes []Runtime
+	for _, apiEntry := range apiEntries {
+		if !apiEntry.IsDir() || !strings.HasPrefix(apiEntry.Name(), "android-") {
+			continue
+		}
+		apiStr := strings.TrimPrefix(apiEntry.Name(), "android-")
+		tagEntries, err := os.ReadDir(filepath.Join(sysImagesDir, apiEntry.Name()))
+		if err != nil {
+			continue
+		}
+		for _, tagEntry := range tagEntries {
+			if !tagEntry.IsDir() {
+				continue
+			}
+			tag := tagEntry.Name()
+			abiEntries, err := os.ReadDir(filepath.Join(sysImagesDir, apiEntry.Name(), tag))
+			if err != nil {
+				continue
+			}
+			for _, abiEntry := range abiEntries {
+				if !abiEntry.IsDir() {
+					continue
+				}
+				abi := abiEntry.Name()
+				pkg := fmt.Sprintf("system-images;android-%s;%s;%s", apiStr, tag, abi)
+				name := fmt.Sprintf("API %s  %s  %s", apiStr, tag, abi)
+				runtimes = append(runtimes, Runtime{
+					Name:        name,
+					Identifier:  pkg,
+					Version:     apiStr,
+					IsAvailable: true,
+				})
+			}
+		}
+	}
+
+	if len(runtimes) == 0 {
+		return nil, fmt.Errorf("no system images found in %s", sysImagesDir)
+	}
+	return runtimes, nil
+}
+
+func androidSDKPath() string {
+	if p := os.Getenv("ANDROID_HOME"); p != "" {
+		return p
+	}
+	if p := os.Getenv("ANDROID_SDK_ROOT"); p != "" {
+		return p
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, "Library", "Android", "sdk")
+}
+
+func parseAVDManagerDevices(out []byte) []DeviceType {
+	var devices []DeviceType
+	var curID, curName string
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "id:") {
+			if i := strings.Index(line, `"`); i >= 0 {
+				if j := strings.LastIndex(line, `"`); j > i {
+					curID = line[i+1 : j]
+				}
+			}
+			curName = ""
+		} else if after, ok := strings.CutPrefix(line, "Name:"); ok {
+			curName = strings.TrimSpace(after)
+		} else if line == "---------" || line == "" {
+			if curID != "" && curName != "" {
+				devices = append(devices, DeviceType{Name: curName, Identifier: curID})
+			}
+			curID, curName = "", ""
+		}
+	}
+	if curID != "" && curName != "" {
+		devices = append(devices, DeviceType{Name: curName, Identifier: curID})
+	}
+	return devices
+}
+
 func (m *androidManager) ListDevices(ctx context.Context) ([]Device, error) {
 	// 1. Get defined emulators
 	avds, err := m.getAVDs(ctx)

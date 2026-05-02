@@ -360,6 +360,85 @@ func simctlStateName(s int) string {
 	}
 }
 
+type simctlDeviceTypesList struct {
+	DeviceTypes []struct {
+		Name       string `json:"name"`
+		Identifier string `json:"identifier"`
+	} `json:"devicetypes"`
+}
+
+type simctlRuntimesList struct {
+	Runtimes []struct {
+		Name        string `json:"name"`
+		Identifier  string `json:"identifier"`
+		Version     string `json:"version"`
+		IsAvailable bool   `json:"isAvailable"`
+	} `json:"runtimes"`
+}
+
+func (m *iosManager) Create(ctx context.Context, name, deviceTypeID, runtimeID string) (string, error) {
+	cmd := exec.CommandContext(ctx, "xcrun", "simctl", "create", name, deviceTypeID, runtimeID)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			return "", fmt.Errorf("xcrun simctl create: %w", err)
+		}
+		return "", fmt.Errorf("xcrun simctl create: %w: %s", err, msg)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func (m *iosManager) Delete(ctx context.Context, id string) error {
+	cmd := exec.CommandContext(ctx, "xcrun", "simctl", "delete", id)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			return fmt.Errorf("xcrun simctl delete %s: %w", id, err)
+		}
+		return fmt.Errorf("xcrun simctl delete %s: %w: %s", id, err, msg)
+	}
+	return nil
+}
+
+func (m *iosManager) ListDeviceTypes(ctx context.Context) ([]DeviceType, error) {
+	out, err := exec.CommandContext(ctx, "xcrun", "simctl", "list", "devicetypes", "--json").Output()
+	if err != nil {
+		return nil, fmt.Errorf("xcrun simctl list devicetypes: %w", err)
+	}
+	var list simctlDeviceTypesList
+	if err := json.Unmarshal(out, &list); err != nil {
+		return nil, fmt.Errorf("parse devicetypes: %w", err)
+	}
+	types := make([]DeviceType, 0, len(list.DeviceTypes))
+	for _, dt := range list.DeviceTypes {
+		types = append(types, DeviceType{Name: dt.Name, Identifier: dt.Identifier})
+	}
+	return types, nil
+}
+
+func (m *iosManager) ListRuntimes(ctx context.Context) ([]Runtime, error) {
+	out, err := exec.CommandContext(ctx, "xcrun", "simctl", "list", "runtimes", "--json").Output()
+	if err != nil {
+		return nil, fmt.Errorf("xcrun simctl list runtimes: %w", err)
+	}
+	var list simctlRuntimesList
+	if err := json.Unmarshal(out, &list); err != nil {
+		return nil, fmt.Errorf("parse runtimes: %w", err)
+	}
+	runtimes := make([]Runtime, 0, len(list.Runtimes))
+	for _, r := range list.Runtimes {
+		runtimes = append(runtimes, Runtime{
+			Name:        r.Name,
+			Identifier:  r.Identifier,
+			Version:     r.Version,
+			IsAvailable: r.IsAvailable,
+		})
+	}
+	return runtimes, nil
+}
+
 func (m *iosManager) ListDevices(ctx context.Context) ([]Device, error) {
 	cmd := exec.CommandContext(ctx, "xcrun", "simctl", "list", "devices", "available", "--json")
 	output, err := cmd.Output()

@@ -48,11 +48,52 @@ type model struct {
 	status     string
 	statusKind ui.StatusKind
 	statusSeq  int
+
+	platformPicker *ui.PlatformPickerModal
+	createIOSModal *ui.CreateSimulatorModal
+	createAndModal *ui.CreateAndroidEmulatorModal
+	deleteAlert    *ui.DeleteSimulatorAlert
 }
 
 type clearStatusMsg int
 
 type discoveryMsg device.DiscoveryResult
+
+type deviceTypesMsg struct {
+	types []device.DeviceType
+	err   error
+}
+
+type runtimesMsg struct {
+	runtimes []device.Runtime
+	err      error
+}
+
+type createSimulatorResultMsg struct {
+	name string
+	udid string
+	err  error
+}
+
+type deleteSimulatorResultMsg struct {
+	name string
+	err  error
+}
+
+type androidSystemImagesMsg struct {
+	images []device.Runtime
+	err    error
+}
+
+type androidDeviceProfilesMsg struct {
+	profiles []device.DeviceType
+	err      error
+}
+
+type createAndroidEmulatorResultMsg struct {
+	name string
+	err  error
+}
 
 type bootResultMsg struct {
 	device device.Device
@@ -102,6 +143,69 @@ func (m model) fetchDevicesCmd() tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		return discoveryMsg(m.coordinator.Discover(ctx))
+	}
+}
+
+func (m model) fetchDeviceTypesCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		types, err := m.coordinator.ListDeviceTypes(ctx, device.PlatformIOS)
+		return deviceTypesMsg{types: types, err: err}
+	}
+}
+
+func (m model) fetchRuntimesCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		runtimes, err := m.coordinator.ListRuntimes(ctx, device.PlatformIOS)
+		return runtimesMsg{runtimes: runtimes, err: err}
+	}
+}
+
+func (m model) createIOSSimulatorCmd(name, deviceTypeID, runtimeID string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		udid, err := m.coordinator.Create(ctx, device.PlatformIOS, name, deviceTypeID, runtimeID)
+		return createSimulatorResultMsg{name: name, udid: udid, err: err}
+	}
+}
+
+func (m model) deleteDeviceCmd(dev device.Device) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		err := m.coordinator.Delete(ctx, dev)
+		return deleteSimulatorResultMsg{name: dev.Name, err: err}
+	}
+}
+
+func (m model) fetchAndroidSystemImagesCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		imgs, err := m.coordinator.ListRuntimes(ctx, device.PlatformAndroid)
+		return androidSystemImagesMsg{images: imgs, err: err}
+	}
+}
+
+func (m model) fetchAndroidDeviceProfilesCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		profiles, err := m.coordinator.ListDeviceTypes(ctx, device.PlatformAndroid)
+		return androidDeviceProfilesMsg{profiles: profiles, err: err}
+	}
+}
+
+func (m model) createAndroidEmulatorCmd(name, systemImagePkg, deviceProfileID string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		_, err := m.coordinator.Create(ctx, device.PlatformAndroid, name, deviceProfileID, systemImagePkg)
+		return createAndroidEmulatorResultMsg{name: name, err: err}
 	}
 }
 
@@ -244,9 +348,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
-		// Global keys — fire regardless of focus.
-		switch msg.String() {
-		case "q", "ctrl+c":
+		// ctrl+c always quits, even when an overlay is active.
+		if msg.String() == "ctrl+c" {
+			m.quitting = true
+			return m, tea.Quit
+		}
+
+		// Overlay intercepts all other keys when active.
+		if m.platformPicker != nil {
+			updated, cmd := m.platformPicker.Update(msg)
+			m.platformPicker = &updated
+			return m, cmd
+		}
+		if m.createIOSModal != nil {
+			updated, cmd := m.createIOSModal.Update(msg)
+			m.createIOSModal = &updated
+			return m, cmd
+		}
+		if m.createAndModal != nil {
+			updated, cmd := m.createAndModal.Update(msg)
+			m.createAndModal = &updated
+			return m, cmd
+		}
+		if m.deleteAlert != nil {
+			updated, cmd := m.deleteAlert.Update(msg)
+			m.deleteAlert = &updated
+			return m, cmd
+		}
+
+		// Global keys (no overlay active).
+		if msg.String() == "q" {
 			m.quitting = true
 			return m, tea.Quit
 		}
@@ -320,6 +451,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.iosCount = ios
 		m.androidCount = android
 		m.sidebar.SetDevices(msg.Devices)
+		m.mainPane.SyncActiveDevice(msg.Devices)
 		return m, nil
 
 	case bootResultMsg:
@@ -492,6 +624,131 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.setStatus("stream ended: "+errPreview(msg.err), ui.StatusWarn)
 		}
 		return m, m.setStatus("stream ended", ui.StatusInfo)
+
+	case ui.ShowPlatformPickerMsg:
+		p := ui.NewPlatformPickerModal()
+		m.platformPicker = &p
+		return m, nil
+
+	case ui.ConfirmPlatformPickerMsg:
+		m.platformPicker = nil
+		if msg.Platform == device.PlatformIOS {
+			modal, focusCmd := ui.NewCreateSimulatorModal()
+			m.createIOSModal = &modal
+			return m, tea.Batch(focusCmd, m.fetchDeviceTypesCmd(), m.fetchRuntimesCmd())
+		}
+		andModal, focusCmd := ui.NewCreateAndroidEmulatorModal()
+		m.createAndModal = &andModal
+		return m, tea.Batch(focusCmd, m.fetchAndroidSystemImagesCmd(), m.fetchAndroidDeviceProfilesCmd())
+
+	case ui.ShowDeleteSimulatorMsg:
+		alert := ui.NewDeleteSimulatorAlert(msg.Device)
+		m.deleteAlert = &alert
+		return m, nil
+
+	case ui.CancelOverlayMsg:
+		m.platformPicker = nil
+		m.createIOSModal = nil
+		m.createAndModal = nil
+		m.deleteAlert = nil
+		return m, nil
+
+	case ui.ConfirmCreateSimulatorMsg:
+		m.createIOSModal = nil
+		return m, m.createIOSSimulatorCmd(msg.Name, msg.DeviceTypeID, msg.RuntimeID)
+
+	case ui.ConfirmCreateAndroidEmulatorMsg:
+		m.createAndModal = nil
+		return m, m.createAndroidEmulatorCmd(msg.Name, msg.SystemImagePkg, msg.DeviceProfileID)
+
+	case ui.ConfirmDeleteSimulatorMsg:
+		m.deleteAlert = nil
+		return m, m.deleteDeviceCmd(msg.Device)
+
+	case deviceTypesMsg:
+		if msg.err != nil {
+			m.errs = append(m.errs, msg.err)
+			if m.createIOSModal != nil {
+				m.createIOSModal.SetDeviceTypes(nil)
+			}
+			return m, m.setStatus("device types: "+errPreview(msg.err), ui.StatusErr)
+		}
+		if m.createIOSModal != nil {
+			m.createIOSModal.SetDeviceTypes(msg.types)
+		}
+		return m, nil
+
+	case runtimesMsg:
+		if msg.err != nil {
+			m.errs = append(m.errs, msg.err)
+			if m.createIOSModal != nil {
+				m.createIOSModal.SetRuntimes(nil)
+			}
+			return m, m.setStatus("runtimes: "+errPreview(msg.err), ui.StatusErr)
+		}
+		if m.createIOSModal != nil {
+			m.createIOSModal.SetRuntimes(msg.runtimes)
+		}
+		return m, nil
+
+	case androidSystemImagesMsg:
+		if msg.err != nil {
+			m.errs = append(m.errs, msg.err)
+			if m.createAndModal != nil {
+				m.createAndModal.SetSystemImages(nil)
+			}
+			return m, m.setStatus("system images: "+errPreview(msg.err), ui.StatusErr)
+		}
+		if m.createAndModal != nil {
+			m.createAndModal.SetSystemImages(msg.images)
+		}
+		return m, nil
+
+	case androidDeviceProfilesMsg:
+		if msg.err != nil {
+			// Device profiles are optional; log but don't block
+			if m.createAndModal != nil {
+				m.createAndModal.SetDeviceProfiles(nil)
+			}
+			return m, nil
+		}
+		if m.createAndModal != nil {
+			m.createAndModal.SetDeviceProfiles(msg.profiles)
+		}
+		return m, nil
+
+	case createSimulatorResultMsg:
+		if msg.err != nil {
+			m.errs = append(m.errs, msg.err)
+			return m, m.setStatus("create failed: "+errPreview(msg.err), ui.StatusErr)
+		}
+		m.loading = true
+		return m, tea.Batch(
+			m.fetchDevicesCmd(),
+			m.setStatus("created "+msg.name, ui.StatusOk),
+		)
+
+	case createAndroidEmulatorResultMsg:
+		if msg.err != nil {
+			m.errs = append(m.errs, msg.err)
+			return m, m.setStatus("create failed: "+errPreview(msg.err), ui.StatusErr)
+		}
+		m.loading = true
+		return m, tea.Batch(
+			m.fetchDevicesCmd(),
+			m.setStatus("created "+msg.name, ui.StatusOk),
+		)
+
+	case deleteSimulatorResultMsg:
+		if msg.err != nil {
+			m.errs = append(m.errs, msg.err)
+			return m, m.setStatus("delete failed: "+errPreview(msg.err), ui.StatusErr)
+		}
+		m.loading = true
+		return m, tea.Batch(
+			m.fetchDevicesCmd(),
+			m.setStatus("deleted "+msg.name, ui.StatusOk),
+		)
 	}
 
 	return m, nil
@@ -565,7 +822,30 @@ func (m model) View() tea.View {
 		Background(ui.ColorBg).
 		Render(body)
 
-	v := tea.NewView(lipgloss.JoinVertical(lipgloss.Left, topBar, body, footer))
+	baseStr := lipgloss.JoinVertical(lipgloss.Left, topBar, body, footer)
+
+	if m.platformPicker != nil || m.createIOSModal != nil || m.createAndModal != nil || m.deleteAlert != nil {
+		var overlayStr string
+		switch {
+		case m.platformPicker != nil:
+			overlayStr = m.platformPicker.View()
+		case m.createIOSModal != nil:
+			overlayStr = m.createIOSModal.View()
+		case m.createAndModal != nil:
+			overlayStr = m.createAndModal.View()
+		default:
+			overlayStr = m.deleteAlert.View()
+		}
+		mW := lipgloss.Width(overlayStr)
+		mH := lipgloss.Height(overlayStr)
+		x := max((m.width-mW)/2, 0)
+		y := max((m.height-mH)/2, 0)
+		bg := lipgloss.NewLayer(baseStr)
+		fg := lipgloss.NewLayer(overlayStr).X(x).Y(y).Z(1)
+		baseStr = lipgloss.NewCompositor(bg, fg).Render()
+	}
+
+	v := tea.NewView(baseStr)
 	v.AltScreen = true
 	v.WindowTitle = "Simmer"
 	v.BackgroundColor = ui.ColorBg
