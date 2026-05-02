@@ -1,6 +1,5 @@
 # Binaries
-simulight
-simmer
+/simmer
 simulight.exe
 *.exe
 *.exe~
@@ -33,3 +32,8 @@ debug.log
 # (Keep go.mod and go.sum in version control)
 # workspace file
 go.work
+
+# tmp
+*.tmp
+/tmp 
+/.tmp
