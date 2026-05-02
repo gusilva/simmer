@@ -11,7 +11,8 @@ import (
 // If height > 0 the box is sized to exactly that many rows: extra content is
 // truncated and shorter content is bottom-padded with bg-colored blank lines.
 // If height <= 0 the box grows to fit its content.
-func RenderBox(title, badge, content string, width, height int, focused bool) string {
+// If footer is non-empty it is always rendered as the last content line (sticky).
+func RenderBox(title, badge, content, footer string, width, height int, focused bool) string {
 	if width < 6 {
 		return ""
 	}
@@ -55,17 +56,37 @@ func RenderBox(title, badge, content string, width, height int, focused bool) st
 		lines = append(lines, border.Render("│")+padded+border.Render("│"))
 	}
 
+	// Render the sticky footer line (always last inside the box).
+	var footerLine string
+	if footer != "" {
+		fw := lipgloss.Width(footer)
+		if fw > innerW {
+			footer = lipgloss.NewStyle().MaxWidth(innerW).Render(footer)
+			fw = lipgloss.Width(footer)
+		}
+		footerLine = border.Render("│") + footer + bg.Render(strings.Repeat(" ", innerW-fw)) + border.Render("│")
+	}
+
 	if height > 0 {
 		innerH := max(height-2, 0)
-		if len(lines) > innerH {
-			lines = lines[:innerH]
+		// Reserve one row for the footer when present.
+		contentH := innerH
+		if footer != "" {
+			contentH = max(innerH-1, 0)
+		}
+		if len(lines) > contentH {
+			lines = lines[:contentH]
 		} else {
 			blank := bg.Render(strings.Repeat(" ", innerW))
 			fill := border.Render("│") + blank + border.Render("│")
-			for len(lines) < innerH {
+			for len(lines) < contentH {
 				lines = append(lines, fill)
 			}
 		}
+	}
+
+	if footerLine != "" {
+		lines = append(lines, footerLine)
 	}
 
 	return strings.Join(append(append([]string{top}, lines...), bottom), "\n")

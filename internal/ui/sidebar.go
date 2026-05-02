@@ -40,6 +40,9 @@ type Sidebar struct {
 	iosCollapsed     bool
 	androidCollapsed bool
 
+	filterMode  bool
+	filterQuery string
+
 	width  int
 	height int
 }
@@ -119,6 +122,31 @@ func (s Sidebar) Update(msg tea.Msg) (Sidebar, tea.Cmd) {
 	if !ok {
 		return s, nil
 	}
+
+	// Filter mode: intercept all keys for text input.
+	if s.filterMode {
+		switch k.String() {
+		case "esc":
+			s.filterMode = false
+			s.filterQuery = ""
+			s.availIdx = 0
+		case "enter":
+			s.filterMode = false
+		case "backspace", "ctrl+h":
+			if len(s.filterQuery) > 0 {
+				runes := []rune(s.filterQuery)
+				s.filterQuery = string(runes[:len(runes)-1])
+				s.availIdx = 0
+			}
+		default:
+			if k.Text != "" && !k.Mod.Contains(tea.ModCtrl) && !k.Mod.Contains(tea.ModAlt) {
+				s.filterQuery += k.Text
+				s.availIdx = 0
+			}
+		}
+		return s, nil
+	}
+
 	switch k.String() {
 	case "up", "k":
 		s.moveCursor(-1)
@@ -133,6 +161,15 @@ func (s Sidebar) Update(msg tea.Msg) (Sidebar, tea.Cmd) {
 	case "enter":
 		if s.focused == PaneAvailable {
 			s.toggleCurrentGroup()
+		}
+	case "esc":
+		if s.focused == PaneAvailable && s.filterQuery != "" {
+			s.filterQuery = ""
+			s.availIdx = 0
+		}
+	case "f":
+		if s.focused == PaneAvailable {
+			s.filterMode = true
 		}
 	case "a":
 		if s.focused == PaneAvailable {
@@ -158,6 +195,7 @@ func (s Sidebar) View() string {
 		"Booted",
 		fmt.Sprintf("%d", len(s.booted)),
 		s.renderBootedRows(),
+		"",
 		s.width,
 		0,
 		s.outerFocused && s.focused == PaneBooted,
@@ -169,10 +207,24 @@ func (s Sidebar) View() string {
 		availHeight = max(s.height-lipgloss.Height(bootedBox)-gapLines, 3)
 	}
 
+	total := len(s.iosAvail) + len(s.andAvail)
+	availBadge := fmt.Sprintf("%d", total)
+	if s.filterQuery != "" {
+		fios := s.filteredIOSAvail()
+		fand := s.filteredAndAvail()
+		availBadge = fmt.Sprintf("%d/%d", len(fios)+len(fand), total)
+	}
+
+	var availFooter string
+	if s.filterMode || s.filterQuery != "" {
+		availFooter = s.renderFilterRow(s.width - 2)
+	}
+
 	availBox := RenderBox(
 		"Available",
-		fmt.Sprintf("%d", len(s.iosAvail)+len(s.andAvail)),
+		availBadge,
 		s.renderAvailableRows(),
+		availFooter,
 		s.width,
 		availHeight,
 		s.outerFocused && s.focused == PaneAvailable,
@@ -205,23 +257,23 @@ type availPos struct {
 }
 
 // availPositions returns the ordered list of cursor stops in the Available
-// pane, accounting for collapsed groups. Each group with at least one device
-// contributes a header position; expanded groups also contribute one position
-// per device.
+// pane, accounting for collapsed groups and the active filter query.
 func (s Sidebar) availPositions() []availPos {
+	ios := s.filteredIOSAvail()
+	and := s.filteredAndAvail()
 	var out []availPos
-	if len(s.iosAvail) > 0 {
+	if len(ios) > 0 {
 		out = append(out, availPos{isHeader: true, group: 0})
 		if !s.iosCollapsed {
-			for i := range s.iosAvail {
+			for i := range ios {
 				out = append(out, availPos{group: 0, devIdx: i})
 			}
 		}
 	}
-	if len(s.andAvail) > 0 {
+	if len(and) > 0 {
 		out = append(out, availPos{isHeader: true, group: 1})
 		if !s.androidCollapsed {
-			for i := range s.andAvail {
+			for i := range and {
 				out = append(out, availPos{group: 1, devIdx: i})
 			}
 		}
@@ -232,6 +284,8 @@ func (s Sidebar) availPositions() []availPos {
 func (s Sidebar) availableLen() int { return len(s.availPositions()) }
 
 func (s Sidebar) availDeviceAt(idx int) *device.Device {
+	ios := s.filteredIOSAvail()
+	and := s.filteredAndAvail()
 	positions := s.availPositions()
 	if idx < 0 || idx >= len(positions) {
 		return nil
@@ -241,9 +295,11 @@ func (s Sidebar) availDeviceAt(idx int) *device.Device {
 		return nil
 	}
 	if p.group == 0 {
-		return &s.iosAvail[p.devIdx]
+		d := ios[p.devIdx]
+		return &d
 	}
-	return &s.andAvail[p.devIdx]
+	d := and[p.devIdx]
+	return &d
 }
 
 // toggleCurrentGroup flips the collapsed state of the group whose header the
@@ -272,6 +328,49 @@ func (s *Sidebar) toggleCurrentGroup() {
 	}
 }
 
+// fuzzyMatch reports whether all runes of query appear in target in order,
+// case-insensitive. An empty query matches everything.
+func fuzzyMatch(query, target string) bool {
+	if query == "" {
+		return true
+	}
+	target = strings.ToLower(target)
+	query = strings.ToLower(query)
+	qi := 0
+	for _, ch := range target {
+		if qi < len([]rune(query)) && ch == []rune(query)[qi] {
+			qi++
+		}
+	}
+	return qi == len([]rune(query))
+}
+
+func (s Sidebar) filteredIOSAvail() []device.Device {
+	if s.filterQuery == "" {
+		return s.iosAvail
+	}
+	out := make([]device.Device, 0, len(s.iosAvail))
+	for _, d := range s.iosAvail {
+		if fuzzyMatch(s.filterQuery, d.Name) {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+func (s Sidebar) filteredAndAvail() []device.Device {
+	if s.filterQuery == "" {
+		return s.andAvail
+	}
+	out := make([]device.Device, 0, len(s.andAvail))
+	for _, d := range s.andAvail {
+		if fuzzyMatch(s.filterQuery, d.Name) {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
 func (s Sidebar) renderBootedRows() string {
 	innerW := s.width - 2
 	if len(s.booted) == 0 {
@@ -287,33 +386,64 @@ func (s Sidebar) renderBootedRows() string {
 
 func (s Sidebar) renderAvailableRows() string {
 	innerW := s.width - 2
+	ios := s.filteredIOSAvail()
+	and := s.filteredAndAvail()
+
+	var lines []string
+
 	if len(s.iosAvail) == 0 && len(s.andAvail) == 0 {
-		return renderEmptyRow("(none)", innerW)
+		lines = append(lines, renderEmptyRow("(none)", innerW))
+	} else if len(ios) == 0 && len(and) == 0 {
+		lines = append(lines, renderEmptyRow("no match", innerW))
+	} else {
+		positions := s.availPositions()
+		prevGroup := -1
+		for i, p := range positions {
+			sel := s.focused == PaneAvailable && i == s.availIdx
+			if p.isHeader {
+				if prevGroup != -1 && prevGroup != p.group {
+					lines = append(lines, renderEmptyRow("", innerW))
+				}
+				glyph, label, clr, _, collapsed := groupHeaderArgs(s, p.group)
+				var count int
+				if p.group == 0 {
+					count = len(ios)
+				} else {
+					count = len(and)
+				}
+				lines = append(lines, renderGroupHeader(glyph, label, count, clr, innerW, collapsed, sel))
+				prevGroup = p.group
+				continue
+			}
+			var dev device.Device
+			if p.group == 0 {
+				dev = ios[p.devIdx]
+			} else {
+				dev = and[p.devIdx]
+			}
+			lines = append(lines, renderDeviceRow(dev, sel, innerW, true))
+		}
 	}
 
-	positions := s.availPositions()
-	var lines []string
-	prevGroup := -1
-	for i, p := range positions {
-		sel := s.focused == PaneAvailable && i == s.availIdx
-		if p.isHeader {
-			if prevGroup != -1 && prevGroup != p.group {
-				lines = append(lines, renderEmptyRow("", innerW))
-			}
-			glyph, label, color, count, collapsed := groupHeaderArgs(s, p.group)
-			lines = append(lines, renderGroupHeader(glyph, label, count, color, innerW, collapsed, sel))
-			prevGroup = p.group
-			continue
-		}
-		var dev device.Device
-		if p.group == 0 {
-			dev = s.iosAvail[p.devIdx]
-		} else {
-			dev = s.andAvail[p.devIdx]
-		}
-		lines = append(lines, renderDeviceRow(dev, sel, innerW, true))
-	}
 	return strings.Join(lines, "\n")
+}
+
+func (s Sidebar) renderFilterRow(innerW int) string {
+	cursor := ""
+	if s.filterMode {
+		cursor = "█"
+	}
+	query := s.filterQuery + cursor
+	prefix := " / "
+	row := prefix + query
+	w := lipgloss.Width(row)
+	queryStyle := lipgloss.NewStyle().Foreground(ColorAccent).Background(ColorBg).Bold(true)
+	bg := lipgloss.NewStyle().Background(ColorBg)
+	rendered := queryStyle.Render(row)
+	if w < innerW {
+		return rendered + bg.Render(strings.Repeat(" ", innerW-w))
+	}
+	return rendered
 }
 
 func groupHeaderArgs(s Sidebar, group int) (glyph, label string, c color.Color, count int, collapsed bool) {
