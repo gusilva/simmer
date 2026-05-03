@@ -29,18 +29,43 @@ func RenderBox(title, badge, content, footer string, width, height int, focused 
 	badgeStyle := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg)
 	bg := lipgloss.NewStyle().Background(ColorBg)
 
-	titleText := titleStyle.Render(title)
-	if badge != "" {
-		titleText += " " + badgeStyle.Render(badge)
+	// Truncate title if it's too long for the box width.
+	// Reserve at least 6 cells for borders and spacers: ╭──(3) + ──╮(3)
+	maxTitleW := max(width-6, 0)
+	displayTitle := truncateName(title, maxTitleW)
+	titleText := titleStyle.Render(displayTitle)
+
+	if badge != "" && lipgloss.Width(displayTitle)+2 <= maxTitleW {
+		displayBadge := truncateName(badge, maxTitleW-lipgloss.Width(displayTitle)-1)
+		titleText += " " + badgeStyle.Render(displayBadge)
 	}
 	titleW := lipgloss.Width(titleText)
 
 	leftDash := 2
-	rightDash := max(width-2-leftDash-2-titleW, 1)
+	// spaces: 1 before title, 1 after title
+	// borders: 1 left, 1 right
+	rightDash := max(width-2-leftDash-2-titleW, 0)
 
 	top := border.Render("╭"+strings.Repeat("─", leftDash)+" ") +
 		titleText +
 		border.Render(" "+strings.Repeat("─", rightDash)+"╮")
+
+	// Adjust for any rounding or min-width constraints to ensure exact width match
+	actualW := lipgloss.Width(top)
+	if actualW > width {
+		// If overflowed, we need to reduce the title even further or remove dashes
+		// For a 1-cell overflow, we can just remove the space after title if rightDash is 0
+		if actualW == width+1 && rightDash == 0 {
+			top = border.Render("╭"+strings.Repeat("─", leftDash)+" ") +
+				titleText +
+				border.Render("╮")
+		}
+	} else if actualW < width {
+		// If underflowed, pad the right dashes
+		top = border.Render("╭"+strings.Repeat("─", leftDash)+" ") +
+			titleText +
+			border.Render(" "+strings.Repeat("─", rightDash+(width-actualW))+"╮")
+	}
 
 	bottom := border.Render("╰" + strings.Repeat("─", width-2) + "╯")
 
