@@ -216,11 +216,10 @@ type RequestLogStreamMsg struct {
 // StopLogStreamMsg is dispatched when the user deselects the streaming app.
 type StopLogStreamMsg struct{}
 
-// RequestFileTreeMsg is dispatched when the Files tab is opened for an Android
-// device that has a selected app. The parent program should load and return
-// the file tree for the given app's sandbox.
+// RequestFileTreeMsg is dispatched when the Files tab is opened. App is nil
+// when no app is selected, in which case the parent should load the root tree.
 type RequestFileTreeMsg struct {
-	App device.App
+	App *device.App
 }
 
 // AppFocusedMsg is dispatched whenever the cursor lands on an app row in the
@@ -256,8 +255,8 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 		return m, nil
 	case "4":
 		m.tab = TabFiles
-		if m.active != nil && m.selectedApp != nil {
-			app := *m.selectedApp
+		if m.active != nil && m.tree == nil {
+			app := m.selectedApp
 			return m, func() tea.Msg { return RequestFileTreeMsg{App: app} }
 		}
 		return m, nil
@@ -286,6 +285,26 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 			}
 			n := rows[m.treeIdx].node
 			if !n.IsDir {
+				if m.active != nil {
+					name := strings.ToLower(n.Name)
+					if strings.HasSuffix(name, ".db") || strings.HasSuffix(name, ".sqlite") || strings.HasSuffix(name, ".sqlite3") {
+						dev := *m.active
+						packageID := ""
+						if m.selectedApp != nil {
+							packageID = m.selectedApp.BundleID
+						}
+						nodeName := n.Name
+						nodePath := n.Path
+						return m, func() tea.Msg {
+							return ShowSQLiteViewerMsg{
+								Device:    dev,
+								PackageID: packageID,
+								DBPath:    nodePath,
+								DBName:    nodeName,
+							}
+						}
+					}
+				}
 				return m, nil
 			}
 			m.expanded[n.Path] = !m.expanded[n.Path]
@@ -536,18 +555,12 @@ func (m MainPane) renderInfo(w, h int) string {
 		return strings.Join(lines, "\n")
 	}
 
-	visibleH := h
-	if visibleH < 1 {
-		visibleH = 1
-	}
+	visibleH := max(h, 1)
 	offset := 0
 	if m.infoIdx >= visibleH {
 		offset = m.infoIdx - visibleH + 1
 	}
-	end := offset + visibleH
-	if end > len(m.info.Fields) {
-		end = len(m.info.Fields)
-	}
+	end := min(offset+visibleH, len(m.info.Fields))
 
 	keyW := infoKeyWidth(m.info.Fields)
 
@@ -642,7 +655,7 @@ func (m MainPane) renderLogs(w, h int) string {
 
 	lines := []string{header, rule}
 
-	for _, vpLine := range strings.Split(m.logsVP.View(), "\n") {
+	for vpLine := range strings.SplitSeq(m.logsVP.View(), "\n") {
 		lines = append(lines, " "+vpLine)
 	}
 
@@ -823,12 +836,7 @@ func (m MainPane) renderTreePane(w, h int) []string {
 	lines := []string{m.renderCrumb(w), padBg(w)}
 
 	if m.tree == nil && m.active != nil {
-		var hint string
-		if m.selectedApp == nil {
-			hint = "  select an app in the Apps tab to browse its files"
-		} else {
-			hint = "  loading files…"
-		}
+		hint := "  loading files…"
 		rendered := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg).Render(hint)
 		pad := w - lipgloss.Width(rendered)
 		if pad > 0 {
@@ -1001,6 +1009,17 @@ func (m MainPane) renderPreviewPane(w, h int) []string {
 				Background(ColorBg).
 				Render(body))
 		}
+		// SQLite viewer hint
+		if !sel.IsDir && m.active != nil {
+			lname := strings.ToLower(sel.Name)
+			if strings.HasSuffix(lname, ".db") || strings.HasSuffix(lname, ".sqlite") || strings.HasSuffix(lname, ".sqlite3") {
+				lines = append(lines, padBg(w))
+				lines = append(lines, " "+lipgloss.NewStyle().
+					Foreground(ColorAccent).
+					Background(ColorBg).
+					Render("Enter → SQLite viewer"))
+			}
+		}
 	}
 
 	for i, line := range lines {
@@ -1040,14 +1059,11 @@ func previewContent(n *device.FileNode) []string {
 	if n.IsDir {
 		return []string{fmt.Sprintf("(directory — %d entries)", len(n.Children))}
 	}
-	if strings.HasSuffix(n.Name, ".sqlite") {
+	lname := strings.ToLower(n.Name)
+	if strings.HasSuffix(lname, ".db") || strings.HasSuffix(lname, ".sqlite") || strings.HasSuffix(lname, ".sqlite3") {
 		return []string{
-			"SQLite format 3",
-			fmt.Sprintf("(binary database — %s)", formatSize(n.Size)),
-			"",
-			"tables:  cache_entries, sync_state, attachments, ...",
-			"rows:    1,284 across 14 tables",
-			"wal:     enabled (38 KB)",
+			"SQLite database",
+			formatSize(n.Size),
 		}
 	}
 	if strings.HasSuffix(n.Name, ".log") || strings.HasSuffix(n.Name, ".json") {

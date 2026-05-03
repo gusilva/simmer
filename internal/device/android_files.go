@@ -11,6 +11,190 @@ import (
 	"time"
 )
 
+// AndroidRootFileSystem lists the root "/" directory of a running Android
+// emulator via `adb shell ls -la /`. The result is a single-level tree.
+type AndroidRootFileSystem struct{}
+
+// NewAndroidRootFileSystem returns a FileSystem rooted at "/" on the device.
+func NewAndroidRootFileSystem() FileSystem { return &AndroidRootFileSystem{} }
+
+// Tree escalates to root, polls until uid=0 is confirmed, then builds a
+// three-level tree. /storage/emulated/N is FUSE-restricted even for root;
+// its contents are read from /data/media/N (same data, no FUSE layer) and
+// injected under the correct /storage/emulated/N: header.
+func (f *AndroidRootFileSystem) Tree(ctx context.Context, dev Device) (FileNode, error) {
+	serial, err := findAndroidSerial(ctx, dev.ID)
+	if err != nil {
+		return FileNode{}, fmt.Errorf("find serial: %w", err)
+	}
+
+	if err := ensureAdbRoot(ctx, serial); err != nil {
+		return FileNode{}, err
+	}
+
+	// [TODO]: Refactor this shell command.
+	//
+	// Walk three levels: / → /x → /x/y (following symlinks via [ -d ]).
+	// /proc, /sys, /dev are skipped — virtual FSes that generate enormous output.
+	// /storage/emulated/N is FUSE-restricted; contents are read from /data/media/N
+	// (same backing store, directly accessible as root) and injected under the
+	// correct /storage/emulated/N headers. find -maxdepth 6 handles deep paths
+	// like Android/data/<pkg>/files/<user>/databases without hardcoded loop depth.
+	const shellCmd = `ls -la / 2>/dev/null; ` +
+		`for d in $(ls / 2>/dev/null); do ` +
+		`case $d in proc|sys|dev) continue ;; esac; ` +
+		`[ -d "/$d" ] || continue; ` +
+		`echo "/$d:"; ls -la "/$d" 2>/dev/null; ` +
+		`for e in $(ls "/$d" 2>/dev/null); do ` +
+		`[ -d "/$d/$e" ] || continue; ` +
+		`echo "/$d/$e:"; ls -la "/$d/$e" 2>/dev/null; ` +
+		`done; ` +
+		`done; ` +
+		`for uid in $(ls /data/media 2>/dev/null); do ` +
+		`echo "/storage/emulated/$uid:"; ls -la "/data/media/$uid" 2>/dev/null; ` +
+		`find "/data/media/$uid" -mindepth 1 -maxdepth 6 -type d 2>/dev/null | ` +
+		`while read dir; do ` +
+		`rel="${dir#/data/media/$uid}"; ` +
+		`echo "/storage/emulated/$uid$rel:"; ls -la "$dir" 2>/dev/null; ` +
+		`done; ` +
+		`done`
+
+	var stderr strings.Builder
+	cmd := exec.CommandContext(ctx, "adb", "-s", serial, "shell", shellCmd)
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return FileNode{}, fmt.Errorf("ls root: %s", msg)
+		}
+		return FileNode{}, fmt.Errorf("ls root: %w", err)
+	}
+
+	return parseAbsLsTree(string(out)), nil
+}
+
+// ensureAdbRoot restarts adbd as root and polls until `adb shell id` confirms
+// uid=0. Returns an error if root cannot be confirmed within ~5 seconds.
+func ensureAdbRoot(ctx context.Context, serial string) error {
+	exec.CommandContext(ctx, "adb", "-s", serial, "root").Run()
+	for range 5 {
+		exec.CommandContext(ctx, "adb", "-s", serial, "wait-for-device").Run()
+		out, err := exec.CommandContext(ctx, "adb", "-s", serial, "shell", "id").Output()
+		if err == nil && strings.Contains(string(out), "uid=0") {
+			return nil
+		}
+		time.Sleep(time.Second)
+		exec.CommandContext(ctx, "adb", "-s", serial, "root").Run()
+	}
+	return fmt.Errorf("adb root: could not confirm uid=0 after 5 attempts")
+}
+
+// parseAbsLsTree converts the output of the two-level shell listing into a
+// FileNode tree rooted at "/". Directory headers use absolute paths (/data:)
+// rather than the relative paths (./cache:) used by parseLsLaR.
+func parseAbsLsTree(data string) FileNode {
+	type rawEntry struct {
+		absPath string
+		perms   string
+		size    int64
+		mod     time.Time
+		isDir   bool
+	}
+
+	curDir := "/" // entries before the first header belong to root
+	var entries []rawEntry
+
+	for raw := range strings.SplitSeq(data, "\n") {
+		line := strings.TrimRight(raw, "\r")
+		trimmed := strings.TrimSpace(line)
+
+		if trimmed == "" || strings.HasPrefix(trimmed, "total ") {
+			continue
+		}
+
+		// Absolute directory header: "/data:" or "/sdcard:" etc.
+		if before, ok := strings.CutSuffix(trimmed, ":"); ok {
+			dir := before
+			if dir == "/" || strings.HasPrefix(dir, "/") {
+				curDir = dir
+				continue
+			}
+		}
+
+		e, ok := parseLsLine(line, "")
+		if !ok {
+			continue
+		}
+		name := e.relPath // just the filename (no curDir in parseLsLine)
+		var absPath string
+		if curDir == "/" {
+			absPath = "/" + name
+		} else {
+			absPath = curDir + "/" + name
+		}
+
+		entries = append(entries, rawEntry{
+			absPath: absPath,
+			perms:   e.perms,
+			size:    e.size,
+			mod:     e.mod,
+			isDir:   e.isDir,
+		})
+	}
+
+	nodes := map[string]*FileNode{
+		"/": {Name: "/", Path: "/", IsDir: true},
+	}
+	for i := range entries {
+		e := &entries[i]
+		nodes[e.absPath] = &FileNode{
+			Name:        filepath.Base(e.absPath),
+			Path:        e.absPath,
+			IsDir:       e.isDir,
+			Size:        e.size,
+			Modified:    e.mod,
+			Permissions: e.perms,
+		}
+	}
+
+	childrenOf := make(map[string][]string)
+	for path := range nodes {
+		if path == "/" {
+			continue
+		}
+		parent := filepath.Dir(path)
+		if parent == "." || parent == "" {
+			parent = "/"
+		}
+		childrenOf[parent] = append(childrenOf[parent], path)
+	}
+
+	var assemble func(string) FileNode
+	assemble = func(path string) FileNode {
+		node := *nodes[path]
+		kids := childrenOf[path]
+		// A symlink whose target was followed by the shell loop has children
+		// but isDir=false (perms start with 'l'). Promote it so the tree can
+		// expand it.
+		if len(kids) > 0 {
+			node.IsDir = true
+		}
+		sort.SliceStable(kids, func(i, j int) bool {
+			a, b := nodes[kids[i]], nodes[kids[j]]
+			if a.IsDir != b.IsDir {
+				return a.IsDir
+			}
+			return a.Name < b.Name
+		})
+		for _, kid := range kids {
+			node.Children = append(node.Children, assemble(kid))
+		}
+		return node
+	}
+
+	return assemble("/")
+}
+
 // AndroidFileSystem reads an app's private data directory on a running Android
 // emulator via `adb shell run-as <packageID> ls -laR`.
 type AndroidFileSystem struct {
@@ -167,6 +351,11 @@ func parseLsLine(line, curDir string) (lsEntry, bool) {
 	}
 	name := strings.Join(fields[nameStart:], " ")
 
+	// Strip symlink target ("name -> /target" → "name").
+	if idx := strings.Index(name, " -> "); idx >= 0 {
+		name = name[:idx]
+	}
+
 	// Skip . and ..
 	if name == "." || name == ".." {
 		return lsEntry{}, false
@@ -195,9 +384,9 @@ func buildLsTree(entries []lsEntry, packageID string) FileNode {
 	// Map relPath → *FileNode (without children).
 	nodes := map[string]*FileNode{
 		"": {
-			Name:    packageID,
-			Path:    basePath,
-			IsDir:   true,
+			Name:     packageID,
+			Path:     basePath,
+			IsDir:    true,
 			Modified: time.Time{},
 		},
 	}

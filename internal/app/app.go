@@ -51,9 +51,12 @@ type model struct {
 	createIOSModal *ui.CreateSimulatorModal
 	createAndModal *ui.CreateAndroidEmulatorModal
 	deleteAlert    *ui.DeleteSimulatorAlert
+	sqliteModal    *ui.SQLiteModal
 }
 
 type clearStatusMsg int
+
+type autoRefreshMsg struct{}
 
 type discoveryMsg device.DiscoveryResult
 
@@ -233,11 +236,31 @@ func (m model) loadIOSAppFileTreeCmd(dev device.Device, app device.App) tea.Cmd 
 	}
 }
 
+func (m model) loadIOSRootFileTreeCmd(dev device.Device) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		fs := device.NewIOSRootFileSystem()
+		root, err := fs.Tree(ctx, dev)
+		return fileTreeMsg{device: dev, root: root, err: err}
+	}
+}
+
 func (m model) loadAndroidFileTreeCmd(dev device.Device, app device.App) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		fs := device.NewAndroidFileSystem(app.BundleID)
+		root, err := fs.Tree(ctx, dev)
+		return fileTreeMsg{device: dev, root: root, err: err}
+	}
+}
+
+func (m model) loadAndroidRootFileTreeCmd(dev device.Device) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		fs := device.NewAndroidRootFileSystem()
 		root, err := fs.Tree(ctx, dev)
 		return fileTreeMsg{device: dev, root: root, err: err}
 	}
@@ -327,8 +350,16 @@ func (m *model) setStatus(text string, kind ui.StatusKind) tea.Cmd {
 	})
 }
 
+const autoRefreshInterval = 30 * time.Second
+
+func scheduleAutoRefresh() tea.Cmd {
+	return tea.Tick(autoRefreshInterval, func(_ time.Time) tea.Msg {
+		return autoRefreshMsg{}
+	})
+}
+
 func (m model) Init() tea.Cmd {
-	return m.fetchDevicesCmd()
+	return tea.Batch(m.fetchDevicesCmd(), scheduleAutoRefresh())
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -344,6 +375,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// MainPane wrapper: pad 0 left + 1 right around its width.
 		mainW := max(m.width-(ui.DefaultSidebarWidth+2)-1, 0)
 		m.mainPane.SetSize(mainW, bodyH)
+		if m.sqliteModal != nil {
+			m.sqliteModal.SetSize(m.width, m.height)
+		}
 		return m, nil
 
 	case tea.KeyPressMsg:
@@ -372,6 +406,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.deleteAlert != nil {
 			updated, cmd := m.deleteAlert.Update(msg)
 			m.deleteAlert = &updated
+			return m, cmd
+		}
+		if m.sqliteModal != nil {
+			updated, cmd := m.sqliteModal.Update(msg)
+			m.sqliteModal = &updated
 			return m, cmd
 		}
 
@@ -427,6 +466,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.sidebar, cmd = m.sidebar.Update(msg)
 		return m, cmd
+
+	case autoRefreshMsg:
+		return m, tea.Batch(m.fetchDevicesCmd(), scheduleAutoRefresh())
 
 	case discoveryMsg:
 		m.loading = false
@@ -559,11 +601,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		if msg.App == nil {
+			switch sel.Platform {
+			case device.PlatformIOS:
+				return m, m.loadIOSRootFileTreeCmd(*sel)
+			case device.PlatformAndroid:
+				return m, m.loadAndroidRootFileTreeCmd(*sel)
+			}
+			return m, nil
+		}
+
 		switch sel.Platform {
 		case device.PlatformIOS:
-			return m, m.loadIOSAppFileTreeCmd(*sel, msg.App)
+			return m, m.loadIOSAppFileTreeCmd(*sel, *msg.App)
 		case device.PlatformAndroid:
-			return m, m.loadAndroidFileTreeCmd(*sel, msg.App)
+			return m, m.loadAndroidFileTreeCmd(*sel, *msg.App)
 		}
 
 		return m, nil
@@ -645,11 +697,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.deleteAlert = &alert
 		return m, nil
 
+	case ui.ShowSQLiteViewerMsg:
+		modal, cmd := ui.NewSQLiteModal(msg.Device, msg.PackageID, msg.DBPath, msg.DBName)
+		modal.SetSize(m.width, m.height)
+		m.sqliteModal = &modal
+		return m, cmd
+
+	case ui.SQLiteResultMsg:
+		if m.sqliteModal != nil {
+			m.sqliteModal.SetResult(msg.Rows, msg.Err)
+		}
+		return m, nil
+
 	case ui.CancelOverlayMsg:
 		m.platformPicker = nil
 		m.createIOSModal = nil
 		m.createAndModal = nil
 		m.deleteAlert = nil
+		m.sqliteModal = nil
 		return m, nil
 
 	case ui.ConfirmCreateSimulatorMsg:
@@ -823,7 +888,7 @@ func (m model) View() tea.View {
 
 	baseStr := lipgloss.JoinVertical(lipgloss.Left, topBar, body, footer)
 
-	if m.platformPicker != nil || m.createIOSModal != nil || m.createAndModal != nil || m.deleteAlert != nil {
+	if m.platformPicker != nil || m.createIOSModal != nil || m.createAndModal != nil || m.deleteAlert != nil || m.sqliteModal != nil {
 		var overlayStr string
 		switch {
 		case m.platformPicker != nil:
@@ -832,6 +897,8 @@ func (m model) View() tea.View {
 			overlayStr = m.createIOSModal.View()
 		case m.createAndModal != nil:
 			overlayStr = m.createAndModal.View()
+		case m.sqliteModal != nil:
+			overlayStr = m.sqliteModal.View()
 		default:
 			overlayStr = m.deleteAlert.View()
 		}

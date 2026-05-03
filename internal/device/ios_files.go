@@ -117,6 +117,47 @@ func walkNode(ctx context.Context, path string, info os.FileInfo, depth, maxDept
 	return n, nil
 }
 
+// IOSRootFileSystem walks the simulator's full data directory (the simulated
+// filesystem root at ~/Library/Developer/CoreSimulator/Devices/<UDID>/data/).
+type IOSRootFileSystem struct {
+	MaxDepth int
+}
+
+// NewIOSRootFileSystem returns a FileSystem rooted at the simulator's data dir.
+func NewIOSRootFileSystem() FileSystem {
+	return &IOSRootFileSystem{MaxDepth: 2}
+}
+
+// Tree walks the simulator's data directory and returns the root node.
+func (f *IOSRootFileSystem) Tree(ctx context.Context, dev Device) (FileNode, error) {
+	if dev.Platform != PlatformIOS {
+		return FileNode{}, fmt.Errorf("ios filesystem: unsupported platform %s", dev.Platform)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return FileNode{}, fmt.Errorf("user home: %w", err)
+	}
+	root := filepath.Join(home,
+		"Library", "Developer", "CoreSimulator",
+		"Devices", dev.ID, "data",
+	)
+	info, err := os.Stat(root)
+	if err != nil {
+		return FileNode{}, fmt.Errorf("stat %s: %w", root, err)
+	}
+	maxD := f.MaxDepth
+	if maxD <= 0 {
+		maxD = 2
+	}
+	node, err := walkNode(ctx, root, info, 0, maxD)
+	if err != nil {
+		return FileNode{}, err
+	}
+	node.Name = "/"
+	node.Path = root
+	return node, nil
+}
+
 // IOSAppFileSystem resolves a single app's data container via
 // `xcrun simctl get_app_container` and walks it locally — the same host-side
 // walk used by IOSFileSystem, scoped to one bundle.
