@@ -4,7 +4,7 @@
 
 [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![CI](https://github.com/gusilva/simmer/actions/workflows/ci.yml/badge.svg)](https://github.com/gusilva/simmer/actions/workflows/ci.yml)
-[![Coverage](https://codecov.io/gh/gusilva/simmer/branch/main/graph/badge.svg)](https://codecov.io/gh/gusilva/simmer)
+[![codecov](https://codecov.io/gh/gusilva/simmer/graph/badge.svg?token=OMG9LKM6WZ)](https://codecov.io/gh/gusilva/simmer)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 <p align="center">
