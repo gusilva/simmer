@@ -33,6 +33,7 @@ type sqliteMode int
 const (
 	sqliteModeEdit sqliteMode = iota
 	sqliteModeNav
+	sqliteModeSearch
 )
 
 // SQLiteModal is an overlay for running SQLite queries against an Android app
@@ -43,14 +44,18 @@ type SQLiteModal struct {
 	packageID  string
 	dbPath     string
 	dbName     string
+
 	// rows[0] is the header row (sqlite3 -header), rows[1:] are data rows.
-	rows     [][]string
-	queryErr string
-	loading  bool
-	rowOffset int
-	mode     sqliteMode
-	width    int // terminal width
-	height   int // terminal height
+	rows        [][]string
+	queryErr    string
+	loading     bool
+	rowOffset   int    // index of first visible row in filtered set
+	cursor      int    // index of selected row in filtered set
+	colOffset   int    // horizontal character scroll offset
+	searchQuery string // active fuzzy filter
+	mode        sqliteMode
+	width       int // terminal width
+	height      int // terminal height
 }
 
 const sqliteInitialQuery = "SELECT name FROM sqlite_master WHERE type='table';"
@@ -87,6 +92,9 @@ func (m *SQLiteModal) SetSize(w, h int) {
 func (m *SQLiteModal) SetResult(rows [][]string, err error) {
 	m.loading = false
 	m.rowOffset = 0
+	m.cursor = 0
+	m.colOffset = 0
+	m.searchQuery = ""
 	if err != nil {
 		m.queryErr = err.Error()
 		m.rows = nil
@@ -96,8 +104,18 @@ func (m *SQLiteModal) SetResult(rows [][]string, err error) {
 	}
 }
 
-// Update handles keyboard input for the modal.
+// Update handles keyboard and paste input for the modal.
 func (m SQLiteModal) Update(msg tea.Msg) (SQLiteModal, tea.Cmd) {
+	// Forward paste events to the query input when in edit mode.
+	if _, ok := msg.(tea.PasteMsg); ok {
+		if m.mode == sqliteModeEdit {
+			var cmd tea.Cmd
+			m.queryInput, cmd = m.queryInput.Update(msg)
+			return m, cmd
+		}
+		return m, nil
+	}
+
 	k, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return m, nil
@@ -112,6 +130,7 @@ func (m SQLiteModal) Update(msg tea.Msg) (SQLiteModal, tea.Cmd) {
 		case "enter":
 			m.loading = true
 			m.rowOffset = 0
+			m.cursor = 0
 			return m, m.buildQueryCmd()
 		default:
 			var cmd tea.Cmd
@@ -119,24 +138,67 @@ func (m SQLiteModal) Update(msg tea.Msg) (SQLiteModal, tea.Cmd) {
 			return m, cmd
 		}
 
+	case sqliteModeSearch:
+		switch k.String() {
+		case "esc", "enter":
+			m.mode = sqliteModeNav
+		case "backspace":
+			if len(m.searchQuery) > 0 {
+				runes := []rune(m.searchQuery)
+				m.searchQuery = string(runes[:len(runes)-1])
+				m.resetCursor()
+			}
+		default:
+			if k.Text != "" {
+				m.searchQuery += k.Text
+				m.resetCursor()
+			}
+		}
+
 	case sqliteModeNav:
 		switch k.String() {
 		case "esc", "q":
+			if m.searchQuery != "" {
+				m.searchQuery = ""
+				m.resetCursor()
+				return m, nil
+			}
 			return m, func() tea.Msg { return CancelOverlayMsg{} }
 		case "i", "e":
 			m.mode = sqliteModeEdit
 			return m, m.queryInput.Focus()
+		case "/":
+			m.mode = sqliteModeSearch
 		case "enter":
 			m.loading = true
 			m.rowOffset = 0
+			m.cursor = 0
+			m.colOffset = 0
+			m.searchQuery = ""
 			return m, m.buildQueryCmd()
+		case "left":
+			step := max(m.innerW()/4, 4)
+			m.colOffset = max(m.colOffset-step, 0)
+		case "right":
+			step := max(m.innerW()/4, 4)
+			m.colOffset = min(m.colOffset+step, m.hScrollMax())
 		case "up", "k":
-			if m.rowOffset > 0 {
-				m.rowOffset--
+			if m.cursor > 0 {
+				m.cursor--
+				if m.cursor < m.rowOffset {
+					m.rowOffset = m.cursor
+				}
 			}
 		case "down", "j":
-			if m.rowOffset < max(m.dataRowCount()-m.visibleRows(), 0) {
-				m.rowOffset++
+			if m.cursor < m.filteredCount()-1 {
+				m.cursor++
+				if m.cursor >= m.rowOffset+m.visibleRows() {
+					m.rowOffset = m.cursor - m.visibleRows() + 1
+				}
+			}
+		case "space":
+			if row := m.selectedRow(); row != nil {
+				return m, CopyToClipboardCmd(strings.Join(row, "\t"))
 			}
 		}
 	}
@@ -189,17 +251,28 @@ func (m SQLiteModal) View() string {
 	// Hints
 	sep := faint.Render("  ")
 	var hints []string
-	if m.mode == sqliteModeEdit {
+	switch m.mode {
+	case sqliteModeEdit:
 		hints = []string{
 			hintKey.Render("Enter") + hintVerb.Render(" run"),
 			hintKey.Render("Esc") + hintVerb.Render(" nav mode"),
 		}
-	} else {
+	case sqliteModeSearch:
+		hints = []string{
+			hintKey.Render("Enter/Esc") + hintVerb.Render(" done"),
+		}
+	default:
 		hints = []string{
 			hintKey.Render("i") + hintVerb.Render(" edit"),
 			hintKey.Render("Enter") + hintVerb.Render(" run"),
 			hintKey.Render("j/k") + hintVerb.Render(" scroll"),
+			hintKey.Render("/") + hintVerb.Render(" search"),
+			hintKey.Render("Space") + hintVerb.Render(" copy row"),
 			hintKey.Render("Esc") + hintVerb.Render(" close"),
+		}
+		if m.hasHScroll() {
+			hints = append(hints[:3:3],
+				append([]string{hintKey.Render("←→") + hintVerb.Render(" h-scroll")}, hints[3:]...)...)
 		}
 	}
 	b.WriteString(strings.Join(hints, sep))
@@ -210,66 +283,188 @@ func (m SQLiteModal) View() string {
 func (m SQLiteModal) renderResults(innerW int, dim, faint lipgloss.Style, rule string) string {
 	var b strings.Builder
 	errStyle := lipgloss.NewStyle().Foreground(ColorErr).Background(ColorBg)
+	visN := m.visibleRows()
+	blank := strings.Repeat(" ", innerW)
 
-	if m.loading {
-		b.WriteString(dim.Render("Results") + "  " + faint.Render("running…"))
+	// writeDataArea always emits exactly visN data lines + 1 scroll-hint line.
+	writeDataArea := func(lines []string, scrollHint string) {
+		for i := 0; i < visN; i++ {
+			if i < len(lines) {
+				b.WriteString(lines[i])
+			} else {
+				b.WriteString(blank)
+			}
+			b.WriteString("\n")
+		}
+		b.WriteString(scrollHint) // no trailing newline — caller owns it
+	}
+
+	// Fixed frame: count(1) + search(1) + rule(1) + header(1) + rule(1) + data(visN) + hint(1)
+	// Early-return states fill the same frame with blank lines.
+
+	writeEmptyFrame := func(statusLine string) string {
+		b.WriteString(statusLine)
+		b.WriteString("\n")
+		b.WriteString(m.renderSearchBar(innerW, faint))
 		b.WriteString("\n")
 		b.WriteString(rule)
+		b.WriteString("\n")
+		b.WriteString(blank) // header placeholder
+		b.WriteString("\n")
+		b.WriteString(rule)
+		b.WriteString("\n")
+		writeDataArea(nil, blank)
+
 		return b.String()
+	}
+
+	if m.loading {
+		return writeEmptyFrame(dim.Render("Results") + "  " + faint.Render("running…"))
 	}
 
 	if m.queryErr != "" {
 		b.WriteString(dim.Render("Results") + "  " + errStyle.Render("error"))
 		b.WriteString("\n")
+		b.WriteString(m.renderSearchBar(innerW, faint))
+		b.WriteString("\n")
 		b.WriteString(rule)
 		b.WriteString("\n")
-		b.WriteString(errStyle.Render(truncateName(m.queryErr, innerW)))
+		b.WriteString(blank)
+		b.WriteString("\n")
+		b.WriteString(rule)
+		b.WriteString("\n")
+
+		errLines := []string{errStyle.Render(truncateName(m.queryErr, innerW))}
+		writeDataArea(errLines, blank)
+
 		return b.String()
 	}
 
 	if len(m.rows) == 0 {
-		b.WriteString(dim.Render("Results") + "  " + faint.Render("(no output)"))
-		b.WriteString("\n")
-		b.WriteString(rule)
-		return b.String()
+		return writeEmptyFrame(dim.Render("Results") + "  " + faint.Render("(no output)"))
 	}
 
 	header := m.rows[0]
-	data := m.rows[1:]
-	nData := len(data)
+	filtered := m.filteredData()
+	nFiltered := len(filtered)
+	nTotal := len(m.rows) - 1
 
-	countStr := fmt.Sprintf("%d row", nData)
-	if nData != 1 {
-		countStr += "s"
+	// Count line
+	var countStr string
+	if m.searchQuery != "" {
+		countStr = fmt.Sprintf("%d/%d rows", nFiltered, nTotal)
+	} else {
+		countStr = fmt.Sprintf("%d row", nTotal)
+		if nTotal != 1 {
+			countStr += "s"
+		}
 	}
 	b.WriteString(dim.Render("Results") + "  " + faint.Render(countStr))
 	b.WriteString("\n")
 
-	widths := sqliteColWidths(m.rows, innerW)
+	// Search bar
+	b.WriteString(m.renderSearchBar(innerW, faint))
+	b.WriteString("\n")
+
+	// Decide between natural (H-scroll) and shrink-to-fit column widths.
+	naturalWidths := sqliteNaturalColWidths(m.rows)
+	fullW := sqliteRowWidth(naturalWidths)
+	hScroll := fullW > innerW
+	var widths []int
+	if hScroll {
+		widths = naturalWidths
+	} else {
+		widths = sqliteColWidths(m.rows, innerW)
+	}
+
+	// Clamp colOffset to valid range.
+	maxOff := max(fullW-innerW, 0)
+	colOff := min(m.colOffset, maxOff)
+
+	renderTableRow := func(cells []string) string {
+		full := sqliteRenderRowFull(cells, widths)
+		if hScroll {
+			return sqliteSliceRow(full, colOff, innerW)
+		}
+		return full
+	}
 
 	headerStyle := lipgloss.NewStyle().Foreground(ColorFg).Background(ColorBg).Bold(true)
 	rowStyle := lipgloss.NewStyle().Foreground(ColorFgDim).Background(ColorBg)
+	selectedStyle := lipgloss.NewStyle().Foreground(ColorBg).Background(ColorAccent).Bold(true)
 
 	b.WriteString(rule)
 	b.WriteString("\n")
-	b.WriteString(headerStyle.Render(sqliteRenderRow(header, widths, innerW)))
+	b.WriteString(headerStyle.Render(renderTableRow(header)))
 	b.WriteString("\n")
 	b.WriteString(rule)
 	b.WriteString("\n")
 
-	visN := m.visibleRows()
-	end := min(m.rowOffset+visN, nData)
-	for _, row := range data[m.rowOffset:end] {
-		b.WriteString(rowStyle.Render(sqliteRenderRow(row, widths, innerW)))
-		b.WriteString("\n")
+	// Build exactly visN rendered data lines.
+	dataLines := make([]string, visN)
+	if nFiltered == 0 && m.searchQuery != "" {
+		dataLines[0] = faint.Render("no matches")
+	} else {
+		end := min(m.rowOffset+visN, nFiltered)
+		for i, row := range filtered[m.rowOffset:end] {
+			absIdx := m.rowOffset + i
+			rendered := renderTableRow(row)
+			if absIdx == m.cursor {
+				dataLines[i] = selectedStyle.Render(rendered)
+			} else {
+				dataLines[i] = rowStyle.Render(rendered)
+			}
+		}
 	}
 
-	if nData > visN {
-		hint := fmt.Sprintf("rows %d–%d of %d  ↑↓ scroll", m.rowOffset+1, end, nData)
-		b.WriteString(faint.Render(hint))
+	var hintParts []string
+	if nFiltered > visN {
+		end := min(m.rowOffset+visN, nFiltered)
+		hintParts = append(hintParts, fmt.Sprintf("rows %d–%d of %d ↑↓", m.rowOffset+1, end, nFiltered))
 	}
 
+	if hScroll {
+		hintParts = append(hintParts, fmt.Sprintf("col %d/%d ←→", colOff, maxOff))
+	}
+	scrollHint := blank
+	if len(hintParts) > 0 {
+		scrollHint = faint.Render(strings.Join(hintParts, "  "))
+	}
+
+	writeDataArea(dataLines, scrollHint)
 	return b.String()
+}
+
+func (m SQLiteModal) renderSearchBar(innerW int, faint lipgloss.Style) string {
+	searchActive := lipgloss.NewStyle().Foreground(ColorAccent).Background(ColorBg).Bold(true)
+	searchDim := lipgloss.NewStyle().Foreground(ColorFgDim).Background(ColorBg)
+
+	prefix := faint.Render("/") + " "
+	query := m.searchQuery
+	cursor := ""
+	if m.mode == sqliteModeSearch {
+		cursor = searchActive.Render("█")
+	}
+
+	var text string
+	if query == "" && m.mode != sqliteModeSearch {
+		text = faint.Render("filter…")
+	} else {
+		text = searchDim.Render(query) + cursor
+	}
+
+	raw := prefix + text
+	maxLen := innerW - 2
+	if lipgloss.Width(raw) > maxLen {
+		// Truncate query so prompt stays within bounds.
+		runes := []rune(query)
+		for lipgloss.Width(prefix+searchDim.Render(string(runes))+cursor) > maxLen && len(runes) > 0 {
+			runes = runes[1:]
+		}
+		text = searchDim.Render(string(runes)) + cursor
+		raw = prefix + text
+	}
+	return raw
 }
 
 // ── sizing ─────────────────────────────────────────────────────────────────
@@ -278,7 +473,19 @@ func (m SQLiteModal) modalW() int {
 	if m.width == 0 {
 		return 80
 	}
-	return min(max(m.width-4, 60), 100)
+	// Use full terminal width with a 1-char margin on each side.
+	return max(m.width-2, 60)
+}
+
+func (m SQLiteModal) hScrollMax() int {
+	if len(m.rows) == 0 {
+		return 0
+	}
+	return max(sqliteRowWidth(sqliteNaturalColWidths(m.rows))-m.innerW(), 0)
+}
+
+func (m SQLiteModal) hasHScroll() bool {
+	return m.hScrollMax() > 0
 }
 
 func (m SQLiteModal) innerW() int {
@@ -288,19 +495,50 @@ func (m SQLiteModal) innerW() int {
 func (m SQLiteModal) visibleRows() int {
 	// Content overhead (inside box, excluding scrollable rows):
 	//   title(1) blank(1) query-label(1) input(1) blank(1)
-	//   results-label(1) rule(1) header(1) rule(1) blank(1) blank(1) hints(1) = 12
+	//   results-label(1) search-bar(1) rule(1) header(1) rule(1) blank(1) blank(1) hints(1) = 13
 	// box adds border(2) + padding top/bot(2) = 4
 	if m.height == 0 {
 		return 8
 	}
-	return max(m.height-4-12, 3)
+	return max(m.height-4-13, 3)
 }
 
-func (m SQLiteModal) dataRowCount() int {
+func (m SQLiteModal) filteredData() [][]string {
 	if len(m.rows) <= 1 {
-		return 0
+		return nil
 	}
-	return len(m.rows) - 1
+	data := m.rows[1:]
+	if m.searchQuery == "" {
+		return data
+	}
+	out := make([][]string, 0, len(data))
+	for _, row := range data {
+		for _, cell := range row {
+			if fuzzyMatch(m.searchQuery, cell) {
+				out = append(out, row)
+				break
+			}
+		}
+	}
+	return out
+}
+
+func (m SQLiteModal) filteredCount() int {
+	return len(m.filteredData())
+}
+
+func (m SQLiteModal) selectedRow() []string {
+	filtered := m.filteredData()
+	if m.cursor < 0 || m.cursor >= len(filtered) {
+		return nil
+	}
+	return filtered[m.cursor]
+}
+
+// resetCursor resets cursor and scroll offset to zero after a search query change.
+func (m *SQLiteModal) resetCursor() {
+	m.cursor = 0
+	m.rowOffset = 0
 }
 
 // ── query command ──────────────────────────────────────────────────────────
@@ -322,6 +560,82 @@ func (m SQLiteModal) buildQueryCmd() tea.Cmd {
 }
 
 // ── table helpers ──────────────────────────────────────────────────────────
+
+// sqliteNaturalColWidths returns the max content width per column without shrinking.
+func sqliteNaturalColWidths(rows [][]string) []int {
+	if len(rows) == 0 {
+		return nil
+	}
+	ncols := 0
+	for _, row := range rows {
+		if len(row) > ncols {
+			ncols = len(row)
+		}
+	}
+	if ncols == 0 {
+		return nil
+	}
+	widths := make([]int, ncols)
+	for _, row := range rows {
+		for i, cell := range row {
+			if i < ncols && len(cell) > widths[i] {
+				widths[i] = len(cell)
+			}
+		}
+	}
+	return widths
+}
+
+// sqliteRowWidth returns the total rendered width of a row given column widths.
+func sqliteRowWidth(widths []int) int {
+	if len(widths) == 0 {
+		return 0
+	}
+	total := (len(widths) - 1) * 3 // " │ " separators
+	for _, w := range widths {
+		total += w
+	}
+	return total
+}
+
+// sqliteRenderRowFull renders a row to its natural full width with no terminal cap.
+func sqliteRenderRowFull(cells []string, widths []int) string {
+	if len(widths) == 0 {
+		return strings.Join(cells, " | ")
+	}
+	parts := make([]string, len(widths))
+	for i, w := range widths {
+		cell := ""
+		if i < len(cells) {
+			cell = cells[i]
+		}
+		if len(cell) > w {
+			if w > 1 {
+				cell = cell[:w-1] + "…"
+			} else {
+				cell = "…"
+			}
+		}
+		if pad := w - len(cell); pad > 0 {
+			cell += strings.Repeat(" ", pad)
+		}
+		parts[i] = cell
+	}
+	return strings.Join(parts, " │ ")
+}
+
+// sqliteSliceRow returns a rune-safe horizontal window of a rendered row.
+func sqliteSliceRow(row string, offset, width int) string {
+	runes := []rune(row)
+	n := len(runes)
+	start := min(offset, n)
+	end := min(start+width, n)
+	visible := string(runes[start:end])
+	if end-start < width {
+		visible += strings.Repeat(" ", width-(end-start))
+	}
+	return visible
+}
 
 // sqliteColWidths computes per-column widths from all rows and shrinks the
 // widest columns until the total (including " │ " separators) fits in maxW.

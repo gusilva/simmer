@@ -43,7 +43,9 @@ type MainPane struct {
 	expanded    map[string]bool   // Which dirs are open in the tree
 	treeIdx     int               // Cursor row in the tree
 	apps        []device.App      // List of installed apps
-	appsIdx     int               // Cursor row in the apps list
+	appsIdx     int               // Cursor row in the filtered apps list
+	appsFilter  string            // Active fuzzy filter for apps
+	appsFiltering bool            // Whether filter input is active
 	selectedApp *device.App       // The app with log streaming ON
 	info        device.DeviceInfo // Device info fields for the Info tab
 	infoIdx     int               // Cursor row in the info list
@@ -95,6 +97,8 @@ func (m *MainPane) SetDevice(d *device.Device, root *device.FileNode) {
 	m.treeIdx = 0
 	m.apps = nil
 	m.appsIdx = 0
+	m.appsFilter = ""
+	m.appsFiltering = false
 	m.selectedApp = nil
 	m.info = device.DeviceInfo{}
 	m.infoIdx = 0
@@ -153,9 +157,23 @@ func (m *MainPane) SetTree(root *device.FileNode) {
 // SetApps replaces the list of installed apps shown in the Apps tab.
 func (m *MainPane) SetApps(apps []device.App) {
 	m.apps = apps
-	if m.appsIdx >= len(apps) {
-		m.appsIdx = 0
+	m.appsFilter = ""
+	m.appsFiltering = false
+	m.appsIdx = 0
+}
+
+// filteredApps returns apps matching the active filter, or all apps when empty.
+func (m MainPane) filteredApps() []device.App {
+	if m.appsFilter == "" {
+		return m.apps
 	}
+	out := make([]device.App, 0, len(m.apps))
+	for _, app := range m.apps {
+		if fuzzyMatch(m.appsFilter, app.Label()) || fuzzyMatch(m.appsFilter, app.BundleID) {
+			out = append(out, app)
+		}
+	}
+	return out
 }
 
 // SetInfo replaces the device info shown in the Info tab.
@@ -168,10 +186,11 @@ func (m *MainPane) SetInfo(info device.DeviceInfo) {
 
 // SelectedApp returns the app currently highlighted in the Apps tab, or nil.
 func (m MainPane) SelectedApp() *device.App {
-	if m.appsIdx < 0 || m.appsIdx >= len(m.apps) {
+	filtered := m.filteredApps()
+	if m.appsIdx < 0 || m.appsIdx >= len(filtered) {
 		return nil
 	}
-	a := m.apps[m.appsIdx]
+	a := filtered[m.appsIdx]
 	return &a
 }
 
@@ -239,6 +258,27 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
+
+	// While filter input is active, capture all keys before tab-switch handling.
+	if m.tab == TabApps && m.appsFiltering {
+		switch k.String() {
+		case "esc", "enter":
+			m.appsFiltering = false
+		case "backspace":
+			if len(m.appsFilter) > 0 {
+				runes := []rune(m.appsFilter)
+				m.appsFilter = string(runes[:len(runes)-1])
+				m.appsIdx = 0
+			}
+		default:
+			if k.Text != "" {
+				m.appsFilter += k.Text
+				m.appsIdx = 0
+			}
+		}
+		return m, nil
+	}
+
 	switch k.String() {
 	case "1":
 		m.tab = TabInfo
@@ -317,38 +357,44 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 			}
 		}
 	case TabApps:
+		filtered := m.filteredApps()
 		prev := m.appsIdx
 		switch k.String() {
+		case "/":
+			m.appsFiltering = true
+		case "esc":
+			if m.appsFilter != "" {
+				m.appsFilter = ""
+				m.appsIdx = 0
+				return m, nil
+			}
 		case "up", "k":
 			if m.appsIdx > 0 {
 				m.appsIdx--
 			}
 		case "down", "j":
-			if m.appsIdx < len(m.apps)-1 {
+			if m.appsIdx < len(filtered)-1 {
 				m.appsIdx++
 			}
 		case "home", "g":
 			m.appsIdx = 0
 		case "end", "G":
-			if len(m.apps) > 0 {
-				m.appsIdx = len(m.apps) - 1
+			if len(filtered) > 0 {
+				m.appsIdx = len(filtered) - 1
 			}
 		case "space":
-			if len(m.apps) == 0 {
+			if len(filtered) == 0 || m.appsIdx >= len(filtered) {
 				return m, nil
 			}
-
-			app := m.apps[m.appsIdx]
+			app := filtered[m.appsIdx]
 			if m.selectedApp != nil && m.selectedApp.BundleID == app.BundleID {
 				m.selectedApp = nil
 				m.tree = nil
 				return m, func() tea.Msg { return StopLogStreamMsg{} }
 			}
-
 			a := app
 			m.selectedApp = &a
 			m.tree = nil
-
 			return m, func() tea.Msg { return RequestLogStreamMsg{App: a} }
 		}
 		if m.appsIdx != prev {
@@ -676,42 +722,79 @@ func (m MainPane) renderLogs(w, h int) string {
 // ── Apps tab ───────────────────────────────────────────────────────────
 
 func (m MainPane) renderApps(w, h int) string {
-	if len(m.apps) == 0 {
-		hint := lipgloss.NewStyle().
-			Foreground(ColorFgFaint).
-			Background(ColorBg).
-			Render("  no apps installed")
+	lines := make([]string, 0, h)
 
+	// Filter bar — always rendered so layout height stays fixed.
+	lines = append(lines, m.renderAppsFilterBar(w))
+
+	listH := max(h-1, 1)
+
+	if len(m.apps) == 0 {
+		hint := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg).Render("  no apps installed")
 		if pad := w - lipgloss.Width(hint); pad > 0 {
 			hint += lipgloss.NewStyle().Background(ColorBg).Render(strings.Repeat(" ", pad))
 		}
-
-		lines := []string{hint}
+		lines = append(lines, hint)
 		for len(lines) < h {
 			lines = append(lines, padBg(w))
 		}
-
 		return strings.Join(lines, "\n")
 	}
 
-	visibleH := max(h, 1)
-	offset := 0
-	if m.appsIdx >= visibleH {
-		offset = m.appsIdx - visibleH + 1
+	filtered := m.filteredApps()
+
+	if len(filtered) == 0 {
+		hint := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg).Render("  no matches")
+		if pad := w - lipgloss.Width(hint); pad > 0 {
+			hint += lipgloss.NewStyle().Background(ColorBg).Render(strings.Repeat(" ", pad))
+		}
+		lines = append(lines, hint)
+		for len(lines) < h {
+			lines = append(lines, padBg(w))
+		}
+		return strings.Join(lines, "\n")
 	}
 
-	end := min(offset+visibleH, len(m.apps))
-	lines := make([]string, 0, h)
+	offset := 0
+	if m.appsIdx >= listH {
+		offset = m.appsIdx - listH + 1
+	}
+	end := min(offset+listH, len(filtered))
 	for i := offset; i < end; i++ {
-		streaming := m.selectedApp != nil && m.selectedApp.BundleID == m.apps[i].BundleID
-		lines = append(lines, m.renderAppRow(m.apps[i], w, i == m.appsIdx, streaming))
+		streaming := m.selectedApp != nil && m.selectedApp.BundleID == filtered[i].BundleID
+		lines = append(lines, m.renderAppRow(filtered[i], w, i == m.appsIdx, streaming))
 	}
 
 	for len(lines) < h {
 		lines = append(lines, padBg(w))
 	}
-
 	return strings.Join(lines, "\n")
+}
+
+func (m MainPane) renderAppsFilterBar(w int) string {
+	searchActive := lipgloss.NewStyle().Foreground(ColorAccent).Background(ColorBg).Bold(true)
+	searchDim := lipgloss.NewStyle().Foreground(ColorFgDim).Background(ColorBg)
+	faint := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg)
+
+	prefix := faint.Render(" /") + " "
+	query := m.appsFilter
+	cursor := ""
+	if m.appsFiltering {
+		cursor = searchActive.Render("█")
+	}
+
+	var text string
+	if query == "" && !m.appsFiltering {
+		text = faint.Render("filter apps…")
+	} else {
+		text = searchDim.Render(query) + cursor
+	}
+
+	row := prefix + text
+	if pad := w - lipgloss.Width(row); pad > 0 {
+		row += lipgloss.NewStyle().Background(ColorBg).Render(strings.Repeat(" ", pad))
+	}
+	return row
 }
 
 func (m MainPane) renderAppRow(app device.App, w int, cursor bool, streaming bool) string {

@@ -465,7 +465,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		var cmd tea.Cmd
 		m.sidebar, cmd = m.sidebar.Update(msg)
+
 		return m, cmd
+
+	case tea.PasteMsg:
+		if m.sqliteModal != nil {
+			updated, cmd := m.sqliteModal.Update(msg)
+			m.sqliteModal = &updated
+			return m, cmd
+		}
+
+		return m, nil
 
 	case autoRefreshMsg:
 		return m, tea.Batch(m.fetchDevicesCmd(), scheduleAutoRefresh())
