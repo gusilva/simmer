@@ -1,0 +1,21 @@
+# Codecov configuration
+# See https://docs.codecov.io/docs/codecovyml-reference
+
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
+    patch:
+      default:
+        target: auto
+        threshold: 1%
+
+comment:
+  layout: "reach,diff,flags,files"
+  behavior: default
+
+# Explicitly set the default branch for the badge
+codecov:
+  branch: main
