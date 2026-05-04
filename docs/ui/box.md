@@ -6,7 +6,7 @@ Used by `Sidebar` for both the Booted and Available boxes.
 ```
 ╭── Booted 2 ──────────────╮
 │ ● iPhone 15 Pro    17.5  │
-│ ● ▲ Pixel 8         14.0  │
+│ ● ▲ Pixel 8         14.0 │
 ╰──────────────────────────╯
 ```
 

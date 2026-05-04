@@ -52,6 +52,7 @@ type model struct {
 	createAndModal *ui.CreateAndroidEmulatorModal
 	deleteAlert    *ui.DeleteSimulatorAlert
 	sqliteModal    *ui.SQLiteModal
+	dbViewerModal  *ui.DBViewerModal
 }
 
 type clearStatusMsg int
@@ -378,6 +379,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.sqliteModal != nil {
 			m.sqliteModal.SetSize(m.width, m.height)
 		}
+		if m.dbViewerModal != nil {
+			m.dbViewerModal.SetSize(m.width, m.height)
+		}
 		return m, nil
 
 	case tea.KeyPressMsg:
@@ -413,6 +417,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sqliteModal = &updated
 			return m, cmd
 		}
+		if m.dbViewerModal != nil {
+			updated, cmd := m.dbViewerModal.Update(msg)
+			m.dbViewerModal = &updated
+			return m, cmd
+		}
 
 		// Global keys (no overlay active).
 		if msg.String() == "q" {
@@ -429,6 +438,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.mainPane, cmd = m.mainPane.Update(msg)
 			return m, cmd
+		}
+
+		// Global key available at sidebar focus.
+		if msg.String() == "ctrl+d" {
+			modal := ui.NewDBViewerModal()
+			modal.SetSize(m.width, m.height)
+			m.dbViewerModal = &modal
+			return m, nil
 		}
 
 		// focus == focusSidebar
@@ -719,12 +736,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case ui.ShowDBViewerMsg:
+		modal := ui.NewDBViewerModal()
+		modal.SetSize(m.width, m.height)
+		m.dbViewerModal = &modal
+		return m, nil
+
 	case ui.CancelOverlayMsg:
 		m.platformPicker = nil
 		m.createIOSModal = nil
 		m.createAndModal = nil
 		m.deleteAlert = nil
 		m.sqliteModal = nil
+		m.dbViewerModal = nil
 		return m, nil
 
 	case ui.ConfirmCreateSimulatorMsg:
@@ -898,9 +922,11 @@ func (m model) View() tea.View {
 
 	baseStr := lipgloss.JoinVertical(lipgloss.Left, topBar, body, footer)
 
-	if m.platformPicker != nil || m.createIOSModal != nil || m.createAndModal != nil || m.deleteAlert != nil || m.sqliteModal != nil {
+	if m.platformPicker != nil || m.createIOSModal != nil || m.createAndModal != nil || m.deleteAlert != nil || m.sqliteModal != nil || m.dbViewerModal != nil {
 		var overlayStr string
 		switch {
+		case m.dbViewerModal != nil:
+			overlayStr = m.dbViewerModal.View()
 		case m.platformPicker != nil:
 			overlayStr = m.platformPicker.View()
 		case m.createIOSModal != nil:
@@ -918,7 +944,12 @@ func (m model) View() tea.View {
 		y := max((m.height-mH)/2, 0)
 		bg := lipgloss.NewLayer(baseStr)
 		fg := lipgloss.NewLayer(overlayStr).X(x).Y(y).Z(1)
-		baseStr = lipgloss.NewCompositor(bg, fg).Render()
+		if m.dbViewerModal != nil {
+			scrim := lipgloss.NewLayer(m.dbViewerModal.ScrimView()).Z(0)
+			baseStr = lipgloss.NewCompositor(bg, scrim, fg).Render()
+		} else {
+			baseStr = lipgloss.NewCompositor(bg, fg).Render()
+		}
 	}
 
 	v := tea.NewView(baseStr)

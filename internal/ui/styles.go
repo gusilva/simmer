@@ -4,7 +4,8 @@ import "charm.land/lipgloss/v2"
 
 // Color tokens
 var (
-	ColorBg = lipgloss.Color("#0d0e16")
+	ColorBg    = lipgloss.Color("#0d0e16")
+	ColorBgDim = lipgloss.Color("#07080f") // scrim / dimmed background overlay
 
 	ColorBorder   = lipgloss.Color("#2a2c3a")
 	ColorBorderHi = lipgloss.Color("#cba6f7")
