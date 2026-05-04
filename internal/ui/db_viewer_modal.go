@@ -87,18 +87,66 @@ func (m DBViewerModal) View() string {
 
 	blank := func(n int) string { return bgS.Render(strings.Repeat(" ", n)) }
 
+	// ── title styles ──
+	iconS := lipgloss.NewStyle().Foreground(ColorAccent2).Background(ColorBg).PaddingLeft(1)
+	labelS := lipgloss.NewStyle().Foreground(ColorAccent).Background(ColorBg).Bold(true)
+	dotS := lipgloss.NewStyle().Foreground(ColorOk).Background(ColorBg)
+	dimS := lipgloss.NewStyle().Foreground(ColorFgDim).Background(ColorBg)
+	faintS := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg).PaddingRight(1)
+	fgS := lipgloss.NewStyle().Foreground(ColorFg).Background(ColorBg)
+
+	titleLeft := iconS.Render("▤") + " " +
+		labelS.Render("Database Viewer") + "  " +
+		dotS.Render("●") + " " +
+		dimS.Render("simctl.db · SQLite 3.45") + "  " +
+		faintS.Render("| simctl.db › main ›") + " " + fgS.Render("devices")
+
+	titleRight := labelS.Render("Esc") + dimS.Render(" close  ") +
+		labelS.Render("Ctrl+D") + dimS.Render(" toggle  ") +
+		faintS.Render("[×]")
+
+	// pad title row: left + spaces + right, total = innerW
+	leftVis := lipgloss.Width(titleLeft)
+	rightVis := lipgloss.Width(titleRight)
+	gap := innerW - leftVis - rightVis
+	if gap < 1 {
+		gap = 1
+	}
+	titleRow := titleLeft + bgS.Render(strings.Repeat(" ", gap)) + titleRight
+
 	var sb strings.Builder
 
 	// Top border — ┬ is part of the outer border (accent colour), not the inner divider.
-	sb.WriteString(outerS.Render("╭" + strings.Repeat("─", sidebarW) + "┬" + strings.Repeat("─", rightW) + "╮"))
+	sb.WriteString(outerS.Render("╭" + strings.Repeat("─", sidebarW) + "─" + strings.Repeat("─", rightW) + "╮"))
 	sb.WriteByte('\n')
 
+	// Title row (spans full innerW, ignores sidebar/right split).
+	// gap already accounts for visible widths; titleRow is correctly sized.
+	sb.WriteString(outerS.Render("│"))
+	sb.WriteString(titleRow)
+	sb.WriteString(outerS.Render("│"))
+	sb.WriteByte('\n')
+
+	// Title separator — dim horizontal rule across the full inner width.
+	sb.WriteString(outerS.Render("│"))
+	// sb.WriteString(innerS.Render(strings.Repeat("─", innerW)))
+	sb.WriteString(innerS.Render(strings.Repeat("─", sidebarW) + "┬" + strings.Repeat("─", rightW)))
+	sb.WriteString(outerS.Render("│"))
+	sb.WriteByte('\n')
+
+	// Body rows — 2 rows consumed by title + separator.
+	const titleRows = 2
+	bodyH := innerH - titleRows
+
+	// dividerRow is now relative to body start.
+	bodyDividerRow := dividerRow
+
 	// Content rows.
-	for row := range innerH {
+	for row := range bodyH {
 		sb.WriteString(outerS.Render("│"))
 		sb.WriteString(blank(sidebarW))
 
-		if row == dividerRow {
+		if row == bodyDividerRow {
 			// ┼ is a purely inner intersection (dim); ┤ touches the outer border (accent).
 			sb.WriteString(innerS.Render("├" + strings.Repeat("─", rightW)))
 			sb.WriteString(outerS.Render("│"))

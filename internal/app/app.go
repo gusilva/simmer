@@ -391,6 +391,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
+		// ctrl+d toggles the DB viewer regardless of focus or overlay state.
+		if msg.String() == "ctrl+d" {
+			if m.dbViewerModal != nil {
+				m.dbViewerModal = nil
+				return m, nil
+			}
+			if m.platformPicker == nil && m.createIOSModal == nil && m.createAndModal == nil && m.deleteAlert == nil && m.sqliteModal == nil {
+				modal := ui.NewDBViewerModal()
+				modal.SetSize(m.width, m.height)
+				m.dbViewerModal = &modal
+			}
+			return m, nil
+		}
+
 		// Overlay intercepts all other keys when active.
 		if m.platformPicker != nil {
 			updated, cmd := m.platformPicker.Update(msg)
@@ -438,14 +452,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.mainPane, cmd = m.mainPane.Update(msg)
 			return m, cmd
-		}
-
-		// Global key available at sidebar focus.
-		if msg.String() == "ctrl+d" {
-			modal := ui.NewDBViewerModal()
-			modal.SetSize(m.width, m.height)
-			m.dbViewerModal = &modal
-			return m, nil
 		}
 
 		// focus == focusSidebar
