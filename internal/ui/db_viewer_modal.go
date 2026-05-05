@@ -20,12 +20,15 @@ const (
 
 // DBViewerModal is the full-screen database viewer overlay.
 type DBViewerModal struct {
-	width  int
-	height int
-	focus  dbViewerFocus
+	width    int
+	height   int
+	focus    dbViewerFocus
+	explorer DBExplorer
 }
 
-func NewDBViewerModal() DBViewerModal { return DBViewerModal{focus: dbFocusSidebar} }
+func NewDBViewerModal() DBViewerModal {
+	return DBViewerModal{focus: dbFocusSidebar, explorer: newDBExplorer()}
+}
 
 func (m *DBViewerModal) SetSize(w, h int) {
 	m.width = w
@@ -44,6 +47,10 @@ func (m DBViewerModal) Update(msg tea.Msg) (DBViewerModal, tea.Cmd) {
 		m.focus = (m.focus + 1) % 3
 	case "shift+tab":
 		m.focus = (m.focus + 2) % 3
+	default:
+		if m.focus == dbFocusSidebar {
+			m.explorer, _ = m.explorer.Update(msg)
+		}
 	}
 	return m, nil
 }
@@ -71,7 +78,7 @@ func (m DBViewerModal) View() string {
 
 	// Sidebar occupies a fixed left column; a │ divider separates it from the
 	// right pane. The divider itself is 1 char wide.
-	const sidebarW = 24
+	const sidebarW = 28
 	const divW = 1
 	rightW := innerW - sidebarW - divW
 
@@ -141,10 +148,17 @@ func (m DBViewerModal) View() string {
 	// dividerRow is now relative to body start.
 	bodyDividerRow := dividerRow
 
+	// Pre-render sidebar rows once for the full body height.
+	sidebarRows := m.explorer.Rows(sidebarW, bodyH)
+
 	// Content rows.
 	for row := range bodyH {
 		sb.WriteString(outerS.Render("│"))
-		sb.WriteString(blank(sidebarW))
+		if row < len(sidebarRows) {
+			sb.WriteString(sidebarRows[row])
+		} else {
+			sb.WriteString(blank(sidebarW))
+		}
 
 		if row == bodyDividerRow {
 			// ┼ is a purely inner intersection (dim); ┤ touches the outer border (accent).

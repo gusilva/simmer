@@ -22,6 +22,9 @@ var (
 	ColorInfo = lipgloss.Color("#89b4fa")
 	ColorWarn = lipgloss.Color("#f9e2af")
 
+	ColorOrange = lipgloss.Color("#fab387")
+	ColorPink   = lipgloss.Color("#f5c2e7")
+
 	ColorIOS     = lipgloss.Color("#89dceb")
 	ColorAndroid = lipgloss.Color("#a6e3a1")
 )
