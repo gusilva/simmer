@@ -20,14 +20,19 @@ const (
 
 // DBViewerModal is the full-screen database viewer overlay.
 type DBViewerModal struct {
-	width    int
-	height   int
-	focus    dbViewerFocus
-	explorer DBExplorer
+	width     int
+	height    int
+	focus     dbViewerFocus
+	explorer  DBExplorer
+	queryPane DBQueryPane
 }
 
 func NewDBViewerModal() DBViewerModal {
-	return DBViewerModal{focus: dbFocusSidebar, explorer: newDBExplorer()}
+	return DBViewerModal{
+		focus:     dbFocusSidebar,
+		explorer:  newDBExplorer(),
+		queryPane: newDBQueryPane(),
+	}
 }
 
 func (m *DBViewerModal) SetSize(w, h int) {
@@ -38,6 +43,12 @@ func (m *DBViewerModal) SetSize(w, h int) {
 func (m DBViewerModal) Update(msg tea.Msg) (DBViewerModal, tea.Cmd) {
 	k, ok := msg.(tea.KeyPressMsg)
 	if !ok {
+		// forward non-key messages (cursor blink, etc.) to focused pane
+		if m.focus == dbFocusQuery {
+			var cmd tea.Cmd
+			m.queryPane, cmd = m.queryPane.Update(msg)
+			return m, cmd
+		}
 		return m, nil
 	}
 	switch k.String() {
@@ -47,11 +58,32 @@ func (m DBViewerModal) Update(msg tea.Msg) (DBViewerModal, tea.Cmd) {
 		m.focus = (m.focus + 1) % 3
 	case "shift+tab":
 		m.focus = (m.focus + 2) % 3
-	default:
-		if m.focus == dbFocusSidebar {
+	case "ctrl+l":
+		if m.focus != dbFocusQuery {
+			m.focus = dbFocusQuery
+			var cmd tea.Cmd
+			m.queryPane, cmd = m.queryPane.FocusEditor()
+			return m, cmd
+		}
+	case "ctrl+h":
+		if m.focus != dbFocusSidebar {
+			m.queryPane = m.queryPane.BlurEditor()
+			m.focus = dbFocusSidebar
+		} else {
+			// already on sidebar — pass through so filter input handles it as backspace
 			m.explorer, _ = m.explorer.Update(msg)
 		}
+	default:
+		switch m.focus {
+		case dbFocusSidebar:
+			m.explorer, _ = m.explorer.Update(msg)
+		case dbFocusQuery:
+			var cmd tea.Cmd
+			m.queryPane, cmd = m.queryPane.Update(msg)
+			return m, cmd
+		}
 	}
+
 	return m, nil
 }
 
@@ -59,6 +91,7 @@ func (m DBViewerModal) modalW() int {
 	if m.width <= 4 {
 		return 30
 	}
+
 	return m.width - 4
 }
 
@@ -66,6 +99,7 @@ func (m DBViewerModal) modalH() int {
 	if m.height <= 4 {
 		return 10
 	}
+
 	return m.height - 4
 }
 
@@ -115,10 +149,7 @@ func (m DBViewerModal) View() string {
 	// pad title row: left + spaces + right, total = innerW
 	leftVis := lipgloss.Width(titleLeft)
 	rightVis := lipgloss.Width(titleRight)
-	gap := innerW - leftVis - rightVis
-	if gap < 1 {
-		gap = 1
-	}
+	gap := max(innerW-leftVis-rightVis, 1)
 	titleRow := titleLeft + bgS.Render(strings.Repeat(" ", gap)) + titleRight
 
 	var sb strings.Builder
@@ -136,7 +167,6 @@ func (m DBViewerModal) View() string {
 
 	// Title separator — dim horizontal rule across the full inner width.
 	sb.WriteString(outerS.Render("│"))
-	// sb.WriteString(innerS.Render(strings.Repeat("─", innerW)))
 	sb.WriteString(innerS.Render(strings.Repeat("─", sidebarW) + "┬" + strings.Repeat("─", rightW)))
 	sb.WriteString(outerS.Render("│"))
 	sb.WriteByte('\n')
@@ -148,8 +178,9 @@ func (m DBViewerModal) View() string {
 	// dividerRow is now relative to body start.
 	bodyDividerRow := dividerRow
 
-	// Pre-render sidebar rows once for the full body height.
+	// Pre-render panels once for the full body height.
 	sidebarRows := m.explorer.Rows(sidebarW, bodyH)
+	queryPaneRows := m.queryPane.Rows(rightW, bodyDividerRow, m.focus == dbFocusQuery)
 
 	// Content rows.
 	for row := range bodyH {
@@ -166,14 +197,18 @@ func (m DBViewerModal) View() string {
 			sb.WriteString(outerS.Render("│"))
 		} else {
 			sb.WriteString(innerS.Render("│"))
-			sb.WriteString(blank(rightW))
+			if row < len(queryPaneRows) {
+				sb.WriteString(queryPaneRows[row])
+			} else {
+				sb.WriteString(blank(rightW))
+			}
 			sb.WriteString(outerS.Render("│"))
 		}
 
 		sb.WriteByte('\n')
 	}
 
-	// Bottom border — ┴ is part of the outer border (accent colour).
+	// Bottom border — ┴ is part of the outer border (accent color).
 	sb.WriteString(outerS.Render("╰" + strings.Repeat("─", sidebarW) + "┴" + strings.Repeat("─", rightW) + "╯"))
 
 	return sb.String()
