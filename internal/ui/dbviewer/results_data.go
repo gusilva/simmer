@@ -1,4 +1,4 @@
-package ui
+package dbviewer
 
 import "charm.land/bubbles/v2/table"
 
@@ -9,8 +9,6 @@ import "charm.land/bubbles/v2/table"
 //	apps(4+2) + cpu_pct(7+2) + booted_at(16+2) = 85
 const fixedRenderedW = 85
 
-// defaultResultsColumns returns the column layout for the results table.
-// nameW is the flex width assigned to the "name" column.
 func defaultResultsColumns(nameW int) []table.Column {
 	return []table.Column{
 		{Title: "#", Width: 3},
@@ -25,7 +23,6 @@ func defaultResultsColumns(nameW int) []table.Column {
 	}
 }
 
-// defaultResultsRows returns fixture rows shown before a real query runs.
 func defaultResultsRows() []table.Row {
 	return []table.Row{
 		{"1", "9C3A2F-…-71BE", "iPhone 17 Pro", "iOS", "● Booted", "26.1", "142", "12.4", "2026-04-28 13:40"},

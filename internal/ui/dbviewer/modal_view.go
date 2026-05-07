@@ -1,4 +1,4 @@
-package ui
+package dbviewer
 
 import (
 	"strings"
@@ -7,8 +7,8 @@ import (
 )
 
 // View renders the DB viewer as an ANSI string for overlay placement.
-func (m DBViewerModal) View() string {
-	l := computeDBViewerLayout(m.width, m.height)
+func (m Modal) View() string {
+	l := computeLayout(m.width, m.height)
 	s := m.styles
 
 	var sb strings.Builder
@@ -22,12 +22,12 @@ func (m DBViewerModal) View() string {
 	return sb.String()
 }
 
-func (m DBViewerModal) renderTopBorder(sb *strings.Builder, l dbViewerLayout, s dbViewerStyles) {
+func (m Modal) renderTopBorder(sb *strings.Builder, l layout, s viewerStyles) {
 	sb.WriteString(s.Outer.Render("╭" + strings.Repeat("─", l.SidebarW) + "─" + strings.Repeat("─", l.RightW) + "╮"))
 	sb.WriteByte('\n')
 }
 
-func (m DBViewerModal) renderTitleRow(sb *strings.Builder, l dbViewerLayout, s dbViewerStyles) {
+func (m Modal) renderTitleRow(sb *strings.Builder, l layout, s viewerStyles) {
 	blank := func(n int) string { return s.Bg.Render(strings.Repeat(" ", n)) }
 
 	left := s.Icon.Render("▤") + " " +
@@ -49,19 +49,19 @@ func (m DBViewerModal) renderTitleRow(sb *strings.Builder, l dbViewerLayout, s d
 	sb.WriteByte('\n')
 }
 
-func (m DBViewerModal) renderTitleSep(sb *strings.Builder, l dbViewerLayout, s dbViewerStyles) {
+func (m Modal) renderTitleSep(sb *strings.Builder, l layout, s viewerStyles) {
 	sb.WriteString(s.Outer.Render("│"))
 	sb.WriteString(s.Inner.Render(strings.Repeat("─", l.SidebarW) + "┬" + strings.Repeat("─", l.RightW)))
 	sb.WriteString(s.Outer.Render("│"))
 	sb.WriteByte('\n')
 }
 
-func (m DBViewerModal) renderBody(sb *strings.Builder, l dbViewerLayout, s dbViewerStyles) {
+func (m Modal) renderBody(sb *strings.Builder, l layout, s viewerStyles) {
 	blank := func(n int) string { return s.Bg.Render(strings.Repeat(" ", n)) }
 
-	sidebarRows := m.panes[dbPaneSidebar].Rows(l.SidebarW, l.BodyH, m.focus == dbPaneSidebar)
-	queryRows   := m.panes[dbPaneQuery].Rows(l.RightW, l.DivRow, m.focus == dbPaneQuery)
-	resultsRows := m.panes[dbPaneResults].Rows(l.RightW, l.ResultsH, m.focus == dbPaneResults)
+	sidebarRows := m.panes[paneSidebar].Rows(l.SidebarW, l.BodyH, m.focus == paneSidebar)
+	queryRows   := m.panes[paneQuery].Rows(l.RightW, l.DivRow, m.focus == paneQuery)
+	resultsRows := m.panes[paneResults].Rows(l.RightW, l.ResultsH, m.focus == paneResults)
 
 	for row := range l.BodyH {
 		sb.WriteString(s.Outer.Render("│"))
@@ -98,16 +98,16 @@ func (m DBViewerModal) renderBody(sb *strings.Builder, l dbViewerLayout, s dbVie
 	}
 }
 
-func (m DBViewerModal) renderStatusSep(sb *strings.Builder, l dbViewerLayout, s dbViewerStyles) {
+func (m Modal) renderStatusSep(sb *strings.Builder, l layout, s viewerStyles) {
 	sb.WriteString(s.Outer.Render("│"))
 	sb.WriteString(s.Inner.Render(strings.Repeat("─", l.InnerW)))
 	sb.WriteString(s.Outer.Render("│"))
 	sb.WriteByte('\n')
 }
 
-func (m DBViewerModal) renderStatusRow(sb *strings.Builder, l dbViewerLayout, s dbViewerStyles) {
+func (m Modal) renderStatusRow(sb *strings.Builder, l layout, s viewerStyles) {
 	var modeBadge string
-	if m.focus == dbPaneQuery {
+	if m.focus == paneQuery {
 		modeBadge = s.ModeBadgeInsert.Render("INSERT")
 	} else {
 		modeBadge = s.ModeBadgeNormal.Render("NORMAL")
@@ -138,6 +138,6 @@ func (m DBViewerModal) renderStatusRow(sb *strings.Builder, l dbViewerLayout, s 
 	sb.WriteByte('\n')
 }
 
-func (m DBViewerModal) renderBottomBorder(sb *strings.Builder, l dbViewerLayout, s dbViewerStyles) {
+func (m Modal) renderBottomBorder(sb *strings.Builder, l layout, s viewerStyles) {
 	sb.WriteString(s.Outer.Render("╰" + strings.Repeat("─", l.SidebarW) + "┴" + strings.Repeat("─", l.RightW) + "╯"))
 }

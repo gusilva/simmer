@@ -1,7 +1,7 @@
-package ui
+package dbviewer
 
-// defaultExplorerRoots returns the initial hardcoded tree shown in the DB explorer.
-// Replace this function with a real data source once live DB introspection is wired up.
+import "simmer/internal/theme"
+
 func defaultExplorerRoots() []*explorerNode {
 	devices := &explorerNode{
 		kind: nodeKindTable, label: "devices", meta: "21", expanded: true,
@@ -19,7 +19,7 @@ func defaultExplorerRoots() []*explorerNode {
 
 	simctl := &explorerNode{
 		kind: nodeKindDB, label: "simctl.db", meta: "SQLite",
-		connColor: ColorOrange, expanded: true,
+		connColor: theme.ColorOrange, expanded: true,
 		children: []*explorerNode{
 			{
 				kind: nodeKindFolder, label: "Tables", meta: "8", expanded: true,
@@ -43,7 +43,7 @@ func defaultExplorerRoots() []*explorerNode {
 
 	return []*explorerNode{
 		simctl,
-		{kind: nodeKindDB, label: "logs.db", meta: "SQLite", connColor: ColorInfo},
-		{kind: nodeKindDB, label: "analytics.duckdb", meta: "offline", disabled: true, connColor: ColorFgFaint},
+		{kind: nodeKindDB, label: "logs.db", meta: "SQLite", connColor: theme.ColorInfo},
+		{kind: nodeKindDB, label: "analytics.duckdb", meta: "offline", disabled: true, connColor: theme.ColorFgFaint},
 	}
 }
