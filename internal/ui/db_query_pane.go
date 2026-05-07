@@ -13,6 +13,7 @@ import (
 type DBQueryPane struct {
 	activeTab int
 	editor    textarea.Model
+	rh        dbRenderHelpers
 }
 
 func newDBQueryPane() DBQueryPane {
@@ -53,7 +54,7 @@ func newDBQueryPane() DBQueryPane {
 	// start blurred; Focus() is called when the user presses Ctrl+L
 	ta.Blur()
 
-	return DBQueryPane{activeTab: 0, editor: ta}
+	return DBQueryPane{activeTab: 0, editor: ta, rh: newDBRenderHelpers()}
 }
 
 // FocusEditor focuses the textarea and returns the blink cmd.
@@ -83,25 +84,12 @@ func (p DBQueryPane) Update(msg tea.Msg) (DBQueryPane, tea.Cmd) {
 //	row 1        ─── separator
 //	rows 2..h-1  textarea
 func (p DBQueryPane) Rows(width, height int, focused bool) []string {
-	bgS := lipgloss.NewStyle().Background(ColorBg)
-	blankN := func(n int) string {
-		if n <= 0 {
-			return ""
-		}
-		return bgS.Render(strings.Repeat(" ", n))
-	}
-	fillTo := func(s string) string {
-		need := width - lipgloss.Width(s)
-		if need <= 0 {
-			return s
-		}
-		return s + blankN(need)
-	}
-	sep := lipgloss.NewStyle().Foreground(ColorBorder).Background(ColorBg).Render(strings.Repeat("─", width))
+	rh := p.rh
+	fillTo := func(s string) string { return rh.FillTo(s, width) }
 
 	out := make([]string, height)
 	for i := range out {
-		out[i] = blankN(width)
+		out[i] = rh.BlankN(width)
 	}
 	if height == 0 || width == 0 {
 		return out
@@ -112,7 +100,7 @@ func (p DBQueryPane) Rows(width, height int, focused bool) []string {
 		return out
 	}
 
-	out[1] = sep
+	out[1] = rh.Sep(width)
 	if height <= 2 {
 		return out
 	}
@@ -126,6 +114,8 @@ func (p DBQueryPane) Rows(width, height int, focused bool) []string {
 	for i := range editorH {
 		if i < len(editorLines) {
 			out[i+2] = fillTo(editorLines[i])
+		} else {
+			out[i+2] = rh.BlankN(width)
 		}
 	}
 	return out
@@ -134,18 +124,18 @@ func (p DBQueryPane) Rows(width, height int, focused bool) []string {
 // ── Query head ────────────────────────────────────────────────────────────────
 
 func (p DBQueryPane) renderQueryHead(width int) string {
-	bgS := lipgloss.NewStyle().Background(ColorBg)
-	lbl := lipgloss.NewStyle().Foreground(ColorAccent).Background(ColorBg).Bold(true)
-	file := lipgloss.NewStyle().Foreground(ColorFg).Background(ColorBg)
-	dot := lipgloss.NewStyle().Foreground(ColorWarn).Background(ColorBg)
+	rh    := p.rh
+	lbl   := lipgloss.NewStyle().Foreground(ColorAccent).Background(ColorBg).Bold(true)
+	file  := lipgloss.NewStyle().Foreground(ColorFg).Background(ColorBg)
+	dot   := lipgloss.NewStyle().Foreground(ColorWarn).Background(ColorBg)
 	faint := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg)
-	kS := lipgloss.NewStyle().Foreground(ColorBorderHi).Background(ColorBg).Bold(true)
-	vS := lipgloss.NewStyle().Foreground(ColorFgDim).Background(ColorBg)
+	kS    := lipgloss.NewStyle().Foreground(ColorBorderHi).Background(ColorBg).Bold(true)
+	vS    := lipgloss.NewStyle().Foreground(ColorFgDim).Background(ColorBg)
 
 	left := lbl.PaddingLeft(1).Render("[q] Query") +
-		bgS.Render("  ") +
+		rh.BlankN(2) +
 		file.Render("untitled-1.sql") +
-		bgS.Render(" ") +
+		rh.BlankN(1) +
 		dot.Render("●") +
 		faint.Render(" — 8 lines")
 
@@ -155,8 +145,8 @@ func (p DBQueryPane) renderQueryHead(width int) string {
 		kS.Render("^S") + vS.Render(" save"),
 		kS.Render("⇥") + vS.PaddingRight(1).Render(" complete"),
 	}
-	right := strings.Join(hints, bgS.Render("  "))
+	right := strings.Join(hints, rh.BlankN(2))
 
 	gap := max(width-lipgloss.Width(left)-lipgloss.Width(right), 1)
-	return left + bgS.Render(strings.Repeat(" ", gap)) + right
+	return left + rh.BlankN(gap) + right
 }

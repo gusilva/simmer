@@ -42,54 +42,14 @@ type DBExplorer struct {
 	cursor       int
 	filterActive bool
 	filterQuery  string
+	rh           dbRenderHelpers
 }
 
 func newDBExplorer() DBExplorer {
-	devices := &explorerNode{
-		kind: nodeKindTable, label: "devices", meta: "21", expanded: true,
-		children: []*explorerNode{
-			{kind: nodeKindCol, label: "udid", meta: "TEXT", isPK: true, disabled: true},
-			{kind: nodeKindCol, label: "name", meta: "TEXT", disabled: true},
-			{kind: nodeKindCol, label: "os", meta: "TEXT", disabled: true},
-			{kind: nodeKindCol, label: "state", meta: "TEXT", disabled: true},
-			{kind: nodeKindCol, label: "family", meta: "TEXT", disabled: true},
-			{kind: nodeKindCol, label: "booted_at", meta: "DATETIME", disabled: true},
-			{kind: nodeKindCol, label: "cpu_pct", meta: "REAL", disabled: true},
-			{kind: nodeKindCol, label: "… 4 more", disabled: true},
-		},
-	}
-
-	simctl := &explorerNode{
-		kind: nodeKindDB, label: "simctl.db", meta: "SQLite",
-		connColor: ColorOrange, expanded: true,
-		children: []*explorerNode{
-			{
-				kind: nodeKindFolder, label: "Tables", meta: "8", expanded: true,
-				children: []*explorerNode{
-					{kind: nodeKindTable, label: "apps", meta: "142"},
-					devices,
-					{kind: nodeKindTable, label: "device_runtimes", meta: "38"},
-					{kind: nodeKindTable, label: "install_logs", meta: "1.2k"},
-					{kind: nodeKindTable, label: "processes", meta: "847"},
-					{kind: nodeKindTable, label: "preferences", meta: "93"},
-					{kind: nodeKindTable, label: "media_assets", meta: "412"},
-					{kind: nodeKindTable, label: "screenshots", meta: "28"},
-				},
-			},
-			{kind: nodeKindFolder, label: "Views", meta: "3"},
-			{kind: nodeKindFolder, label: "Indexes", meta: "14"},
-			{kind: nodeKindFolder, label: "Triggers", meta: "2"},
-			{kind: nodeKindFolder, label: "Sequences", meta: "n/a", disabled: true},
-		},
-	}
-
 	return DBExplorer{
-		roots: []*explorerNode{
-			simctl,
-			{kind: nodeKindDB, label: "logs.db", meta: "SQLite", connColor: ColorInfo},
-			{kind: nodeKindDB, label: "analytics.duckdb", meta: "offline", disabled: true, connColor: ColorFgFaint},
-		},
+		roots:  defaultExplorerRoots(),
 		cursor: 3, // "devices" is the 4th visible item (0-indexed)
+		rh:     newDBRenderHelpers(),
 	}
 }
 
@@ -215,55 +175,46 @@ func (e DBExplorer) Update(msg tea.Msg) (DBExplorer, tea.Cmd) {
 //	rows 3..h-2     scrollable tree items
 //	row h-1         footer        "/ filter tables…"
 func (e DBExplorer) Rows(width, height int) []string {
-	bgS := lipgloss.NewStyle().Background(ColorBg)
-	blankN := func(n int) string {
-		if n <= 0 {
-			return ""
-		}
-		return bgS.Render(strings.Repeat(" ", n))
-	}
+	rh := e.rh
+	selBgStyle := lipgloss.NewStyle().Background(ColorAccent)
+
 	fillTo := func(s string, sel bool) string {
 		need := width - lipgloss.Width(s)
 		if need <= 0 {
 			return s
 		}
 		if sel {
-			return s + lipgloss.NewStyle().Background(ColorAccent).Render(strings.Repeat(" ", need))
+			return s + selBgStyle.Render(strings.Repeat(" ", need))
 		}
-		return s + blankN(need)
+		return s + rh.BlankN(need)
 	}
 
 	out := make([]string, height)
 	for i := range out {
-		out[i] = blankN(width)
+		out[i] = rh.BlankN(width)
 	}
 	if height == 0 || width == 0 {
 		return out
 	}
 
 	// shared styles
-	keyBadgeS := lipgloss.NewStyle().Foreground(ColorBg).Background(ColorAccent2).Bold(true).Padding(0, 1)
-	boldFgS := lipgloss.NewStyle().Foreground(ColorFg).Background(ColorBg).Bold(true)
-	sepS := lipgloss.NewStyle().Foreground(ColorBorder).Background(ColorBg)
-	faintS := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg)
-	dimS := lipgloss.NewStyle().Foreground(ColorFgDim).Background(ColorBg)
-	fgS := lipgloss.NewStyle().Foreground(ColorFg).Background(ColorBg)
-	warnS := lipgloss.NewStyle().Foreground(ColorWarn).Background(ColorBg)
-	infoS := lipgloss.NewStyle().Foreground(ColorInfo).Background(ColorBg)
+	keyBadgeS  := lipgloss.NewStyle().Foreground(ColorBg).Background(ColorAccent2).Bold(true).Padding(0, 1)
+	boldFgS    := lipgloss.NewStyle().Foreground(ColorFg).Background(ColorBg).Bold(true)
+	faintS     := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg)
+	dimS       := lipgloss.NewStyle().Foreground(ColorFgDim).Background(ColorBg)
+	fgS        := lipgloss.NewStyle().Foreground(ColorFg).Background(ColorBg)
+	warnS      := lipgloss.NewStyle().Foreground(ColorWarn).Background(ColorBg)
+	infoS      := lipgloss.NewStyle().Foreground(ColorInfo).Background(ColorBg)
 	accentBoldS := lipgloss.NewStyle().Foreground(ColorAccent).Background(ColorBg).Bold(true)
-	selFgS := lipgloss.NewStyle().Foreground(ColorBg).Background(ColorAccent).Bold(true)
-	selDimS := lipgloss.NewStyle().Foreground(ColorBg).Background(ColorAccent)
-	selBgS := lipgloss.NewStyle().Background(ColorAccent)
+	selFgS     := lipgloss.NewStyle().Foreground(ColorBg).Background(ColorAccent).Bold(true)
+	selDimS    := lipgloss.NewStyle().Foreground(ColorBg).Background(ColorAccent)
 
 	// row 0: panel header
 	{
-		left := keyBadgeS.Render("e") + blankN(1) + boldFgS.Render("Explorer")
+		left := keyBadgeS.Render("e") + rh.BlankN(1) + boldFgS.Render("Explorer")
 		right := faintS.Render("3 dbs")
-		gap := width - lipgloss.Width(left) - lipgloss.Width(right)
-		if gap < 1 {
-			gap = 1
-		}
-		out[0] = fillTo(left+blankN(gap)+right, false)
+		gap := max(width-lipgloss.Width(left)-lipgloss.Width(right), 1)
+		out[0] = fillTo(left+rh.BlankN(gap)+right, false)
 	}
 	if height == 1 {
 		return out
@@ -290,18 +241,18 @@ func (e DBExplorer) Rows(width, height int) []string {
 	}
 
 	// row 1: top separator
-	out[1] = sepS.Render(strings.Repeat("─", width))
+	out[1] = rh.Sep(width)
 	if height <= 3 {
 		return out
 	}
 
 	// second-to-last row: footer separator (only when there is room above the group label)
 	if height >= 5 {
-		out[height-2] = sepS.Render(strings.Repeat("─", width))
+		out[height-2] = rh.Sep(width)
 	}
 
 	// row 2: pinned group label
-	out[2] = fillTo(blankN(2)+faintS.Render("CONNECTIONS"), false)
+	out[2] = fillTo(rh.BlankN(2)+faintS.Render("CONNECTIONS"), false)
 	if height <= 4 {
 		return out
 	}
@@ -319,7 +270,7 @@ func (e DBExplorer) Rows(width, height int) []string {
 	for i := 0; i < itemRows; i++ {
 		idx := scroll + i
 		if idx >= len(items) {
-			out[i+3] = blankN(width)
+			out[i+3] = rh.BlankN(width)
 			continue
 		}
 		item := items[idx]
@@ -423,9 +374,9 @@ func (e DBExplorer) Rows(width, height int) []string {
 				return ""
 			}
 			if sel {
-				return selBgS.Render(strings.Repeat(" ", n))
+				return selBgStyle.Render(strings.Repeat(" ", n))
 			}
-			return blankN(n)
+			return rh.BlankN(n)
 		}
 
 		// assemble: indent + caret + " " + icon + " " + label ... meta
