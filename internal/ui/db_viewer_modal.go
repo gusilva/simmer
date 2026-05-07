@@ -44,7 +44,7 @@ func (m *DBViewerModal) SetSize(w, h int) {
 	// keep resultsPane scroll logic calibrated to its visible height
 	var (
 		innerH   = m.modalH() - 2
-		bodyH    = innerH - 2 // titleRows = 2
+		bodyH    = innerH - 2 - 2 // titleRows=2, statusSep+statusBar=2
 		queryH   = max(bodyH/3, 3)
 		resultsH = bodyH - queryH - 1
 	)
@@ -217,9 +217,9 @@ func (m DBViewerModal) View() string {
 	sb.WriteString(outerS.Render("│"))
 	sb.WriteByte('\n')
 
-	// Body rows — 2 rows consumed by title + separator.
+	// Body rows — 2 rows consumed by title + separator; 2 by status sep + bar.
 	const titleRows = 2
-	bodyH := innerH - titleRows
+	bodyH := innerH - titleRows - 2
 
 	// dividerRow is now relative to body start.
 	bodyDividerRow := dividerRow
@@ -266,10 +266,63 @@ func (m DBViewerModal) View() string {
 		sb.WriteByte('\n')
 	}
 
+	// Status separator — spans full inner width (sidebar + divW + right).
+	sb.WriteString(outerS.Render("│"))
+	sb.WriteString(innerS.Render(strings.Repeat("─", innerW)))
+	sb.WriteString(outerS.Render("│"))
+	sb.WriteByte('\n')
+
+	// Status bar row.
+	sb.WriteString(outerS.Render("│"))
+	sb.WriteString(m.renderStatusBar(innerW))
+	sb.WriteString(outerS.Render("│"))
+	sb.WriteByte('\n')
+
 	// Bottom border — ┴ is part of the outer border (accent color).
 	sb.WriteString(outerS.Render("╰" + strings.Repeat("─", sidebarW) + "┴" + strings.Repeat("─", rightW) + "╯"))
 
 	return sb.String()
+}
+
+func (m DBViewerModal) renderStatusBar(width int) string {
+	bgS   := lipgloss.NewStyle().Background(ColorBg)
+	dimS  := lipgloss.NewStyle().Foreground(ColorFgDim).Background(ColorBg)
+	faintS := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg)
+	kS    := lipgloss.NewStyle().Foreground(ColorBorderHi).Background(ColorBg).Bold(true)
+	vS    := lipgloss.NewStyle().Foreground(ColorFgDim).Background(ColorBg)
+	okS   := lipgloss.NewStyle().Foreground(ColorOk).Background(ColorBg)
+
+	// mode badge: INSERT (warn bg) when query focused, NORMAL (accent bg) otherwise
+	var modeBadge string
+	if m.focus == dbFocusQuery {
+		modeBadge = lipgloss.NewStyle().
+			Foreground(ColorBg).Background(ColorWarn).Bold(true).Padding(0, 1).
+			Render("INSERT")
+	} else {
+		modeBadge = lipgloss.NewStyle().
+			Foreground(ColorBg).Background(ColorAccent).Bold(true).Padding(0, 1).
+			Render("NORMAL")
+	}
+
+	conn    := okS.Render("● connected to simctl.db")
+	latency := dimS.Render("⟳ 14 ms · 21 rows · 9 cols")
+	left    := modeBadge + bgS.Render("  ") + conn + bgS.Render("  ") + latency
+
+	hints := strings.Join([]string{
+		kS.Render("esc") + vS.Render(" normal"),
+		kS.Render("F5") + vS.Render("/") + kS.Render("^enter") + vS.Render(" execute"),
+		kS.Render("⇥") + vS.Render(" autocomplete"),
+		kS.Render("^P") + vS.Render(" palette"),
+		kS.Render("?") + vS.Render(" help"),
+	}, faintS.Render("  "))
+
+	gap := max(width-lipgloss.Width(left)-lipgloss.Width(hints), 1)
+	line := left + bgS.Render(strings.Repeat(" ", gap)) + hints
+	need := width - lipgloss.Width(line)
+	if need > 0 {
+		line += bgS.Render(strings.Repeat(" ", need))
+	}
+	return line
 }
 
 // ScrimView returns a full-terminal-size overlay that simulates opacity.
