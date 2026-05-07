@@ -8,6 +8,7 @@ import (
 
 	"simmer/internal/device"
 	"simmer/internal/ui"
+	"simmer/internal/ui/dbviewer"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -52,7 +53,7 @@ type model struct {
 	createAndModal *ui.CreateAndroidEmulatorModal
 	deleteAlert    *ui.DeleteSimulatorAlert
 	sqliteModal    *ui.SQLiteModal
-	dbViewerModal  *ui.DBViewerModal
+	dbViewerModal  *dbviewer.Modal
 }
 
 type clearStatusMsg int
@@ -398,7 +399,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if m.platformPicker == nil && m.createIOSModal == nil && m.createAndModal == nil && m.deleteAlert == nil && m.sqliteModal == nil {
-				modal := ui.NewDBViewerModal()
+				modal := dbviewer.New(func() tea.Msg { return ui.CancelOverlayMsg{} })
 				modal.SetSize(m.width, m.height)
 				m.dbViewerModal = &modal
 			}
@@ -742,8 +743,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case ui.ShowDBViewerMsg:
-		modal := ui.NewDBViewerModal()
+	case dbviewer.ShowMsg:
+		modal := dbviewer.New(func() tea.Msg { return ui.CancelOverlayMsg{} })
 		modal.SetSize(m.width, m.height)
 		m.dbViewerModal = &modal
 		return m, nil

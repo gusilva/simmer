@@ -1,4 +1,4 @@
-package ui
+package dbviewer
 
 import (
 	"fmt"
@@ -8,52 +8,45 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"simmer/internal/theme"
 )
 
-// DBResultsPane renders the query results below the horizontal divider.
-// Navigation is handled by the Bubbles v2 table component.
-type DBResultsPane struct {
+// ResultsPane renders the query results below the horizontal divider.
+type ResultsPane struct {
 	tbl table.Model
-	rh  dbRenderHelpers
+	rh  renderHelpers
 }
-
-
 
 func resultsStyles() table.Styles {
 	return table.Styles{
 		Header: lipgloss.NewStyle().
-			Background(ColorTableHeader).
-			Foreground(ColorFg).
+			Background(theme.ColorTableHeader).
+			Foreground(theme.ColorFg).
 			Bold(true).
 			Padding(0, 1),
 		Cell: lipgloss.NewStyle().
-			Foreground(ColorFgDim).
+			Foreground(theme.ColorFgDim).
 			Padding(0, 1),
-		// Selection highlight is re-applied in Rows() by index after stripping
-		// the ANSI resets that the Cell style emits.
 		Selected: lipgloss.NewStyle(),
 	}
 }
 
-func newDBResultsPane() DBResultsPane {
+func newResultsPane() ResultsPane {
 	t := table.New(
 		table.WithColumns(defaultResultsColumns(20)),
 		table.WithRows(defaultResultsRows()),
 		table.WithStyles(resultsStyles()),
 		table.WithFocused(false),
 	)
-	return DBResultsPane{tbl: t, rh: newDBRenderHelpers()}
+	return ResultsPane{tbl: t, rh: newRenderHelpers()}
 }
 
-// withHeight returns a copy calibrated to h available rows.
-// Called from DBViewerModal.SetSize. Layout overhead: filter(1)+filterSep(1)+pagerSep(1)+pager(1)=4.
-func (p DBResultsPane) withHeight(h int) DBResultsPane {
+func (p ResultsPane) withHeight(h int) ResultsPane {
 	p.tbl.SetHeight(max(h-4, 3))
 	return p
 }
 
-func (p DBResultsPane) Update(msg tea.Msg) (DBResultsPane, tea.Cmd) {
-	// Ensure the table handles key events.
+func (p ResultsPane) Update(msg tea.Msg) (ResultsPane, tea.Cmd) {
 	p.tbl.Focus()
 	var cmd tea.Cmd
 	p.tbl, cmd = p.tbl.Update(msg)
@@ -69,7 +62,7 @@ func (p DBResultsPane) Update(msg tea.Msg) (DBResultsPane, tea.Cmd) {
 //	rows 2..h-3  table.View() — header + scrollable data rows
 //	row h-2      pager separator ──────
 //	row h-1      pager
-func (p DBResultsPane) Rows(width, height int, focused bool) []string {
+func (p ResultsPane) Rows(width, height int, focused bool) []string {
 	rh := p.rh
 	fillTo := func(s string) string { return rh.FillTo(s, width) }
 
@@ -81,13 +74,12 @@ func (p DBResultsPane) Rows(width, height int, focused bool) []string {
 		return out
 	}
 
-	// shared styles
-	warnS := lipgloss.NewStyle().Foreground(ColorWarn).Background(ColorBg)
-	dimS  := lipgloss.NewStyle().Foreground(ColorFgDim).Background(ColorBg)
-	kS    := lipgloss.NewStyle().Foreground(ColorBorderHi).Background(ColorBg).Bold(true)
-	vS    := lipgloss.NewStyle().Foreground(ColorFgDim).Background(ColorBg)
+	warnS := lipgloss.NewStyle().Foreground(theme.ColorWarn).Background(theme.ColorBg)
+	dimS  := lipgloss.NewStyle().Foreground(theme.ColorFgDim).Background(theme.ColorBg)
+	kS    := lipgloss.NewStyle().Foreground(theme.ColorBorderHi).Background(theme.ColorBg).Bold(true)
+	vS    := lipgloss.NewStyle().Foreground(theme.ColorFgDim).Background(theme.ColorBg)
 
-	// ── row 0: WHERE filter bar ───────────────────────────────────────────────
+	// row 0: WHERE filter bar
 	{
 		badge := warnS.Render("[WHERE]")
 		input := dimS.Render(" d.state = 'Booted'")
@@ -102,11 +94,9 @@ func (p DBResultsPane) Rows(width, height int, focused bool) []string {
 		out[0] = fillTo(left + rh.BlankN(gap) + hints)
 	}
 
-	// ── row 1: filter separator ───────────────────────────────────────────────
 	out[1] = rh.Sep(width)
 
-	// ── rows 2..h-3: bubbles table ────────────────────────────────────────────
-	tableH := height - 4 // rows available for the table (header + data)
+	tableH := height - 4
 	nameW := max(width-fixedRenderedW-2, 15)
 	p.tbl.SetColumns(defaultResultsColumns(nameW))
 	p.tbl.SetWidth(width)
@@ -114,13 +104,11 @@ func (p DBResultsPane) Rows(width, height int, focused bool) []string {
 
 	tableLines := strings.Split(p.tbl.View(), "\n")
 
-	// The Cell style emits \x1b[0m resets that cancel any Selected background.
-	// Re-apply the highlight by index: row 0 is the header, row cursor+1 is selected.
 	selStyle := lipgloss.NewStyle().
-		Background(ColorTableSelBg).
-		Foreground(ColorFg).
+		Background(theme.ColorTableSelBg).
+		Foreground(theme.ColorFg).
 		Width(width)
-	selectedLine := p.tbl.Cursor() + 1 // +1 for the header row
+	selectedLine := p.tbl.Cursor() + 1
 	if selectedLine < len(tableLines) {
 		tableLines[selectedLine] = selStyle.Render(ansi.Strip(tableLines[selectedLine]))
 	}
@@ -131,14 +119,12 @@ func (p DBResultsPane) Rows(width, height int, focused bool) []string {
 		}
 	}
 
-	// ── row h-2: pager separator ──────────────────────────────────────────────
 	out[height-2] = rh.Sep(width)
 
-	// ── row h-1: pager ───────────────────────────────────────────────────────
 	{
-		boldFgS := lipgloss.NewStyle().Foreground(ColorFg).Background(ColorBg).Bold(true)
-		btnS    := lipgloss.NewStyle().Foreground(ColorFgDim).Background(ColorBorder).Padding(0, 1)
-		btnActS := lipgloss.NewStyle().Foreground(ColorBg).Background(ColorAccent).Bold(true).Padding(0, 1)
+		boldFgS := lipgloss.NewStyle().Foreground(theme.ColorFg).Background(theme.ColorBg).Bold(true)
+		btnS    := lipgloss.NewStyle().Foreground(theme.ColorFgDim).Background(theme.ColorBorder).Padding(0, 1)
+		btnActS := lipgloss.NewStyle().Foreground(theme.ColorBg).Background(theme.ColorAccent).Bold(true).Padding(0, 1)
 
 		total  := len(p.tbl.Rows())
 		cursor := p.tbl.Cursor()

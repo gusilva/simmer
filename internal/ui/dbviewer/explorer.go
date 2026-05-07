@@ -1,4 +1,4 @@
-package ui
+package dbviewer
 
 import (
 	"image/color"
@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"simmer/internal/theme"
 )
 
 type explorerNodeKind int
@@ -26,7 +27,7 @@ type explorerNode struct {
 	meta      string
 	isPK      bool
 	disabled  bool
-	connColor color.Color // used by nodeKindDB
+	connColor color.Color
 	children  []*explorerNode
 	expanded  bool
 }
@@ -36,24 +37,24 @@ type visibleItem struct {
 	indent int
 }
 
-// DBExplorer is the left-panel tree navigator inside the database viewer modal.
-type DBExplorer struct {
+// Explorer is the left-panel tree navigator inside the database viewer modal.
+type Explorer struct {
 	roots        []*explorerNode
 	cursor       int
 	filterActive bool
 	filterQuery  string
-	rh           dbRenderHelpers
+	rh           renderHelpers
 }
 
-func newDBExplorer() DBExplorer {
-	return DBExplorer{
+func newExplorer() Explorer {
+	return Explorer{
 		roots:  defaultExplorerRoots(),
-		cursor: 3, // "devices" is the 4th visible item (0-indexed)
-		rh:     newDBRenderHelpers(),
+		cursor: 3,
+		rh:     newRenderHelpers(),
 	}
 }
 
-func (e DBExplorer) visibleItems() []visibleItem {
+func (e Explorer) visibleItems() []visibleItem {
 	var items []visibleItem
 	var walk func([]*explorerNode, int)
 	walk = func(nodes []*explorerNode, indent int) {
@@ -68,7 +69,6 @@ func (e DBExplorer) visibleItems() []visibleItem {
 	return items
 }
 
-// nodeMatchesFilter reports whether n or any descendant label contains query.
 func nodeMatchesFilter(n *explorerNode, query string) bool {
 	if strings.Contains(strings.ToLower(n.label), query) {
 		return true
@@ -81,9 +81,7 @@ func nodeMatchesFilter(n *explorerNode, query string) bool {
 	return false
 }
 
-// filteredVisibleItems returns the visible tree filtered by filterQuery.
-// Parent nodes are kept when any descendant matches.
-func (e DBExplorer) filteredVisibleItems() []visibleItem {
+func (e Explorer) filteredVisibleItems() []visibleItem {
 	if e.filterQuery == "" {
 		return e.visibleItems()
 	}
@@ -105,7 +103,7 @@ func (e DBExplorer) filteredVisibleItems() []visibleItem {
 	return items
 }
 
-func (e DBExplorer) Update(msg tea.Msg) (DBExplorer, tea.Cmd) {
+func (e Explorer) Update(msg tea.Msg) (Explorer, tea.Cmd) {
 	k, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return e, nil
@@ -174,9 +172,9 @@ func (e DBExplorer) Update(msg tea.Msg) (DBExplorer, tea.Cmd) {
 //	row 2           group label   "  CONNECTIONS"
 //	rows 3..h-2     scrollable tree items
 //	row h-1         footer        "/ filter tables…"
-func (e DBExplorer) Rows(width, height int) []string {
+func (e Explorer) Rows(width, height int) []string {
 	rh := e.rh
-	selBgStyle := lipgloss.NewStyle().Background(ColorAccent)
+	selBgStyle := lipgloss.NewStyle().Background(theme.ColorAccent)
 
 	fillTo := func(s string, sel bool) string {
 		need := width - lipgloss.Width(s)
@@ -197,17 +195,16 @@ func (e DBExplorer) Rows(width, height int) []string {
 		return out
 	}
 
-	// shared styles
-	keyBadgeS  := lipgloss.NewStyle().Foreground(ColorBg).Background(ColorAccent2).Bold(true).Padding(0, 1)
-	boldFgS    := lipgloss.NewStyle().Foreground(ColorFg).Background(ColorBg).Bold(true)
-	faintS     := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg)
-	dimS       := lipgloss.NewStyle().Foreground(ColorFgDim).Background(ColorBg)
-	fgS        := lipgloss.NewStyle().Foreground(ColorFg).Background(ColorBg)
-	warnS      := lipgloss.NewStyle().Foreground(ColorWarn).Background(ColorBg)
-	infoS      := lipgloss.NewStyle().Foreground(ColorInfo).Background(ColorBg)
-	accentBoldS := lipgloss.NewStyle().Foreground(ColorAccent).Background(ColorBg).Bold(true)
-	selFgS     := lipgloss.NewStyle().Foreground(ColorBg).Background(ColorAccent).Bold(true)
-	selDimS    := lipgloss.NewStyle().Foreground(ColorBg).Background(ColorAccent)
+	keyBadgeS   := lipgloss.NewStyle().Foreground(theme.ColorBg).Background(theme.ColorAccent2).Bold(true).Padding(0, 1)
+	boldFgS     := lipgloss.NewStyle().Foreground(theme.ColorFg).Background(theme.ColorBg).Bold(true)
+	faintS      := lipgloss.NewStyle().Foreground(theme.ColorFgFaint).Background(theme.ColorBg)
+	dimS        := lipgloss.NewStyle().Foreground(theme.ColorFgDim).Background(theme.ColorBg)
+	fgS         := lipgloss.NewStyle().Foreground(theme.ColorFg).Background(theme.ColorBg)
+	warnS       := lipgloss.NewStyle().Foreground(theme.ColorWarn).Background(theme.ColorBg)
+	infoS       := lipgloss.NewStyle().Foreground(theme.ColorInfo).Background(theme.ColorBg)
+	accentBoldS := lipgloss.NewStyle().Foreground(theme.ColorAccent).Background(theme.ColorBg).Bold(true)
+	selFgS      := lipgloss.NewStyle().Foreground(theme.ColorBg).Background(theme.ColorAccent).Bold(true)
+	selDimS     := lipgloss.NewStyle().Foreground(theme.ColorBg).Background(theme.ColorAccent)
 
 	// row 0: panel header
 	{
@@ -240,28 +237,23 @@ func (e DBExplorer) Rows(width, height int) []string {
 		return out
 	}
 
-	// row 1: top separator
 	out[1] = rh.Sep(width)
 	if height <= 3 {
 		return out
 	}
 
-	// second-to-last row: footer separator (only when there is room above the group label)
 	if height >= 5 {
 		out[height-2] = rh.Sep(width)
 	}
 
-	// row 2: pinned group label
 	out[2] = fillTo(rh.BlankN(2)+faintS.Render("CONNECTIONS"), false)
 	if height <= 4 {
 		return out
 	}
 
-	// rows 3..height-3: scrollable tree items
 	itemRows := height - 5
 	items := e.filteredVisibleItems()
 
-	// compute scroll to keep cursor visible (cursor always at or above last visible row)
 	scroll := 0
 	if e.cursor >= itemRows {
 		scroll = e.cursor - itemRows + 1
@@ -280,7 +272,6 @@ func (e DBExplorer) Rows(width, height int) []string {
 
 		indent := strings.Repeat(" ", ind*2)
 
-		// caret
 		var caretRune string
 		if len(node.children) > 0 {
 			if node.expanded {
@@ -298,7 +289,6 @@ func (e DBExplorer) Rows(width, height int) []string {
 			caret = faintS.Render(caretRune)
 		}
 
-		// icon
 		var iconRune string
 		var iconStyle lipgloss.Style
 		switch node.kind {
@@ -308,17 +298,17 @@ func (e DBExplorer) Rows(width, height int) []string {
 				iconStyle = faintS
 			} else {
 				iconRune = "●"
-				iconStyle = lipgloss.NewStyle().Foreground(node.connColor).Background(ColorBg)
+				iconStyle = lipgloss.NewStyle().Foreground(node.connColor).Background(theme.ColorBg)
 			}
 		case nodeKindFolder:
 			iconRune = " "
 			iconStyle = faintS
 		case nodeKindTable:
 			iconRune = "≡"
-			iconStyle = lipgloss.NewStyle().Foreground(ColorAccent2).Background(ColorBg)
+			iconStyle = lipgloss.NewStyle().Foreground(theme.ColorAccent2).Background(theme.ColorBg)
 		case nodeKindView:
 			iconRune = "◈"
-			iconStyle = lipgloss.NewStyle().Foreground(ColorPink).Background(ColorBg)
+			iconStyle = lipgloss.NewStyle().Foreground(theme.ColorPink).Background(theme.ColorBg)
 		case nodeKindIndex:
 			iconRune = "◇"
 			iconStyle = infoS
@@ -333,7 +323,6 @@ func (e DBExplorer) Rows(width, height int) []string {
 			icon = iconStyle.Render(iconRune)
 		}
 
-		// label (with optional PK indicator for primary-key columns)
 		var label string
 		if node.isPK {
 			var pkStyle, lblStyle lipgloss.Style
@@ -358,7 +347,6 @@ func (e DBExplorer) Rows(width, height int) []string {
 			label = lblStyle.Render(node.label)
 		}
 
-		// meta (right-aligned)
 		var meta string
 		if node.meta != "" {
 			if sel {
@@ -368,7 +356,6 @@ func (e DBExplorer) Rows(width, height int) []string {
 			}
 		}
 
-		// spacer uses selection background when row is selected so the full row fills.
 		sp := func(n int) string {
 			if n <= 0 {
 				return ""
@@ -379,7 +366,6 @@ func (e DBExplorer) Rows(width, height int) []string {
 			return rh.BlankN(n)
 		}
 
-		// assemble: indent + caret + " " + icon + " " + label ... meta
 		prefix := sp(len(indent)) + caret + sp(1) + icon + sp(1) + label
 		prefixW := lipgloss.Width(prefix)
 		metaW := lipgloss.Width(meta)
