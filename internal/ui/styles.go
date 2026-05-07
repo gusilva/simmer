@@ -25,6 +25,9 @@ var (
 	ColorOrange = lipgloss.Color("#fab387")
 	ColorPink   = lipgloss.Color("#f5c2e7")
 
+	ColorTableHeader  = lipgloss.Color("#14161e") // sticky header background
+	ColorTableSelBg   = lipgloss.Color("#282336") // rgba(accent, 0.14) over bg
+
 	ColorIOS     = lipgloss.Color("#89dceb")
 	ColorAndroid = lipgloss.Color("#a6e3a1")
 )

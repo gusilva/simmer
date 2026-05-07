@@ -142,7 +142,7 @@ func (p DBQueryPane) renderQueryHead(width int) string {
 	kS := lipgloss.NewStyle().Foreground(ColorBorderHi).Background(ColorBg).Bold(true)
 	vS := lipgloss.NewStyle().Foreground(ColorFgDim).Background(ColorBg)
 
-	left := lbl.Render("[q] Query") +
+	left := lbl.PaddingLeft(1).Render("[q] Query") +
 		bgS.Render("  ") +
 		file.Render("untitled-1.sql") +
 		bgS.Render(" ") +
@@ -153,7 +153,7 @@ func (p DBQueryPane) renderQueryHead(width int) string {
 		kS.Render("F5") + vS.Render(" run"),
 		kS.Render("^Enter") + vS.Render(" run line"),
 		kS.Render("^S") + vS.Render(" save"),
-		kS.Render("⇥") + vS.Render(" complete"),
+		kS.Render("⇥") + vS.PaddingRight(1).Render(" complete"),
 	}
 	right := strings.Join(hints, bgS.Render("  "))
 

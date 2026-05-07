@@ -20,24 +20,56 @@ const (
 
 // DBViewerModal is the full-screen database viewer overlay.
 type DBViewerModal struct {
-	width     int
-	height    int
-	focus     dbViewerFocus
-	explorer  DBExplorer
-	queryPane DBQueryPane
+	width       int
+	height      int
+	focus       dbViewerFocus
+	explorer    DBExplorer
+	queryPane   DBQueryPane
+	resultsPane DBResultsPane
 }
 
 func NewDBViewerModal() DBViewerModal {
 	return DBViewerModal{
-		focus:     dbFocusSidebar,
-		explorer:  newDBExplorer(),
-		queryPane: newDBQueryPane(),
+		focus:       dbFocusSidebar,
+		explorer:    newDBExplorer(),
+		queryPane:   newDBQueryPane(),
+		resultsPane: newDBResultsPane(),
 	}
 }
 
 func (m *DBViewerModal) SetSize(w, h int) {
 	m.width = w
 	m.height = h
+
+	// keep resultsPane scroll logic calibrated to its visible height
+	var (
+		innerH   = m.modalH() - 2
+		bodyH    = innerH - 2 // titleRows = 2
+		queryH   = max(bodyH/3, 3)
+		resultsH = bodyH - queryH - 1
+	)
+
+	m.resultsPane.setHeight(resultsH)
+}
+
+// setFocus transitions focus, blurring/focusing editor as needed.
+func (m DBViewerModal) setFocus(f dbViewerFocus) (DBViewerModal, tea.Cmd) {
+	if m.focus == f {
+		return m, nil
+	}
+
+	if m.focus == dbFocusQuery {
+		m.queryPane = m.queryPane.BlurEditor()
+	}
+
+	m.focus = f
+	if f == dbFocusQuery {
+		var cmd tea.Cmd
+		m.queryPane, cmd = m.queryPane.FocusEditor()
+		return m, cmd
+	}
+
+	return m, nil
 }
 
 func (m DBViewerModal) Update(msg tea.Msg) (DBViewerModal, tea.Cmd) {
@@ -54,32 +86,46 @@ func (m DBViewerModal) Update(msg tea.Msg) (DBViewerModal, tea.Cmd) {
 	switch k.String() {
 	case "esc", "q":
 		return m, func() tea.Msg { return CancelOverlayMsg{} }
+
 	case "tab":
-		m.focus = (m.focus + 1) % 3
+		return m.setFocus((m.focus + 1) % 3)
+
 	case "shift+tab":
-		m.focus = (m.focus + 2) % 3
+		return m.setFocus((m.focus + 2) % 3)
+
 	case "ctrl+l":
-		if m.focus != dbFocusQuery {
-			m.focus = dbFocusQuery
-			var cmd tea.Cmd
-			m.queryPane, cmd = m.queryPane.FocusEditor()
-			return m, cmd
+		return m.setFocus(dbFocusQuery)
+
+	case "ctrl+j":
+		if m.focus == dbFocusQuery {
+			return m.setFocus(dbFocusResults)
 		}
+
+	case "ctrl+k":
+		if m.focus == dbFocusResults {
+			return m.setFocus(dbFocusQuery)
+		}
+
 	case "ctrl+h":
 		if m.focus != dbFocusSidebar {
-			m.queryPane = m.queryPane.BlurEditor()
-			m.focus = dbFocusSidebar
-		} else {
-			// already on sidebar — pass through so filter input handles it as backspace
-			m.explorer, _ = m.explorer.Update(msg)
+			return m.setFocus(dbFocusSidebar)
 		}
+		// already on sidebar — pass through so filter input handles it as backspace
+		m.explorer, _ = m.explorer.Update(msg)
+
 	default:
 		switch m.focus {
 		case dbFocusSidebar:
 			m.explorer, _ = m.explorer.Update(msg)
+
 		case dbFocusQuery:
 			var cmd tea.Cmd
 			m.queryPane, cmd = m.queryPane.Update(msg)
+			return m, cmd
+
+		case dbFocusResults:
+			var cmd tea.Cmd
+			m.resultsPane, cmd = m.resultsPane.Update(msg)
 			return m, cmd
 		}
 	}
@@ -178,9 +224,12 @@ func (m DBViewerModal) View() string {
 	// dividerRow is now relative to body start.
 	bodyDividerRow := dividerRow
 
+	resultsH := bodyH - bodyDividerRow - 1
+
 	// Pre-render panels once for the full body height.
 	sidebarRows := m.explorer.Rows(sidebarW, bodyH)
 	queryPaneRows := m.queryPane.Rows(rightW, bodyDividerRow, m.focus == dbFocusQuery)
+	resultsPaneRows := m.resultsPane.Rows(rightW, resultsH, m.focus == dbFocusResults)
 
 	// Content rows.
 	for row := range bodyH {
@@ -191,11 +240,20 @@ func (m DBViewerModal) View() string {
 			sb.WriteString(blank(sidebarW))
 		}
 
-		if row == bodyDividerRow {
-			// ┼ is a purely inner intersection (dim); ┤ touches the outer border (accent).
+		switch {
+		case row == bodyDividerRow:
 			sb.WriteString(innerS.Render("├" + strings.Repeat("─", rightW)))
 			sb.WriteString(outerS.Render("│"))
-		} else {
+		case row > bodyDividerRow:
+			sb.WriteString(innerS.Render("│"))
+			ri := row - bodyDividerRow - 1
+			if ri < len(resultsPaneRows) {
+				sb.WriteString(resultsPaneRows[ri])
+			} else {
+				sb.WriteString(blank(rightW))
+			}
+			sb.WriteString(outerS.Render("│"))
+		default:
 			sb.WriteString(innerS.Render("│"))
 			if row < len(queryPaneRows) {
 				sb.WriteString(queryPaneRows[row])
