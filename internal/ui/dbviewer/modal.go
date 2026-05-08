@@ -260,6 +260,24 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		return m, nil
 	}
 
+	if _, ok := msg.(FileSavedMsg); ok {
+		if qp, ok := m.panes[paneQuery].(queryPaneAdapter); ok {
+			next, cmd := qp.inner.Update(msg)
+			m.panes[paneQuery] = queryPaneAdapter{next}
+			return m, cmd
+		}
+
+		return m, nil
+	}
+
+	if k, ok := msg.(tea.KeyPressMsg); ok && (k.String() == "ctrl+s" || k.String() == "super+s") {
+		if qp, ok := m.panes[paneQuery].(queryPaneAdapter); ok {
+			return m, qp.inner.SaveCmd()
+		}
+
+		return m, nil
+	}
+
 	if cm, ok := msg.(ColumnsLoadedMsg); ok {
 		cm.node.loading = false
 		if cm.err == nil {

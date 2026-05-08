@@ -748,7 +748,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case dbviewer.SQLiteVersionMsg, dbviewer.TablesLoadedMsg, dbviewer.ColumnsLoadedMsg:
+	case dbviewer.SQLiteVersionMsg, dbviewer.TablesLoadedMsg, dbviewer.ColumnsLoadedMsg, dbviewer.FileSavedMsg:
 		if m.dbViewerModal != nil {
 			updated, cmd := m.dbViewerModal.Update(msg)
 			m.dbViewerModal = &updated

@@ -1,6 +1,8 @@
 package dbviewer
 
 import (
+	"image/color"
+	"os"
 	"strings"
 
 	"simmer/internal/theme"
@@ -10,12 +12,27 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
+// FileSavedMsg is returned after a save attempt completes.
+type FileSavedMsg struct{ Err error }
+
+type fileState int
+
+const (
+	fileStateNew   fileState = iota // file does not exist on disk yet
+	fileStateClean                  // file exists and matches disk
+	fileStateDirty                  // unsaved changes present
+)
+
+const defaultQueryFile = "untitled-1.sql"
+
 // QueryPane renders the query head and the textarea editor in the right pane
 // above the horizontal divider.
 type QueryPane struct {
 	activeTab int
 	editor    textarea.Model
 	rh        renderHelpers
+	filePath  string
+	state     fileState
 }
 
 func newQueryPane() QueryPane {
@@ -42,20 +59,23 @@ func newQueryPane() QueryPane {
 	s.Blurred.EndOfBuffer = lipgloss.NewStyle().Foreground(theme.ColorFgFaint).Background(theme.ColorBg)
 	ta.SetStyles(s)
 
-	ta.SetValue(strings.Join([]string{
-		"-- Recently booted devices, their runtime & installed app counts",
-		"SELECT  d.udid, d.name, d.os, d.state, r.version AS runtime,",
-		"        count(a.id) AS apps, d.cpu_pct, d.booted_at",
-		"FROM    devices d",
-		"LEFT JOIN device_runtimes r ON r.runtime_id = d.runtime_id",
-		"LEFT JOIN apps            a ON a.device_udid = d.udid",
-		"WHERE   d.state = 'Booted' AND d.booted_at >= datetime('now', '-7 days')",
-		"GROUP BY d.udid ORDER BY d.booted_at DESC LIMIT 250;",
-	}, "\n"))
+	state := fileStateNew
+	content := ""
+	if data, err := os.ReadFile(defaultQueryFile); err == nil {
+		content = string(data)
+		state = fileStateClean
+	}
 
+	ta.SetValue(content)
 	ta.Blur()
 
-	return QueryPane{activeTab: 0, editor: ta, rh: newRenderHelpers()}
+	return QueryPane{
+		activeTab: 0,
+		editor:    ta,
+		rh:        newRenderHelpers(),
+		filePath:  defaultQueryFile,
+		state:     state,
+	}
 }
 
 func (p QueryPane) FocusEditor() (QueryPane, tea.Cmd) {
@@ -67,6 +87,7 @@ func (p QueryPane) FocusEditor() (QueryPane, tea.Cmd) {
 func (p QueryPane) SetQuery(sql string) QueryPane {
 	p.editor.SetValue(sql)
 	p.editor.MoveToEnd()
+	p.state = fileStateDirty
 
 	return p
 }
@@ -76,9 +97,33 @@ func (p QueryPane) BlurEditor() QueryPane {
 	return p
 }
 
+// SaveCmd writes current editor content to disk. Called externally by the modal.
+func (p QueryPane) SaveCmd() tea.Cmd {
+	content := p.editor.Value()
+	path := p.filePath
+
+	return func() tea.Msg {
+		err := os.WriteFile(path, []byte(content), 0o644)
+		return FileSavedMsg{Err: err}
+	}
+}
+
 func (p QueryPane) Update(msg tea.Msg) (QueryPane, tea.Cmd) {
+	if sm, ok := msg.(FileSavedMsg); ok {
+		if sm.Err == nil {
+			p.state = fileStateClean
+		}
+
+		return p, nil
+	}
+
+	prev := p.editor.Value()
 	var cmd tea.Cmd
 	p.editor, cmd = p.editor.Update(msg)
+	if p.editor.Value() != prev {
+		p.state = fileStateDirty
+	}
+
 	return p, cmd
 }
 
@@ -130,17 +175,26 @@ func (p QueryPane) renderQueryHead(width int) string {
 	rh := p.rh
 	lbl := lipgloss.NewStyle().Foreground(theme.ColorAccent).Background(theme.ColorBg).Bold(true)
 	file := lipgloss.NewStyle().Foreground(theme.ColorFg).Background(theme.ColorBg)
-	dot := lipgloss.NewStyle().Foreground(theme.ColorWarn).Background(theme.ColorBg)
-	faint := lipgloss.NewStyle().Foreground(theme.ColorFgFaint).Background(theme.ColorBg)
 	kS := lipgloss.NewStyle().Foreground(theme.ColorBorderHi).Background(theme.ColorBg).Bold(true)
 	vS := lipgloss.NewStyle().Foreground(theme.ColorFgDim).Background(theme.ColorBg)
 
+	var dotColor color.Color
+	switch p.state {
+	case fileStateNew:
+		dotColor = theme.ColorErr
+	case fileStateClean:
+		dotColor = theme.ColorOk
+	case fileStateDirty:
+		dotColor = theme.ColorWarn
+	}
+
+	dot := lipgloss.NewStyle().Foreground(dotColor).Background(theme.ColorBg).Render("●")
+
 	left := lbl.PaddingLeft(1).Render("[q] Query") +
 		rh.BlankN(2) +
-		file.Render("untitled-1.sql") +
+		file.Render(p.filePath) +
 		rh.BlankN(1) +
-		dot.Render("●") +
-		faint.Render(" — 8 lines")
+		dot
 
 	hints := []string{
 		kS.Render("F5") + vS.Render(" run"),
@@ -151,6 +205,5 @@ func (p QueryPane) renderQueryHead(width int) string {
 	right := strings.Join(hints, rh.BlankN(2))
 
 	gap := max(width-lipgloss.Width(left)-lipgloss.Width(right), 1)
-
 	return left + rh.BlankN(gap) + right
 }
