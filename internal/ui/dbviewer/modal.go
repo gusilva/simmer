@@ -21,6 +21,12 @@ type SQLiteVersionMsg struct {
 	Err     error
 }
 
+// TablesLoadedMsg carries the result of an async table-list fetch.
+type TablesLoadedMsg struct {
+	Objects device.SQLiteObjects
+	Err     error
+}
+
 const (
 	paneSidebar = 0
 	paneQuery   = 1
@@ -60,7 +66,7 @@ func New(onClose func() tea.Msg) Modal {
 }
 
 // SetFile attaches a database file and its owning device to the viewer and
-// returns a Cmd that asynchronously fetches the SQLite version.
+// returns a Cmd that asynchronously fetches the SQLite version and table list.
 func (m *Modal) SetFile(dev device.Device, packageID, dbPath, dbName string) tea.Cmd {
 	m.device = dev
 	m.packageID = packageID
@@ -68,7 +74,27 @@ func (m *Modal) SetFile(dev device.Device, packageID, dbPath, dbName string) tea
 	m.dbName = dbName
 	m.sqliteVersion = ""
 
-	return m.fetchSQLiteVersionCmd()
+	if ep, ok := m.panes[paneSidebar].(explorerPane); ok {
+		ep.inner.SetLoading()
+		m.panes[paneSidebar] = ep
+	}
+
+	return tea.Batch(m.fetchSQLiteVersionCmd(), m.fetchTablesCmd())
+}
+
+func (m Modal) fetchTablesCmd() tea.Cmd {
+	var (
+		dev  = m.device
+		pkg  = m.packageID
+		path = m.dbPath
+	)
+
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		objs, err := device.ListSQLiteObjects(ctx, dev, pkg, path)
+		return TablesLoadedMsg{Objects: objs, Err: err}
+	}
 }
 
 func (m Modal) fetchSQLiteVersionCmd() tea.Cmd {
@@ -110,6 +136,17 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 	if vm, ok := msg.(SQLiteVersionMsg); ok {
 		if vm.Err == nil {
 			m.sqliteVersion = vm.Version
+		}
+
+		return m, nil
+	}
+
+	if tm, ok := msg.(TablesLoadedMsg); ok {
+		if tm.Err == nil {
+			if ep, ok := m.panes[paneSidebar].(explorerPane); ok {
+				ep.inner.SetTables(m.dbName, tm.Objects)
+				m.panes[paneSidebar] = ep
+			}
 		}
 
 		return m, nil

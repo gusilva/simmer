@@ -1,13 +1,16 @@
 package dbviewer
 
 import (
+	"fmt"
 	"image/color"
 	"strings"
 	"unicode"
 
+	"simmer/internal/device"
+	"simmer/internal/theme"
+
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"simmer/internal/theme"
 )
 
 type explorerNodeKind int
@@ -44,14 +47,75 @@ type Explorer struct {
 	filterActive bool
 	filterQuery  string
 	rh           renderHelpers
+	loading      bool
+	nTables      int
 }
 
 func newExplorer() Explorer {
-	return Explorer{
-		roots:  defaultExplorerRoots(),
-		cursor: 3,
-		rh:     newRenderHelpers(),
+	return Explorer{rh: newRenderHelpers()}
+}
+
+// SetLoading marks the explorer as waiting for a table list response.
+func (e *Explorer) SetLoading() {
+	e.loading = true
+	e.roots = nil
+	e.cursor = 0
+	e.nTables = 0
+	e.filterActive = false
+	e.filterQuery = ""
+}
+
+// SetTables rebuilds the explorer tree from a live SQLiteObjects result.
+func (e *Explorer) SetTables(dbName string, objs device.SQLiteObjects) {
+	e.loading = false
+	e.nTables = len(objs.Tables)
+
+	tableNodes := make([]*explorerNode, len(objs.Tables))
+	for i, t := range objs.Tables {
+		tableNodes[i] = &explorerNode{kind: nodeKindTable, label: t}
 	}
+
+	viewNodes := make([]*explorerNode, len(objs.Views))
+	for i, v := range objs.Views {
+		viewNodes[i] = &explorerNode{kind: nodeKindView, label: v}
+	}
+
+	indexNodes := make([]*explorerNode, len(objs.Indexes))
+	for i, idx := range objs.Indexes {
+		indexNodes[i] = &explorerNode{kind: nodeKindIndex, label: idx}
+	}
+
+	tablesFolder := &explorerNode{
+		kind:     nodeKindFolder,
+		label:    "Tables",
+		meta:     fmt.Sprintf("%d", len(objs.Tables)),
+		expanded: true,
+		children: tableNodes,
+	}
+	viewsFolder := &explorerNode{
+		kind:     nodeKindFolder,
+		label:    "Views",
+		meta:     fmt.Sprintf("%d", len(objs.Views)),
+		children: viewNodes,
+	}
+	indexesFolder := &explorerNode{
+		kind:     nodeKindFolder,
+		label:    "Indexes",
+		meta:     fmt.Sprintf("%d", len(objs.Indexes)),
+		children: indexNodes,
+	}
+
+	dbNode := &explorerNode{
+		kind:      nodeKindDB,
+		label:     stripExt(dbName),
+		meta:      "SQLite",
+		connColor: theme.ColorAccent,
+		expanded:  true,
+		children:  []*explorerNode{tablesFolder, viewsFolder, indexesFolder},
+	}
+
+	e.roots = []*explorerNode{dbNode}
+	e.cursor = 0
 }
 
 func (e Explorer) visibleItems() []visibleItem {
@@ -195,24 +259,35 @@ func (e Explorer) Rows(width, height int) []string {
 		return out
 	}
 
-	keyBadgeS   := lipgloss.NewStyle().Foreground(theme.ColorBg).Background(theme.ColorAccent2).Bold(true).Padding(0, 1)
-	boldFgS     := lipgloss.NewStyle().Foreground(theme.ColorFg).Background(theme.ColorBg).Bold(true)
-	faintS      := lipgloss.NewStyle().Foreground(theme.ColorFgFaint).Background(theme.ColorBg)
-	dimS        := lipgloss.NewStyle().Foreground(theme.ColorFgDim).Background(theme.ColorBg)
-	fgS         := lipgloss.NewStyle().Foreground(theme.ColorFg).Background(theme.ColorBg)
-	warnS       := lipgloss.NewStyle().Foreground(theme.ColorWarn).Background(theme.ColorBg)
-	infoS       := lipgloss.NewStyle().Foreground(theme.ColorInfo).Background(theme.ColorBg)
+	keyBadgeS := lipgloss.NewStyle().Foreground(theme.ColorBg).Background(theme.ColorAccent2).Bold(true).Padding(0, 1)
+	boldFgS := lipgloss.NewStyle().Foreground(theme.ColorFg).Background(theme.ColorBg).Bold(true)
+	faintS := lipgloss.NewStyle().Foreground(theme.ColorFgFaint).Background(theme.ColorBg)
+	dimS := lipgloss.NewStyle().Foreground(theme.ColorFgDim).Background(theme.ColorBg)
+	fgS := lipgloss.NewStyle().Foreground(theme.ColorFg).Background(theme.ColorBg)
+	warnS := lipgloss.NewStyle().Foreground(theme.ColorWarn).Background(theme.ColorBg)
+	infoS := lipgloss.NewStyle().Foreground(theme.ColorInfo).Background(theme.ColorBg)
 	accentBoldS := lipgloss.NewStyle().Foreground(theme.ColorAccent).Background(theme.ColorBg).Bold(true)
-	selFgS      := lipgloss.NewStyle().Foreground(theme.ColorBg).Background(theme.ColorAccent).Bold(true)
-	selDimS     := lipgloss.NewStyle().Foreground(theme.ColorBg).Background(theme.ColorAccent)
+	selFgS := lipgloss.NewStyle().Foreground(theme.ColorBg).Background(theme.ColorAccent).Bold(true)
+	selDimS := lipgloss.NewStyle().Foreground(theme.ColorBg).Background(theme.ColorAccent)
 
 	// row 0: panel header
 	{
 		left := keyBadgeS.Render("e") + rh.BlankN(1) + boldFgS.Render("Explorer")
-		right := faintS.Render("3 dbs")
+		var rightTxt string
+		switch {
+		case e.loading:
+			rightTxt = "loading…"
+		case len(e.roots) == 0:
+			rightTxt = "no db"
+		default:
+			rightTxt = fmt.Sprintf("%d tables", e.nTables)
+		}
+
+		right := faintS.Render(rightTxt)
 		gap := max(width-lipgloss.Width(left)-lipgloss.Width(right), 1)
 		out[0] = fillTo(left+rh.BlankN(gap)+right, false)
 	}
+
 	if height == 1 {
 		return out
 	}
@@ -233,6 +308,7 @@ func (e Explorer) Rows(width, height int) []string {
 		}
 		out[height-1] = fillTo(slash+txt, false)
 	}
+
 	if height <= 2 {
 		return out
 	}
@@ -252,6 +328,20 @@ func (e Explorer) Rows(width, height int) []string {
 	}
 
 	itemRows := height - 5
+
+	// Show loading / empty state instead of tree.
+	if e.loading {
+		out[3] = fillTo(rh.BlankN(2)+faintS.Render("loading tables…"), false)
+
+		return out
+	}
+
+	if len(e.roots) == 0 {
+		out[3] = fillTo(rh.BlankN(2)+faintS.Render("no database loaded"), false)
+
+		return out
+	}
+
 	items := e.filteredVisibleItems()
 
 	scroll := 0
@@ -323,6 +413,26 @@ func (e Explorer) Rows(width, height int) []string {
 			icon = iconStyle.Render(iconRune)
 		}
 
+		var meta string
+		if node.meta != "" {
+			if sel {
+				meta = selDimS.Render(node.meta)
+			} else {
+				meta = faintS.Render(node.meta)
+			}
+		}
+
+		// fixed overhead: indent(ind*2) + caret(1) + sp(1) + icon(1) + sp(1) = ind*2+4
+		// meta overhead: metaW + min-gap(1)
+		metaW := lipgloss.Width(meta)
+		pkOverhead := 0
+		if node.isPK {
+			pkOverhead = 1 // "⚿" is 1 cell
+		}
+
+		labelBudget := max(width-ind*2-4-pkOverhead-metaW-1, 1)
+		nodeLabel := truncateLabel(node.label, labelBudget)
+
 		var label string
 		if node.isPK {
 			var pkStyle, lblStyle lipgloss.Style
@@ -333,7 +443,7 @@ func (e Explorer) Rows(width, height int) []string {
 				pkStyle = warnS
 				lblStyle = fgS
 			}
-			label = pkStyle.Render("⚿") + lblStyle.Render(node.label)
+			label = pkStyle.Render("⚿") + lblStyle.Render(nodeLabel)
 		} else {
 			var lblStyle lipgloss.Style
 			switch {
@@ -344,16 +454,7 @@ func (e Explorer) Rows(width, height int) []string {
 			default:
 				lblStyle = fgS
 			}
-			label = lblStyle.Render(node.label)
-		}
-
-		var meta string
-		if node.meta != "" {
-			if sel {
-				meta = selDimS.Render(node.meta)
-			} else {
-				meta = faintS.Render(node.meta)
-			}
+			label = lblStyle.Render(nodeLabel)
 		}
 
 		sp := func(n int) string {
@@ -368,7 +469,6 @@ func (e Explorer) Rows(width, height int) []string {
 
 		prefix := sp(len(indent)) + caret + sp(1) + icon + sp(1) + label
 		prefixW := lipgloss.Width(prefix)
-		metaW := lipgloss.Width(meta)
 		gap := width - prefixW - metaW
 		if gap < 1 {
 			gap = 1
@@ -377,4 +477,27 @@ func (e Explorer) Rows(width, height int) []string {
 	}
 
 	return out
+}
+
+// stripExt removes the last file extension from name (e.g. "app.db" → "app").
+func stripExt(name string) string {
+	if i := strings.LastIndexByte(name, '.'); i > 0 {
+		return name[:i]
+	}
+
+	return name
+}
+
+// truncateLabel clips s to budget visible cells, appending "…" if truncated.
+func truncateLabel(s string, budget int) string {
+	runes := []rune(s)
+	if len(runes) <= budget {
+		return s
+	}
+
+	if budget <= 1 {
+		return "…"
+	}
+
+	return string(runes[:budget-1]) + "…"
 }
