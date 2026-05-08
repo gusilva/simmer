@@ -732,15 +732,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ui.ShowSQLiteViewerMsg:
-		modal, cmd := ui.NewSQLiteModal(msg.Device, msg.PackageID, msg.DBPath, msg.DBName)
+		modal := dbviewer.New(func() tea.Msg { return ui.CancelOverlayMsg{} })
 		modal.SetSize(m.width, m.height)
-		m.sqliteModal = &modal
-		return m, cmd
+
+		fileCmd := modal.SetFile(msg.Device, msg.PackageID, msg.DBPath, msg.DBName)
+
+		m.dbViewerModal = &modal
+		m.sqliteModal = nil
+
+		return m, fileCmd
 
 	case ui.SQLiteResultMsg:
 		if m.sqliteModal != nil {
 			m.sqliteModal.SetResult(msg.Rows, msg.Err)
 		}
+		return m, nil
+
+	case dbviewer.SQLiteVersionMsg:
+		if m.dbViewerModal != nil {
+			updated, cmd := m.dbViewerModal.Update(msg)
+			m.dbViewerModal = &updated
+
+			return m, cmd
+		}
+
 		return m, nil
 
 	case dbviewer.ShowMsg:
