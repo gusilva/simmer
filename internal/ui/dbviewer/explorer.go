@@ -29,6 +29,8 @@ type explorerNode struct {
 	label     string
 	meta      string
 	isPK      bool
+	isFK      bool
+	loading   bool
 	disabled  bool
 	connColor color.Color
 	children  []*explorerNode
@@ -167,6 +169,25 @@ func (e Explorer) filteredVisibleItems() []visibleItem {
 	return items
 }
 
+// selectedNodeInfo returns the selected node and, for column nodes, the label
+// of the nearest ancestor table node in the visible list.
+func (e Explorer) selectedNodeInfo() (node *explorerNode, parentTable string) {
+	items := e.filteredVisibleItems()
+	if e.cursor >= len(items) {
+		return nil, ""
+	}
+	node = items[e.cursor].node
+	if node.kind == nodeKindCol {
+		for i := e.cursor - 1; i >= 0; i-- {
+			if items[i].node.kind == nodeKindTable {
+				parentTable = items[i].node.label
+				break
+			}
+		}
+	}
+	return node, parentTable
+}
+
 func (e Explorer) Update(msg tea.Msg) (Explorer, tea.Cmd) {
 	k, ok := msg.(tea.KeyPressMsg)
 	if !ok {
@@ -212,7 +233,7 @@ func (e Explorer) Update(msg tea.Msg) (Explorer, tea.Cmd) {
 		if e.cursor < n-1 {
 			e.cursor++
 		}
-	case "enter", " ":
+	case "enter", "space":
 		if e.cursor < n {
 			node := items[e.cursor].node
 			if len(node.children) > 0 {
@@ -363,7 +384,8 @@ func (e Explorer) Rows(width, height int) []string {
 		indent := strings.Repeat(" ", ind*2)
 
 		var caretRune string
-		if len(node.children) > 0 {
+		isExpandable := len(node.children) > 0 || node.kind == nodeKindTable || node.kind == nodeKindView
+		if isExpandable {
 			if node.expanded {
 				caretRune = "▾"
 			} else {
@@ -414,27 +436,41 @@ func (e Explorer) Rows(width, height int) []string {
 		}
 
 		var meta string
-		if node.meta != "" {
+		switch {
+		case node.loading:
+			if sel {
+				meta = selDimS.Render("…")
+			} else {
+				meta = faintS.Render("…")
+			}
+
+		case node.meta != "":
 			if sel {
 				meta = selDimS.Render(node.meta)
 			} else {
 				meta = faintS.Render(node.meta)
 			}
+
 		}
 
 		// fixed overhead: indent(ind*2) + caret(1) + sp(1) + icon(1) + sp(1) = ind*2+4
-		// meta overhead: metaW + min-gap(1)
+		// prefix overhead per key indicator: isPK adds "⚿"(1), isFK adds "→"(1)
 		metaW := lipgloss.Width(meta)
 		pkOverhead := 0
 		if node.isPK {
-			pkOverhead = 1 // "⚿" is 1 cell
+			pkOverhead++ // "⚿" is 1 cell
+		}
+
+		if node.isFK {
+			pkOverhead++ // "→" is 1 cell
 		}
 
 		labelBudget := max(width-ind*2-4-pkOverhead-metaW-1, 1)
 		nodeLabel := truncateLabel(node.label, labelBudget)
 
 		var label string
-		if node.isPK {
+		switch {
+		case node.isPK:
 			var pkStyle, lblStyle lipgloss.Style
 			if sel {
 				pkStyle = selFgS
@@ -443,8 +479,28 @@ func (e Explorer) Rows(width, height int) []string {
 				pkStyle = warnS
 				lblStyle = fgS
 			}
-			label = pkStyle.Render("⚿") + lblStyle.Render(nodeLabel)
-		} else {
+			prefix := pkStyle.Render("⚿")
+			if node.isFK {
+				if sel {
+					prefix = selFgS.Render("⚿→")
+				} else {
+					prefix = warnS.Render("⚿") + infoS.Render("→")
+				}
+			}
+			label = prefix + lblStyle.Render(nodeLabel)
+
+		case node.isFK:
+			var fkStyle, lblStyle lipgloss.Style
+			if sel {
+				fkStyle = selFgS
+				lblStyle = selFgS
+			} else {
+				fkStyle = infoS
+				lblStyle = fgS
+			}
+			label = fkStyle.Render("→") + lblStyle.Render(nodeLabel)
+
+		default:
 			var lblStyle lipgloss.Style
 			switch {
 			case sel:
