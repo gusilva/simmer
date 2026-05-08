@@ -91,6 +91,43 @@ func parseSQLiteOutput(raw string) [][]string {
 	return rows
 }
 
+// SQLiteObjects holds the names of schema objects in a SQLite database grouped
+// by type.
+type SQLiteObjects struct {
+	Tables  []string
+	Views   []string
+	Indexes []string
+}
+
+// ListSQLiteObjects queries sqlite_master and returns tables, views, and
+// indexes for the given database file, excluding SQLite-internal objects.
+func ListSQLiteObjects(ctx context.Context, dev Device, packageID, dbPath string) (SQLiteObjects, error) {
+	const q = "SELECT type, name FROM sqlite_master" +
+		" WHERE type IN ('table','view','index') AND name NOT LIKE 'sqlite_%'" +
+		" ORDER BY type, name;"
+	rows, err := QuerySQLite(ctx, dev, packageID, dbPath, q)
+	if err != nil {
+		return SQLiteObjects{}, err
+	}
+
+	var out SQLiteObjects
+	for _, row := range rows[1:] { // row 0 is the header from -header flag
+		if len(row) < 2 {
+			continue
+		}
+		switch row[0] {
+		case "table":
+			out.Tables = append(out.Tables, row[1])
+		case "view":
+			out.Views = append(out.Views, row[1])
+		case "index":
+			out.Indexes = append(out.Indexes, row[1])
+		}
+	}
+
+	return out, nil
+}
+
 // SQLiteVersion returns the SQLite version string from the engine on the given
 // device. For iOS the local sqlite3 binary is queried; for Android the version
 // is obtained via adb shell (with run-as when packageID is non-empty).
