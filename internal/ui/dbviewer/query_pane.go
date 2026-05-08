@@ -3,10 +3,11 @@ package dbviewer
 import (
 	"strings"
 
+	"simmer/internal/theme"
+
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"simmer/internal/theme"
 )
 
 // QueryPane renders the query head and the textarea editor in the right pane
@@ -60,6 +61,14 @@ func newQueryPane() QueryPane {
 func (p QueryPane) FocusEditor() (QueryPane, tea.Cmd) {
 	cmd := p.editor.Focus()
 	return p, cmd
+}
+
+// SetQuery replaces the editor content and moves the cursor to the end.
+func (p QueryPane) SetQuery(sql string) QueryPane {
+	p.editor.SetValue(sql)
+	p.editor.MoveToEnd()
+
+	return p
 }
 
 func (p QueryPane) BlurEditor() QueryPane {
@@ -118,13 +127,13 @@ func (p QueryPane) Rows(width, height int, focused bool) []string {
 }
 
 func (p QueryPane) renderQueryHead(width int) string {
-	rh    := p.rh
-	lbl   := lipgloss.NewStyle().Foreground(theme.ColorAccent).Background(theme.ColorBg).Bold(true)
-	file  := lipgloss.NewStyle().Foreground(theme.ColorFg).Background(theme.ColorBg)
-	dot   := lipgloss.NewStyle().Foreground(theme.ColorWarn).Background(theme.ColorBg)
+	rh := p.rh
+	lbl := lipgloss.NewStyle().Foreground(theme.ColorAccent).Background(theme.ColorBg).Bold(true)
+	file := lipgloss.NewStyle().Foreground(theme.ColorFg).Background(theme.ColorBg)
+	dot := lipgloss.NewStyle().Foreground(theme.ColorWarn).Background(theme.ColorBg)
 	faint := lipgloss.NewStyle().Foreground(theme.ColorFgFaint).Background(theme.ColorBg)
-	kS    := lipgloss.NewStyle().Foreground(theme.ColorBorderHi).Background(theme.ColorBg).Bold(true)
-	vS    := lipgloss.NewStyle().Foreground(theme.ColorFgDim).Background(theme.ColorBg)
+	kS := lipgloss.NewStyle().Foreground(theme.ColorBorderHi).Background(theme.ColorBg).Bold(true)
+	vS := lipgloss.NewStyle().Foreground(theme.ColorFgDim).Background(theme.ColorBg)
 
 	left := lbl.PaddingLeft(1).Render("[q] Query") +
 		rh.BlankN(2) +
@@ -142,5 +151,6 @@ func (p QueryPane) renderQueryHead(width int) string {
 	right := strings.Join(hints, rh.BlankN(2))
 
 	gap := max(width-lipgloss.Width(left)-lipgloss.Width(right), 1)
+
 	return left + rh.BlankN(gap) + right
 }

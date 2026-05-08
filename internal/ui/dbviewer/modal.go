@@ -2,6 +2,7 @@ package dbviewer
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -25,6 +26,13 @@ type SQLiteVersionMsg struct {
 type TablesLoadedMsg struct {
 	Objects device.SQLiteObjects
 	Err     error
+}
+
+// ColumnsLoadedMsg carries the result of an async column fetch for a table node.
+type ColumnsLoadedMsg struct {
+	node *explorerNode
+	cols []device.ColumnInfo
+	err  error
 }
 
 const (
@@ -113,6 +121,106 @@ func (m Modal) fetchSQLiteVersionCmd() tea.Cmd {
 	}
 }
 
+func (m Modal) fetchColumnsCmd(node *explorerNode) tea.Cmd {
+	var (
+		dev   = m.device
+		pkg   = m.packageID
+		path  = m.dbPath
+		table = node.label
+	)
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		cols, err := device.QueryTableColumns(ctx, dev, pkg, path, table)
+		return ColumnsLoadedMsg{node: node, cols: cols, err: err}
+	}
+}
+
+// tryFetchColumns fires fetchColumnsCmd if the cursor is on an unloaded table node.
+func (m Modal) tryFetchColumns() tea.Cmd {
+	ep, ok := m.panes[paneSidebar].(explorerPane)
+	if !ok {
+		return nil
+	}
+
+	items := ep.inner.filteredVisibleItems()
+	if ep.inner.cursor >= len(items) {
+		return nil
+	}
+
+	node := items[ep.inner.cursor].node
+	if node.kind != nodeKindTable {
+		return nil
+	}
+
+	if node.loading || len(node.children) > 0 {
+		return nil
+	}
+
+	node.loading = true
+
+	return m.fetchColumnsCmd(node)
+}
+
+func buildColumnNodes(cols []device.ColumnInfo) []*explorerNode {
+	nodes := make([]*explorerNode, len(cols))
+	for i, c := range cols {
+		var meta string
+		if c.Type != "" {
+			meta = strings.ToUpper(c.Type)
+		}
+		nodes[i] = &explorerNode{
+			kind:  nodeKindCol,
+			label: c.Name,
+			meta:  meta,
+			isPK:  c.IsPK,
+			isFK:  c.IsFK,
+		}
+	}
+	return nodes
+}
+
+// sidebarSQL returns the SQL string to inject for the currently selected
+// sidebar node, and true when the node is a table or column.
+func (m Modal) sidebarSQL() (string, bool) {
+	ep, ok := m.panes[paneSidebar].(explorerPane)
+	if !ok {
+		return "", false
+	}
+
+	node, parentTable := ep.inner.selectedNodeInfo()
+	if node == nil {
+		return "", false
+	}
+
+	ident := func(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"` }
+	switch node.kind {
+	case nodeKindTable:
+		return fmt.Sprintf("SELECT * FROM %s;", ident(node.label)), true
+
+	case nodeKindCol:
+		if parentTable == "" {
+			return "", false
+		}
+
+		return fmt.Sprintf("SELECT %s FROM %s;", ident(node.label), ident(parentTable)), true
+	}
+
+	return "", false
+}
+
+// injectQuery sets the query editor content and moves focus to the query pane.
+func (m Modal) injectQuery(sql string) (Modal, tea.Cmd) {
+	qp, ok := m.panes[paneQuery].(queryPaneAdapter)
+	if !ok {
+		return m, nil
+	}
+	qp.inner = qp.inner.SetQuery(sql)
+	m.panes[paneQuery] = qp
+
+	return m.setFocus(paneQuery)
+}
+
 func (m *Modal) SetSize(w, h int) {
 	m.width = w
 	m.height = h
@@ -147,6 +255,16 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 				ep.inner.SetTables(m.dbName, tm.Objects)
 				m.panes[paneSidebar] = ep
 			}
+		}
+
+		return m, nil
+	}
+
+	if cm, ok := msg.(ColumnsLoadedMsg); ok {
+		cm.node.loading = false
+		if cm.err == nil {
+			cm.node.children = buildColumnNodes(cm.cols)
+			cm.node.expanded = true
 		}
 
 		return m, nil
@@ -190,9 +308,33 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		m.panes[paneSidebar], cmd = m.panes[paneSidebar].Update(msg)
 		return m, cmd
 
+	case "enter":
+		if m.focus == paneSidebar {
+			if cmd := m.tryFetchColumns(); cmd != nil {
+				return m, cmd
+			}
+		}
+		var cmd tea.Cmd
+		m.panes[m.focus], cmd = m.panes[m.focus].Update(msg)
+
+		return m, cmd
+
+	case "space":
+		if m.focus == paneSidebar {
+			if sql, ok := m.sidebarSQL(); ok {
+				return m.injectQuery(sql)
+			}
+		}
+
+		var cmd tea.Cmd
+		m.panes[m.focus], cmd = m.panes[m.focus].Update(msg)
+
+		return m, cmd
+
 	default:
 		var cmd tea.Cmd
 		m.panes[m.focus], cmd = m.panes[m.focus].Update(msg)
+
 		return m, cmd
 	}
 

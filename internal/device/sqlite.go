@@ -182,7 +182,65 @@ func sqliteVersionAndroid(ctx context.Context, dev Device, packageID string) (st
 	return parts[0], nil
 }
 
-// sqSingleQuote wraps s in single quotes, escaping embedded single quotes via '\"
+// ColumnInfo describes one column in a SQLite table.
+type ColumnInfo struct {
+	Name string
+	Type string
+	IsPK bool
+	IsFK bool
+}
+
+// QueryTableColumns returns the columns of tableName including primary-key and
+// foreign-key flags. PK info comes from PRAGMA table_info; FK info from
+// PRAGMA foreign_key_list.
+func QueryTableColumns(ctx context.Context, dev Device, packageID, dbPath, tableName string) ([]ColumnInfo, error) {
+	infoRows, err := QuerySQLite(ctx, dev, packageID, dbPath,
+		"PRAGMA table_info("+sqIdentifier(tableName)+");")
+	if err != nil {
+		return nil, fmt.Errorf("table_info %s: %w", tableName, err)
+	}
+
+	fkRows, _ := QuerySQLite(ctx, dev, packageID, dbPath,
+		"PRAGMA foreign_key_list("+sqIdentifier(tableName)+");")
+
+	fkCols := make(map[string]bool)
+	for i, row := range fkRows {
+		if i == 0 {
+			continue // header
+		}
+
+		if len(row) >= 4 {
+			fkCols[row[3]] = true // "from" column
+		}
+	}
+
+	var cols []ColumnInfo
+	for i, row := range infoRows {
+		if i == 0 {
+			continue // header: cid|name|type|notnull|dflt_value|pk
+		}
+
+		if len(row) < 6 {
+			continue
+		}
+
+		cols = append(cols, ColumnInfo{
+			Name: row[1],
+			Type: row[2],
+			IsPK: row[5] != "0",
+			IsFK: fkCols[row[1]],
+		})
+	}
+
+	return cols, nil
+}
+
+// sqSingleQuote wraps s in single quotes, escaping embedded single quotes.
 func sqSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+// sqIdentifier wraps s in double quotes for use as a SQLite identifier.
+func sqIdentifier(s string) string {
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 }
