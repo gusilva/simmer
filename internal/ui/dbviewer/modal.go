@@ -1,15 +1,25 @@
 package dbviewer
 
 import (
+	"context"
 	"strings"
+	"time"
+
+	"simmer/internal/device"
+	"simmer/internal/theme"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"simmer/internal/theme"
 )
 
 // ShowMsg opens the database viewer overlay.
 type ShowMsg struct{}
+
+// SQLiteVersionMsg carries the result of an async SQLite version lookup.
+type SQLiteVersionMsg struct {
+	Version string
+	Err     error
+}
 
 const (
 	paneSidebar = 0
@@ -26,20 +36,54 @@ type Modal struct {
 	styles  viewerStyles
 	panes   [paneCount]pane
 	onClose func() tea.Msg
+
+	device        device.Device
+	packageID     string
+	dbPath        string
+	dbName        string
+	sqliteVersion string
 }
 
 // New creates a Modal. onClose is called when the user dismisses the overlay;
 // it should return the appropriate close message for the parent application.
 func New(onClose func() tea.Msg) Modal {
 	return Modal{
-		focus:   paneSidebar,
-		styles:  newViewerStyles(),
+		focus:  paneSidebar,
+		styles: newViewerStyles(),
 		panes: [paneCount]pane{
 			paneSidebar: newExplorer().asPane(),
 			paneQuery:   newQueryPane().asPane(),
 			paneResults: newResultsPane().asPane(),
 		},
 		onClose: onClose,
+	}
+}
+
+// SetFile attaches a database file and its owning device to the viewer and
+// returns a Cmd that asynchronously fetches the SQLite version.
+func (m *Modal) SetFile(dev device.Device, packageID, dbPath, dbName string) tea.Cmd {
+	m.device = dev
+	m.packageID = packageID
+	m.dbPath = dbPath
+	m.dbName = dbName
+	m.sqliteVersion = ""
+
+	return m.fetchSQLiteVersionCmd()
+}
+
+func (m Modal) fetchSQLiteVersionCmd() tea.Cmd {
+	var (
+		dev = m.device
+		pkg = m.packageID
+	)
+
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		ver, err := device.SQLiteVersion(ctx, dev, pkg)
+
+		return SQLiteVersionMsg{Version: ver, Err: err}
 	}
 }
 
@@ -63,6 +107,14 @@ func (m Modal) setFocus(idx int) (Modal, tea.Cmd) {
 }
 
 func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
+	if vm, ok := msg.(SQLiteVersionMsg); ok {
+		if vm.Err == nil {
+			m.sqliteVersion = vm.Version
+		}
+
+		return m, nil
+	}
+
 	k, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		var cmd tea.Cmd

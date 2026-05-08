@@ -91,7 +91,61 @@ func parseSQLiteOutput(raw string) [][]string {
 	return rows
 }
 
-// sqSingleQuote wraps s in single quotes, escaping embedded single quotes via '\”
+// SQLiteVersion returns the SQLite version string from the engine on the given
+// device. For iOS the local sqlite3 binary is queried; for Android the version
+// is obtained via adb shell (with run-as when packageID is non-empty).
+func SQLiteVersion(ctx context.Context, dev Device, packageID string) (string, error) {
+	switch dev.Platform {
+	case PlatformIOS:
+		return sqliteVersionIOS(ctx)
+	case PlatformAndroid:
+		return sqliteVersionAndroid(ctx, dev, packageID)
+	default:
+		return "", fmt.Errorf("sqlite: unsupported platform %s", dev.Platform)
+	}
+}
+
+func sqliteVersionIOS(ctx context.Context) (string, error) {
+	out, err := exec.CommandContext(ctx, "sqlite3", "--version").Output()
+	if err != nil {
+		return "", fmt.Errorf("sqlite3 --version: %w", err)
+	}
+
+	parts := strings.Fields(strings.TrimSpace(string(out)))
+	if len(parts) == 0 {
+		return "", fmt.Errorf("sqlite3: empty version output")
+	}
+
+	return parts[0], nil
+}
+
+func sqliteVersionAndroid(ctx context.Context, dev Device, packageID string) (string, error) {
+	serial, err := findAndroidSerial(ctx, dev.ID)
+	if err != nil {
+		return "", fmt.Errorf("find serial: %w", err)
+	}
+
+	var shellCmd string
+	if packageID == "" {
+		shellCmd = "sqlite3 --version"
+	} else {
+		shellCmd = "run-as " + sqSingleQuote(packageID) + " sqlite3 --version"
+	}
+
+	out, err := exec.CommandContext(ctx, "adb", "-s", serial, "shell", shellCmd).Output()
+	if err != nil {
+		return "", fmt.Errorf("adb sqlite3 --version: %w", err)
+	}
+
+	parts := strings.Fields(strings.TrimSpace(string(out)))
+	if len(parts) == 0 {
+		return "", fmt.Errorf("adb sqlite3: empty version output")
+	}
+
+	return parts[0], nil
+}
+
+// sqSingleQuote wraps s in single quotes, escaping embedded single quotes via '\"
 func sqSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
