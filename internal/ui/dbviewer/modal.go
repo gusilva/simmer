@@ -35,6 +35,12 @@ type ColumnsLoadedMsg struct {
 	err  error
 }
 
+// QueryResultMsg carries the result of an executed SQL query.
+type QueryResultMsg struct {
+	Rows [][]string
+	Err  error
+}
+
 const (
 	paneSidebar = 0
 	paneQuery   = 1
@@ -180,6 +186,28 @@ func buildColumnNodes(cols []device.ColumnInfo) []*explorerNode {
 	return nodes
 }
 
+func (m Modal) executeQueryCmd() tea.Cmd {
+	qp, ok := m.panes[paneQuery].(queryPaneAdapter)
+	if !ok {
+		return nil
+	}
+	query := strings.TrimSpace(qp.inner.Value())
+	if query == "" {
+		return nil
+	}
+	var (
+		dev  = m.device
+		pkg  = m.packageID
+		path = m.dbPath
+	)
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		rows, err := device.QuerySQLite(ctx, dev, pkg, path, query)
+		return QueryResultMsg{Rows: rows, Err: err}
+	}
+}
+
 // sidebarSQL returns the SQL string to inject for the currently selected
 // sidebar node, and true when the node is a table or column.
 func (m Modal) sidebarSQL() (string, bool) {
@@ -219,6 +247,17 @@ func (m Modal) injectQuery(sql string) (Modal, tea.Cmd) {
 	m.panes[paneQuery] = qp
 
 	return m.setFocus(paneQuery)
+}
+
+// setQueryText sets the query editor content without changing focus.
+func (m Modal) setQueryText(sql string) Modal {
+	qp, ok := m.panes[paneQuery].(queryPaneAdapter)
+	if !ok {
+		return m
+	}
+	qp.inner = qp.inner.SetQuery(sql)
+	m.panes[paneQuery] = qp
+	return m
 }
 
 func (m *Modal) SetSize(w, h int) {
@@ -288,6 +327,26 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		return m, nil
 	}
 
+	if qr, ok := msg.(QueryResultMsg); ok {
+		if rp, ok := m.panes[paneResults].(resultsPaneAdapter); ok {
+			if qr.Err != nil {
+				rp.inner.SetError(qr.Err)
+			} else {
+				rp.inner.SetResults(qr.Rows)
+			}
+			m.panes[paneResults] = resultsPaneAdapter{rp.inner}
+		}
+		return m, nil
+	}
+
+	if mc, ok := msg.(tea.MouseClickMsg); ok {
+		return m.handleMouseClick(mc)
+	}
+
+	if mw, ok := msg.(tea.MouseWheelMsg); ok {
+		return m.handleMouseWheel(mw)
+	}
+
 	k, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		var cmd tea.Cmd
@@ -340,7 +399,16 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 	case "space":
 		if m.focus == paneSidebar {
 			if sql, ok := m.sidebarSQL(); ok {
-				return m.injectQuery(sql)
+				m2 := m.setQueryText(sql)
+				execCmd := m2.executeQueryCmd()
+				if execCmd != nil {
+					if rp, ok := m2.panes[paneResults].(resultsPaneAdapter); ok {
+						rp.inner.SetLoading()
+						m2.panes[paneResults] = resultsPaneAdapter{rp.inner}
+					}
+					return m2, execCmd
+				}
+				return m2, nil
 			}
 		}
 
@@ -349,10 +417,142 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 
 		return m, cmd
 
+	case "f5", "ctrl+enter":
+		if cmd := m.executeQueryCmd(); cmd != nil {
+			if rp, ok := m.panes[paneResults].(resultsPaneAdapter); ok {
+				rp.inner.SetLoading()
+				m.panes[paneResults] = resultsPaneAdapter{rp.inner}
+			}
+			return m, cmd
+		}
+
 	default:
 		var cmd tea.Cmd
 		m.panes[m.focus], cmd = m.panes[m.focus].Update(msg)
 
+		return m, cmd
+	}
+
+	return m, nil
+}
+
+// handleMouseClick maps a terminal click to a pane focus and optional navigation.
+//
+// Modal layout in terminal coords (modal is always at offset 1,1):
+//
+//	row 1            top border
+//	row 2            title row
+//	row 3            title separator
+//	rows 4..4+bodyH  body rows
+//	  cols 2..1+SidebarW   sidebar
+//	  col  2+SidebarW      vertical divider
+//	  cols 3+SidebarW..    right pane (query above DivRow, results below)
+func (m Modal) handleMouseClick(mc tea.MouseClickMsg) (Modal, tea.Cmd) {
+	if mc.Button != tea.MouseLeft {
+		return m, nil
+	}
+	l := computeLayout(m.width, m.height)
+	const offX, offY = 1, 1
+	bodyStartY := offY + 3
+	bodyRow := mc.Y - bodyStartY
+	if bodyRow < 0 || bodyRow >= l.BodyH {
+		return m, nil
+	}
+
+	const sidebarColStart = 2
+	sidebarColEnd := offX + l.SidebarW      // inclusive
+	rightColStart := offX + l.SidebarW + 2  // after divider char
+
+	switch {
+	case mc.X >= sidebarColStart && mc.X <= sidebarColEnd:
+		m, cmd := m.setFocus(paneSidebar)
+		if ep, ok := m.panes[paneSidebar].(explorerPane); ok {
+			itemRows := l.BodyH - 5
+			scroll := max(ep.inner.cursor-itemRows+1, 0)
+			displayRow := bodyRow - 3
+			if displayRow >= 0 {
+				newCursor := scroll + displayRow
+				items := ep.inner.filteredVisibleItems()
+				ep.inner.cursor = min(newCursor, max(len(items)-1, 0))
+				m.panes[paneSidebar] = ep
+			}
+		}
+		return m, cmd
+
+	case mc.X >= rightColStart:
+		if bodyRow < l.DivRow {
+			return m.setFocus(paneQuery)
+		}
+		if bodyRow > l.DivRow {
+			m, cmd := m.setFocus(paneResults)
+			if rp, ok := m.panes[paneResults].(resultsPaneAdapter); ok {
+				ri := bodyRow - l.DivRow - 1
+				// ri=2 is table header, ri>=3 are data rows.
+				if ri >= 3 {
+					displayDataRow := ri - 3
+					// Estimate scroll start from cursor and viewport height.
+					viewStart := max(rp.inner.tbl.Cursor()-rp.inner.tbl.Height(), 0)
+					targetRow := viewStart + displayDataRow
+					rp.inner.tbl.GotoTop()
+					rp.inner.tbl.MoveDown(targetRow)
+					m.panes[paneResults] = resultsPaneAdapter{rp.inner}
+				}
+			}
+			return m, cmd
+		}
+	}
+	return m, nil
+}
+
+// handleMouseWheel scrolls the sidebar or results pane on mouse wheel events.
+func (m Modal) handleMouseWheel(mw tea.MouseWheelMsg) (Modal, tea.Cmd) {
+	l := computeLayout(m.width, m.height)
+	const offX, offY = 1, 1
+	bodyStartY := offY + 3
+	bodyRow := mw.Y - bodyStartY
+	if bodyRow < 0 || bodyRow >= l.BodyH {
+		return m, nil
+	}
+
+	rightColStart := offX + l.SidebarW + 2
+	down := mw.Button == tea.MouseWheelDown
+
+	if mw.X < rightColStart {
+		// Sidebar wheel scroll.
+		if ep, ok := m.panes[paneSidebar].(explorerPane); ok {
+			items := ep.inner.filteredVisibleItems()
+			if down {
+				if ep.inner.cursor < len(items)-1 {
+					ep.inner.cursor++
+				}
+			} else {
+				if ep.inner.cursor > 0 {
+					ep.inner.cursor--
+				}
+			}
+			m.panes[paneSidebar] = ep
+		}
+		return m, nil
+	}
+
+	if bodyRow > l.DivRow {
+		// Results pane wheel scroll.
+		if rp, ok := m.panes[paneResults].(resultsPaneAdapter); ok {
+			rp.inner.tbl.Focus()
+			if down {
+				rp.inner.tbl.MoveDown(3)
+			} else {
+				rp.inner.tbl.MoveUp(3)
+			}
+			m.panes[paneResults] = resultsPaneAdapter{rp.inner}
+		}
+		return m, nil
+	}
+
+	// Query pane — pass to textarea.
+	if bodyRow < l.DivRow {
+		var cmd tea.Cmd
+		m.panes[paneQuery], cmd = m.panes[paneQuery].Update(mw)
 		return m, cmd
 	}
 

@@ -2,6 +2,7 @@ package device
 
 import (
 	"context"
+	"encoding/csv"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -31,7 +32,7 @@ func QuerySQLite(ctx context.Context, dev Device, packageID, dbPath, query strin
 
 func querySQLiteIOS(ctx context.Context, dbPath, query string) ([][]string, error) {
 	var stderr strings.Builder
-	cmd := exec.CommandContext(ctx, "sqlite3", "-separator", "|", "-header", dbPath, query)
+	cmd := exec.CommandContext(ctx, "sqlite3", "-csv", "-header", dbPath, query)
 	cmd.Stderr = &stderr
 
 	out, err := cmd.Output()
@@ -41,7 +42,7 @@ func querySQLiteIOS(ctx context.Context, dbPath, query string) ([][]string, erro
 		}
 		return nil, fmt.Errorf("sqlite3: %w", err)
 	}
-	return parseSQLiteOutput(string(out)), nil
+	return parseSQLiteCSV(out)
 }
 
 func querySQLiteAndroid(ctx context.Context, dev Device, packageID, dbPath, query string) ([][]string, error) {
@@ -53,11 +54,11 @@ func querySQLiteAndroid(ctx context.Context, dev Device, packageID, dbPath, quer
 	// When packageID is empty we are browsing as root; run sqlite3 directly.
 	var shellCmd string
 	if packageID == "" {
-		shellCmd = "sqlite3 -separator '|' -header " +
+		shellCmd = "sqlite3 -csv -header " +
 			sqSingleQuote(dbPath) + " " + sqSingleQuote(query)
 	} else {
 		shellCmd = "run-as " + sqSingleQuote(packageID) +
-			" sqlite3 -separator '|' -header " +
+			" sqlite3 -csv -header " +
 			sqSingleQuote(dbPath) + " " + sqSingleQuote(query)
 	}
 
@@ -72,23 +73,24 @@ func querySQLiteAndroid(ctx context.Context, dev Device, packageID, dbPath, quer
 		}
 		return nil, fmt.Errorf("sqlite3: %w", err)
 	}
-	return parseSQLiteOutput(string(out)), nil
+	return parseSQLiteCSV(out)
 }
 
-func parseSQLiteOutput(raw string) [][]string {
-	data := strings.TrimRight(raw, "\n\r")
-	if data == "" {
-		return nil
+func parseSQLiteCSV(data []byte) ([][]string, error) {
+	if len(data) == 0 {
+		return nil, nil
 	}
-	var rows [][]string
-	for line := range strings.SplitSeq(data, "\n") {
-		line = strings.TrimRight(line, "\r")
-		if line == "" {
-			continue
-		}
-		rows = append(rows, strings.Split(line, "|"))
+	r := csv.NewReader(strings.NewReader(string(data)))
+	r.LazyQuotes = true
+	r.FieldsPerRecord = -1 // allow variable column count
+	rows, err := r.ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("parse csv: %w", err)
 	}
-	return rows
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	return rows, nil
 }
 
 // SQLiteObjects holds the names of schema objects in a SQLite database grouped
