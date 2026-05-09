@@ -748,7 +748,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case dbviewer.SQLiteVersionMsg, dbviewer.TablesLoadedMsg, dbviewer.ColumnsLoadedMsg, dbviewer.FileSavedMsg:
+	case dbviewer.SQLiteVersionMsg, dbviewer.TablesLoadedMsg, dbviewer.ColumnsLoadedMsg, dbviewer.FileSavedMsg, dbviewer.QueryResultMsg:
 		if m.dbViewerModal != nil {
 			updated, cmd := m.dbViewerModal.Update(msg)
 			m.dbViewerModal = &updated
@@ -756,6 +756,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+		return m, nil
+
+	case tea.MouseClickMsg, tea.MouseWheelMsg:
+		if m.dbViewerModal != nil {
+			updated, cmd := m.dbViewerModal.Update(msg)
+			m.dbViewerModal = &updated
+			return m, cmd
+		}
 		return m, nil
 
 	case dbviewer.ShowMsg:
@@ -976,8 +984,10 @@ func (m model) View() tea.View {
 
 	v := tea.NewView(baseStr)
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 	v.WindowTitle = "Simmer"
 	v.BackgroundColor = ui.ColorBg
+	v.KeyboardEnhancements.ReportAllKeysAsEscapeCodes = true
 	return v
 }
 

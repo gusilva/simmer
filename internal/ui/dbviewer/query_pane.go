@@ -83,6 +83,9 @@ func (p QueryPane) FocusEditor() (QueryPane, tea.Cmd) {
 	return p, cmd
 }
 
+// Value returns the current editor content.
+func (p QueryPane) Value() string { return p.editor.Value() }
+
 // SetQuery replaces the editor content and moves the cursor to the end.
 func (p QueryPane) SetQuery(sql string) QueryPane {
 	p.editor.SetValue(sql)
