@@ -22,6 +22,8 @@ type viewerStyles struct {
 	Key             lipgloss.Style
 	Val             lipgloss.Style
 	Ok              lipgloss.Style
+	Err             lipgloss.Style
+	Warn            lipgloss.Style
 	ModeBadgeInsert lipgloss.Style
 	ModeBadgeNormal lipgloss.Style
 }
@@ -39,9 +41,11 @@ func newViewerStyles() viewerStyles {
 		Faint: lipgloss.NewStyle().Foreground(theme.ColorFgFaint).Background(theme.ColorBg).PaddingRight(1),
 		Fg:    lipgloss.NewStyle().Foreground(theme.ColorFg).Background(theme.ColorBg),
 
-		Key: lipgloss.NewStyle().Foreground(theme.ColorBorderHi).Background(theme.ColorBg).Bold(true),
-		Val: lipgloss.NewStyle().Foreground(theme.ColorFgDim).Background(theme.ColorBg),
-		Ok:  lipgloss.NewStyle().Foreground(theme.ColorOk).Background(theme.ColorBg),
+		Key:  lipgloss.NewStyle().Foreground(theme.ColorBorderHi).Background(theme.ColorBg).Bold(true),
+		Val:  lipgloss.NewStyle().Foreground(theme.ColorFgDim).Background(theme.ColorBg),
+		Ok:   lipgloss.NewStyle().Foreground(theme.ColorOk).Background(theme.ColorBg),
+		Err:  lipgloss.NewStyle().Foreground(theme.ColorErr).Background(theme.ColorBg).Bold(true),
+		Warn: lipgloss.NewStyle().Foreground(theme.ColorWarn).Background(theme.ColorBg),
 
 		ModeBadgeInsert: lipgloss.NewStyle().
 			Foreground(theme.ColorBg).Background(theme.ColorWarn).Bold(true).Padding(0, 1),

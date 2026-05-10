@@ -39,6 +39,19 @@ func (h renderHelpers) FillTo(s string, width int) string {
 	return s + h.BlankN(need)
 }
 
+// ExactWidth returns a string whose visible width is exactly width:
+// pads with background spaces if short, clips with MaxWidth if long.
+func (h renderHelpers) ExactWidth(s string, width int) string {
+	w := lipgloss.Width(s)
+	if w == width {
+		return s
+	}
+	if w < width {
+		return s + h.BlankN(width-w)
+	}
+	return lipgloss.NewStyle().MaxWidth(width).Render(s)
+}
+
 // Sep returns a full-width horizontal rule in the border color.
 func (h renderHelpers) Sep(width int) string {
 	return h.sep.Render(strings.Repeat("─", width))

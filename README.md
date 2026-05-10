@@ -17,6 +17,7 @@
 - **Real-time Status:** Instantly see if a device is `Running` or `Shutdown`.
 - **Fast Discovery:** Parallelized scanning using `xcrun simctl` and `adb`.
 - **Filtering:** Quickly find devices by name or OS version using built-in fuzzy search.
+- **Database Viewer:** Full-screen SQLite inspector — browse tables/views/indexes/triggers, write and run SQL queries, and view results in a scrollable table. Supports custom table-list queries and persists settings to `~/.config/simmer/config.toml`.
 - **Modern UI:** Built with the latest Charm v2 terminal stack.
 
 ## 🛠 Tech Stack
@@ -90,13 +91,17 @@ go test ./... -v
 - `cmd/simmer/main.go`: CLI entry point.
 - `internal/app/`: Bubble Tea app model/update/view orchestration.
 - `internal/ui/`: TUI components (sidebar, main pane, overlays, styles).
+- `internal/ui/dbviewer/`: Self-contained SQLite database viewer overlay (explorer, query editor, results pane, settings form).
 - `internal/device/`: Device domain contracts, coordinator, and platform integrations.
+- `internal/config/`: User settings persistence (`~/.config/simmer/config.toml`).
 
 ## 📚 Documentation
 
 - **Architecture**
   - [App model/update/view flow](docs/architecture/app-model-update-view.md)
   - [Device layer design](docs/architecture/device-layer.md)
+  - [Database viewer architecture](docs/architecture/db-viewer.md)
+  - [Config package](docs/architecture/config.md)
 - **UI Components**
   - [Main pane](docs/ui/mainpane.md)
   - [Sidebar](docs/ui/sidebar.md)
@@ -106,3 +111,4 @@ go test ./... -v
   - [Tabs](docs/ui/tabs.md)
   - [Delegate](docs/ui/delegate.md)
   - [Box](docs/ui/box.md)
+  - [Database viewer UI](docs/ui/dbviewer.md)
