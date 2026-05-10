@@ -1,14 +1,22 @@
-# Simmer
+<div align="center">
+  <br>
+  <img alt="simmer logo" src="./docs/simmer-logo.PNG" width="90" style="vertical-align:
+  middle;"/>
+  <span style="font-size: 2em; font-weight: bold; vertical-align: middle;">&nbsp;Simmer</span>
+</div>
 
 > A lightweight, modern TUI for managing iOS Simulators and Android Emulators on macOS.
+
 
 [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![CI](https://github.com/gusilva/simmer/actions/workflows/ci.yml/badge.svg)](https://github.com/gusilva/simmer/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/gusilva/simmer/graph/badge.svg?token=OMG9LKM6WZ)](https://codecov.io/gh/gusilva/simmer)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
+---
+
 <p align="center">
-  <img src="./app.gif" width="720" alt="Simulight Demo">
+  <img src="./app.gif" width="100%" alt="Simulight Demo">
 </p>
 
 ## 🚀 Features
