@@ -1,0 +1,139 @@
+package app
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"simmer/internal/device"
+	"simmer/internal/ui"
+	"simmer/internal/ui/dbviewer"
+
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+)
+
+// ─── Model ────────────────────────────────────────────────────────────────
+
+type appFocus int
+
+const (
+	focusSidebar appFocus = iota
+	focusMain
+)
+
+type model struct {
+	sidebar      ui.Sidebar
+	mainPane     ui.MainPane
+	focus        appFocus
+	coordinator  *device.Coordinator
+	loading      bool
+	errs         []error
+	quitting     bool
+	width        int
+	height       int
+	toolVersions map[device.Platform]string
+	bootedCount  int
+	iosCount     int
+	androidCount int
+	lastRefresh  time.Time
+	appVersion   string
+
+	logStream   *device.LogStream
+	logBundleID string
+	logDeviceID string
+
+	status     string
+	statusKind ui.StatusKind
+	statusSeq  int
+
+	platformPicker *ui.PlatformPickerModal
+	createIOSModal *ui.CreateSimulatorModal
+	createAndModal *ui.CreateAndroidEmulatorModal
+	deleteAlert    *ui.DeleteSimulatorAlert
+	sqliteModal    *ui.SQLiteModal
+	dbViewerModal  *dbviewer.Modal
+}
+
+func initialModel(version string) model {
+	coord := device.NewCoordinator(
+		device.NewIOSManager(),
+		device.NewAndroidManager(),
+	)
+
+	m := model{
+		sidebar:      ui.NewSidebar(),
+		mainPane:     ui.NewMainPane(),
+		focus:        focusSidebar,
+		coordinator:  coord,
+		loading:      true,
+		toolVersions: make(map[device.Platform]string),
+		appVersion:   version,
+	}
+	m.applyFocus()
+	return m
+}
+
+// applyFocus syncs the focus flag onto the sub-components.
+func (m *model) applyFocus() {
+	m.sidebar.SetFocused(m.focus == focusSidebar)
+	m.mainPane.SetFocused(m.focus == focusMain)
+}
+
+// setStatus stamps a transient message onto the footer's right side and
+// returns a tea.Cmd that clears it after a few seconds. Each call bumps a
+// sequence counter so the auto-clear only fires for the last status.
+func (m *model) setStatus(text string, kind ui.StatusKind) tea.Cmd {
+	m.statusSeq++
+	m.status = text
+	m.statusKind = kind
+	seq := m.statusSeq
+
+	return tea.Tick(4*time.Second, func(_ time.Time) tea.Msg {
+		return clearStatusMsg(seq)
+	})
+}
+
+const autoRefreshInterval = 30 * time.Second
+
+func scheduleAutoRefresh() tea.Cmd {
+	return tea.Tick(autoRefreshInterval, func(_ time.Time) tea.Msg {
+		return autoRefreshMsg{}
+	})
+}
+
+func (m model) bodyHeight() int {
+	topBar := ui.RenderTopBar(ui.TopBarParams{Width: m.width})
+	footer := ui.RenderFooter(ui.FooterParams{Width: m.width})
+	return max(m.height-lipgloss.Height(topBar)-lipgloss.Height(footer), 0)
+}
+
+func Run(version string) error {
+	m := initialModel(version)
+	p := tea.NewProgram(m)
+	if _, err := p.Run(); err != nil {
+		return fmt.Errorf("run program: %w", err)
+	}
+
+	return nil
+}
+
+// errPreview returns a short, single-line excerpt of err's message, suitable
+// for the status bar.
+func errPreview(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	return textPreview(err.Error(), 60)
+}
+
+// textPreview clips s to max visible characters with a trailing ellipsis.
+func textPreview(s string, max int) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	if len([]rune(s)) <= max {
+		return s
+	}
+	r := []rune(s)
+	return string(r[:max-1]) + "…"
+}
