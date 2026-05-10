@@ -3,7 +3,9 @@ package dbviewer
 import (
 	"fmt"
 	"strings"
+	"time"
 
+	"simmer/internal/config"
 	"simmer/internal/device"
 	"simmer/internal/theme"
 
@@ -17,6 +19,14 @@ const (
 	paneResults = 2
 	paneCount   = 3
 )
+
+// queryStats holds the outcome metrics of the last executed query.
+type queryStats struct {
+	elapsed  time.Duration
+	rowCount int
+	colCount int
+	hasData  bool
+}
 
 // Modal is the full-screen database viewer overlay.
 type Modal struct {
@@ -32,6 +42,13 @@ type Modal struct {
 	dbPath        string
 	dbName        string
 	sqliteVersion string
+	tablesQuery   string // from config; used by fetchTablesCmd
+
+	lastStats      queryStats
+	queryStartedAt time.Time
+
+	settingsOpen bool
+	settings     Settings
 }
 
 // New creates a Modal. onClose is called when the user dismisses the overlay;
@@ -57,6 +74,9 @@ func (m *Modal) SetFile(dev device.Device, packageID, dbPath, dbName string) tea
 	m.dbPath = dbPath
 	m.dbName = dbName
 	m.sqliteVersion = ""
+
+	cfg, _ := config.Load()
+	m.tablesQuery = cfg.EffectiveTablesQuery()
 
 	if ep, ok := m.panes[paneSidebar].(explorerPane); ok {
 		ep.inner.SetLoading()
@@ -123,7 +143,7 @@ func (m Modal) sidebarSQL() (string, bool) {
 	ident := func(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"` }
 	switch node.kind {
 	case nodeKindTable:
-		return fmt.Sprintf("SELECT * FROM %s;", ident(node.label)), true
+		return fmt.Sprintf("SELECT * FROM %s;", ident(node.realNameOrLabel())), true
 	case nodeKindCol:
 		if parentTable == "" {
 			return "", false
@@ -132,6 +152,14 @@ func (m Modal) sidebarSQL() (string, bool) {
 	}
 
 	return "", false
+}
+
+// openSettings loads the persisted config and opens the settings form.
+func (m Modal) openSettings() Modal {
+	cfg, _ := config.Load()
+	m.settings = newSettings(cfg)
+	m.settingsOpen = true
+	return m
 }
 
 // ScrimView returns a full-terminal-size overlay that simulates opacity.

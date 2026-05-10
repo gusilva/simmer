@@ -93,37 +93,90 @@ func parseSQLiteCSV(data []byte) ([][]string, error) {
 	return rows, nil
 }
 
-// SQLiteObjects holds the names of schema objects in a SQLite database grouped
-// by type.
-type SQLiteObjects struct {
-	Tables  []string
-	Views   []string
-	Indexes []string
+// SchemaObject represents one named object from the SQLite schema.
+// DisplayName is the human-readable label (from an optional third query
+// column); when empty the real Name is shown instead.
+type SchemaObject struct {
+	Name        string // actual identifier used in SQL
+	DisplayName string // optional custom display label
 }
 
-// ListSQLiteObjects queries sqlite_master and returns tables, views, and
-// indexes for the given database file, excluding SQLite-internal objects.
-func ListSQLiteObjects(ctx context.Context, dev Device, packageID, dbPath string) (SQLiteObjects, error) {
-	const q = "SELECT type, name FROM sqlite_master" +
-		" WHERE type IN ('table','view','index') AND name NOT LIKE 'sqlite_%'" +
-		" ORDER BY type, name;"
-	rows, err := QuerySQLite(ctx, dev, packageID, dbPath, q)
+// Label returns DisplayName if set, otherwise Name.
+func (s SchemaObject) Label() string {
+	if s.DisplayName != "" {
+		return s.DisplayName
+	}
+	return s.Name
+}
+
+// SQLiteObjects holds schema objects in a SQLite database grouped by type.
+type SQLiteObjects struct {
+	Tables   []SchemaObject
+	Views    []SchemaObject
+	Indexes  []SchemaObject
+	Triggers []SchemaObject
+}
+
+// ListSQLiteObjects queries the database using the provided SQL and returns
+// schema objects grouped by type.
+//
+// Column detection is done by name from the header row (sqlite3 -header), so
+// column order does not matter. Recognised column names (case-insensitive):
+//
+//	name              — required; SQL identifier used in queries
+//	type              — optional; "table", "view", "index", or "trigger".
+//	                    When absent every row is treated as type "table".
+//	custom_table_name — optional; human-readable display label.
+//	                    When absent or empty the name column is shown instead.
+func ListSQLiteObjects(ctx context.Context, dev Device, packageID, dbPath, query string) (SQLiteObjects, error) {
+	rows, err := QuerySQLite(ctx, dev, packageID, dbPath, query)
 	if err != nil {
 		return SQLiteObjects{}, err
 	}
+	if len(rows) == 0 {
+		return SQLiteObjects{}, nil
+	}
+
+	// Locate columns by name from the header row.
+	typeIdx, nameIdx, displayIdx := -1, -1, -1
+	for i, col := range rows[0] {
+		switch strings.ToLower(col) {
+		case "type":
+			typeIdx = i
+		case "name":
+			nameIdx = i
+		case "custom_table_name":
+			displayIdx = i
+		}
+	}
+	if nameIdx == -1 {
+		return SQLiteObjects{}, fmt.Errorf("tables query must return a column named 'name'")
+	}
 
 	var out SQLiteObjects
-	for _, row := range rows[1:] { // row 0 is the header from -header flag
-		if len(row) < 2 {
+	for _, row := range rows[1:] {
+		if nameIdx >= len(row) || row[nameIdx] == "" {
 			continue
 		}
-		switch row[0] {
+		obj := SchemaObject{Name: row[nameIdx]}
+		if displayIdx >= 0 && displayIdx < len(row) {
+			obj.DisplayName = row[displayIdx]
+		}
+
+		objType := "table"
+		if typeIdx >= 0 && typeIdx < len(row) {
+			objType = row[typeIdx]
+		}
+
+		switch objType {
 		case "table":
-			out.Tables = append(out.Tables, row[1])
+			out.Tables = append(out.Tables, obj)
 		case "view":
-			out.Views = append(out.Views, row[1])
+			out.Views = append(out.Views, obj)
 		case "index":
-			out.Indexes = append(out.Indexes, row[1])
+			out.Indexes = append(out.Indexes, obj)
+		case "trigger":
+			out.Triggers = append(out.Triggers, obj)
 		}
 	}
 

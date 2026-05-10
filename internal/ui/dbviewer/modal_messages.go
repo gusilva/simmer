@@ -1,6 +1,24 @@
 package dbviewer
 
-import "simmer/internal/device"
+import (
+	"simmer/internal/config"
+	"simmer/internal/device"
+
+	tea "charm.land/bubbletea/v2"
+)
+
+// SettingsSavedMsg is returned after a config save attempt completes.
+type SettingsSavedMsg struct{ Err error }
+
+// SettingsCancelMsg is returned when the user dismisses the settings form.
+type SettingsCancelMsg struct{}
+
+func saveConfigCmd(cfg config.Config) tea.Cmd {
+	return func() tea.Msg {
+		err := config.Save(cfg)
+		return SettingsSavedMsg{Err: err}
+	}
+}
 
 // ShowMsg opens the database viewer overlay.
 type ShowMsg struct{}

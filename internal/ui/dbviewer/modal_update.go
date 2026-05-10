@@ -1,8 +1,29 @@
 package dbviewer
 
-import tea "charm.land/bubbletea/v2"
+import (
+	"time"
+
+	tea "charm.land/bubbletea/v2"
+)
 
 func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
+	// Settings messages are handled regardless of settingsOpen (save is async).
+	if _, ok := msg.(SettingsSavedMsg); ok {
+		m.settingsOpen = false
+		return m, nil
+	}
+	if _, ok := msg.(SettingsCancelMsg); ok {
+		m.settingsOpen = false
+		return m, nil
+	}
+
+	// When the settings form is open, route all input to it.
+	if m.settingsOpen {
+		var cmd tea.Cmd
+		m.settings, cmd = m.settings.Update(msg)
+		return m, cmd
+	}
+
 	if vm, ok := msg.(SQLiteVersionMsg); ok {
 		if vm.Err == nil {
 			m.sqliteVersion = vm.Version
@@ -29,13 +50,6 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		return m, nil
 	}
 
-	if k, ok := msg.(tea.KeyPressMsg); ok && (k.String() == "ctrl+s" || k.String() == "super+s") {
-		if qp, ok := m.panes[paneQuery].(queryPaneAdapter); ok {
-			return m, qp.inner.SaveCmd()
-		}
-		return m, nil
-	}
-
 	if cm, ok := msg.(ColumnsLoadedMsg); ok {
 		cm.node.loading = false
 		if cm.err == nil {
@@ -53,6 +67,36 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 				rp.inner.SetResults(qr.Rows)
 			}
 			m.panes[paneResults] = resultsPaneAdapter{rp.inner}
+		}
+		elapsed := time.Since(m.queryStartedAt)
+		rowCount := 0
+		colCount := 0
+		if qr.Err == nil && len(qr.Rows) > 0 {
+			colCount = len(qr.Rows[0])
+			rowCount = max(len(qr.Rows)-1, 0)
+		}
+		m.lastStats = queryStats{
+			elapsed:  elapsed,
+			rowCount: rowCount,
+			colCount: colCount,
+			hasData:  true,
+		}
+		return m, nil
+	}
+
+	// Bracketed paste — forward directly to the focused pane.
+	if _, ok := msg.(tea.PasteMsg); ok {
+		var cmd tea.Cmd
+		m.panes[m.focus], cmd = m.panes[m.focus].Update(msg)
+		return m, cmd
+	}
+
+	// OSC-52 clipboard read result — convert to paste and insert into query editor.
+	if cm, ok := msg.(tea.ClipboardMsg); ok {
+		if qp, ok := m.panes[paneQuery].(queryPaneAdapter); ok {
+			next, cmd := qp.inner.Update(tea.PasteMsg{Content: cm.Content})
+			m.panes[paneQuery] = queryPaneAdapter{next}
+			return m, cmd
 		}
 		return m, nil
 	}
@@ -73,6 +117,20 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 	}
 
 	switch k.String() {
+	case "ctrl+s":
+		return m.openSettings(), nil
+
+	case "super+s":
+		if qp, ok := m.panes[paneQuery].(queryPaneAdapter); ok {
+			return m, qp.inner.SaveCmd()
+		}
+
+	case "super+v":
+		// CMD+V fallback for terminals that don't produce bracketed paste.
+		if m.focus == paneQuery {
+			return m, func() tea.Msg { return tea.ReadClipboard() }
+		}
+
 	case "esc", "q":
 		return m, m.onClose
 
@@ -123,6 +181,7 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 						rp.inner.SetLoading()
 						m2.panes[paneResults] = resultsPaneAdapter{rp.inner}
 					}
+					m2.queryStartedAt = time.Now()
 					return m2, execCmd
 				}
 				return m2, nil
@@ -132,12 +191,23 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		m.panes[m.focus], cmd = m.panes[m.focus].Update(msg)
 		return m, cmd
 
-	case "f5", "ctrl+enter":
+	case "f5":
 		if cmd := m.executeQueryCmd(); cmd != nil {
 			if rp, ok := m.panes[paneResults].(resultsPaneAdapter); ok {
 				rp.inner.SetLoading()
 				m.panes[paneResults] = resultsPaneAdapter{rp.inner}
 			}
+			m.queryStartedAt = time.Now()
+			return m, cmd
+		}
+
+	case "ctrl+enter":
+		if cmd := m.executeAllCmd(); cmd != nil {
+			if rp, ok := m.panes[paneResults].(resultsPaneAdapter); ok {
+				rp.inner.SetLoading()
+				m.panes[paneResults] = resultsPaneAdapter{rp.inner}
+			}
+			m.queryStartedAt = time.Now()
 			return m, cmd
 		}
 

@@ -12,14 +12,15 @@ import (
 
 func (m Modal) fetchTablesCmd() tea.Cmd {
 	var (
-		dev  = m.device
-		pkg  = m.packageID
-		path = m.dbPath
+		dev   = m.device
+		pkg   = m.packageID
+		path  = m.dbPath
+		query = m.tablesQuery
 	)
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		objs, err := device.ListSQLiteObjects(ctx, dev, pkg, path)
+		objs, err := device.ListSQLiteObjects(ctx, dev, pkg, path, query)
 		return TablesLoadedMsg{Objects: objs, Err: err}
 	}
 }
@@ -42,7 +43,7 @@ func (m Modal) fetchColumnsCmd(node *explorerNode) tea.Cmd {
 		dev   = m.device
 		pkg   = m.packageID
 		path  = m.dbPath
-		table = node.label
+		table = node.realNameOrLabel()
 	)
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -91,12 +92,26 @@ func buildColumnNodes(cols []device.ColumnInfo) []*explorerNode {
 	return nodes
 }
 
+// executeQueryCmd runs the SQL statement under the cursor.
 func (m Modal) executeQueryCmd() tea.Cmd {
 	qp, ok := m.panes[paneQuery].(queryPaneAdapter)
 	if !ok {
 		return nil
 	}
-	query := strings.TrimSpace(qp.inner.Value())
+	return m.runQuery(qp.inner.StatementUnderCursor())
+}
+
+// executeAllCmd runs the entire editor content as one query.
+func (m Modal) executeAllCmd() tea.Cmd {
+	qp, ok := m.panes[paneQuery].(queryPaneAdapter)
+	if !ok {
+		return nil
+	}
+	return m.runQuery(qp.inner.Value())
+}
+
+func (m Modal) runQuery(query string) tea.Cmd {
+	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil
 	}

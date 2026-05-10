@@ -1,7 +1,9 @@
 package dbviewer
 
 import (
+	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/lipgloss/v2"
 )
@@ -74,6 +76,10 @@ func (m Modal) renderTitleSep(sb *strings.Builder, l layout, s viewerStyles) {
 }
 
 func (m Modal) renderBody(sb *strings.Builder, l layout, s viewerStyles) {
+	if m.settingsOpen {
+		m.renderSettingsBody(sb, l, s)
+		return
+	}
 	blank := func(n int) string { return s.Bg.Render(strings.Repeat(" ", n)) }
 
 	sidebarRows := m.panes[paneSidebar].Rows(l.SidebarW, l.BodyH, m.focus == paneSidebar)
@@ -115,6 +121,16 @@ func (m Modal) renderBody(sb *strings.Builder, l layout, s viewerStyles) {
 	}
 }
 
+func (m Modal) renderSettingsBody(sb *strings.Builder, l layout, s viewerStyles) {
+	rows := m.settings.Rows(l.InnerW, l.BodyH)
+	for _, row := range rows {
+		sb.WriteString(s.Outer.Render("│"))
+		sb.WriteString(row)
+		sb.WriteString(s.Outer.Render("│"))
+		sb.WriteByte('\n')
+	}
+}
+
 func (m Modal) renderStatusSep(sb *strings.Builder, l layout, s viewerStyles) {
 	sb.WriteString(s.Outer.Render("│"))
 	sb.WriteString(s.Inner.Render(strings.Repeat("─", l.InnerW)))
@@ -130,15 +146,33 @@ func (m Modal) renderStatusRow(sb *strings.Builder, l layout, s viewerStyles) {
 		modeBadge = s.ModeBadgeNormal.Render("NORMAL")
 	}
 
-	conn := s.Ok.Render("● connected to simctl.db")
-	latency := s.Dim.Render("⟳ 14 ms · 21 rows · 9 cols")
-	left := modeBadge + s.Bg.Render("  ") + conn + s.Bg.Render("  ") + latency
+	// Connection indicator.
+	var conn string
+	if m.dbName != "" {
+		conn = s.Ok.Render("● ") + s.Dim.Render(m.dbName)
+	} else {
+		conn = s.Dim.Render("● no database")
+	}
+
+	// Last query stats.
+	var stats string
+	if m.lastStats.hasData {
+		stats = s.Dim.Render(fmt.Sprintf("⟳ %s  %d rows  %d cols",
+			formatDuration(m.lastStats.elapsed),
+			m.lastStats.rowCount,
+			m.lastStats.colCount,
+		))
+	}
+
+	left := modeBadge + s.Bg.Render("  ") + conn
+	if stats != "" {
+		left += s.Bg.Render("  ") + stats
+	}
 
 	hints := strings.Join([]string{
-		s.Key.Render("esc") + s.Val.Render(" normal"),
-		s.Key.Render("F5") + s.Val.Render("/") + s.Key.Render("^enter") + s.Val.Render(" execute"),
-		s.Key.Render("⇥") + s.Val.Render(" autocomplete"),
-		s.Key.Render("^P") + s.Val.Render(" palette"),
+		s.Key.Render("F5") + s.Val.Render(" execute"),
+		s.Key.Render("⌘S") + s.Val.Render(" save"),
+		s.Key.Render("^S") + s.Val.Render(" settings"),
 		s.Key.Render("?") + s.Val.Render(" help"),
 	}, s.Faint.Render("  "))
 
@@ -153,6 +187,18 @@ func (m Modal) renderStatusRow(sb *strings.Builder, l layout, s viewerStyles) {
 	sb.WriteString(line)
 	sb.WriteString(s.Outer.Render("│"))
 	sb.WriteByte('\n')
+}
+
+// formatDuration renders a duration as a compact human string.
+func formatDuration(d time.Duration) string {
+	switch {
+	case d < time.Millisecond:
+		return fmt.Sprintf("%dμs", d.Microseconds())
+	case d < time.Second:
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	default:
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
 }
 
 func (m Modal) renderBottomBorder(sb *strings.Builder, l layout, s viewerStyles) {

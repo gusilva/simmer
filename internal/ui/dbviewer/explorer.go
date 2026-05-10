@@ -21,12 +21,14 @@ const (
 	nodeKindTable
 	nodeKindView
 	nodeKindIndex
+	nodeKindTrigger
 	nodeKindCol
 )
 
 type explorerNode struct {
 	kind      explorerNodeKind
-	label     string
+	label     string // display name (may be custom_table_name)
+	realName  string // actual SQL identifier; empty means same as label
 	meta      string
 	isPK      bool
 	isFK      bool
@@ -35,6 +37,15 @@ type explorerNode struct {
 	connColor color.Color
 	children  []*explorerNode
 	expanded  bool
+}
+
+// realNameOrLabel returns the SQL identifier for this node, falling back to
+// the display label when no explicit real name is stored.
+func (n *explorerNode) realNameOrLabel() string {
+	if n.realName != "" {
+		return n.realName
+	}
+	return n.label
 }
 
 type visibleItem struct {
@@ -72,39 +83,51 @@ func (e *Explorer) SetTables(dbName string, objs device.SQLiteObjects) {
 	e.loading = false
 	e.nTables = len(objs.Tables)
 
-	tableNodes := make([]*explorerNode, len(objs.Tables))
-	for i, t := range objs.Tables {
-		tableNodes[i] = &explorerNode{kind: nodeKindTable, label: t}
+	schemaNodes := func(kind explorerNodeKind, items []device.SchemaObject) []*explorerNode {
+		nodes := make([]*explorerNode, len(items))
+		for i, obj := range items {
+			nodes[i] = &explorerNode{
+				kind:     kind,
+				label:    obj.Label(),
+				realName: obj.Name,
+			}
+		}
+		return nodes
 	}
 
-	viewNodes := make([]*explorerNode, len(objs.Views))
-	for i, v := range objs.Views {
-		viewNodes[i] = &explorerNode{kind: nodeKindView, label: v}
-	}
+	tableNodes := schemaNodes(nodeKindTable, objs.Tables)
+	viewNodes := schemaNodes(nodeKindView, objs.Views)
+	indexNodes := schemaNodes(nodeKindIndex, objs.Indexes)
+	triggerNodes := schemaNodes(nodeKindTrigger, objs.Triggers)
 
-	indexNodes := make([]*explorerNode, len(objs.Indexes))
-	for i, idx := range objs.Indexes {
-		indexNodes[i] = &explorerNode{kind: nodeKindIndex, label: idx}
+	folders := []*explorerNode{
+		{
+			kind:     nodeKindFolder,
+			label:    "Tables",
+			meta:     fmt.Sprintf("%d", len(objs.Tables)),
+			expanded: true,
+			children: tableNodes,
+		},
+		{
+			kind:     nodeKindFolder,
+			label:    "Views",
+			meta:     fmt.Sprintf("%d", len(objs.Views)),
+			children: viewNodes,
+		},
+		{
+			kind:     nodeKindFolder,
+			label:    "Indexes",
+			meta:     fmt.Sprintf("%d", len(objs.Indexes)),
+			children: indexNodes,
+		},
 	}
-
-	tablesFolder := &explorerNode{
-		kind:     nodeKindFolder,
-		label:    "Tables",
-		meta:     fmt.Sprintf("%d", len(objs.Tables)),
-		expanded: true,
-		children: tableNodes,
-	}
-	viewsFolder := &explorerNode{
-		kind:     nodeKindFolder,
-		label:    "Views",
-		meta:     fmt.Sprintf("%d", len(objs.Views)),
-		children: viewNodes,
-	}
-	indexesFolder := &explorerNode{
-		kind:     nodeKindFolder,
-		label:    "Indexes",
-		meta:     fmt.Sprintf("%d", len(objs.Indexes)),
-		children: indexNodes,
+	if len(objs.Triggers) > 0 {
+		folders = append(folders, &explorerNode{
+			kind:     nodeKindFolder,
+			label:    "Triggers",
+			meta:     fmt.Sprintf("%d", len(objs.Triggers)),
+			children: triggerNodes,
+		})
 	}
 
 	dbNode := &explorerNode{
@@ -113,7 +136,7 @@ func (e *Explorer) SetTables(dbName string, objs device.SQLiteObjects) {
 		meta:      "SQLite",
 		connColor: theme.ColorAccent,
 		expanded:  true,
-		children:  []*explorerNode{tablesFolder, viewsFolder, indexesFolder},
+		children:  folders,
 	}
 
 	e.roots = []*explorerNode{dbNode}
@@ -180,7 +203,7 @@ func (e Explorer) selectedNodeInfo() (node *explorerNode, parentTable string) {
 	if node.kind == nodeKindCol {
 		for i := e.cursor - 1; i >= 0; i-- {
 			if items[i].node.kind == nodeKindTable {
-				parentTable = items[i].node.label
+				parentTable = items[i].node.realNameOrLabel()
 				break
 			}
 		}
@@ -384,7 +407,7 @@ func (e Explorer) Rows(width, height int) []string {
 		indent := strings.Repeat(" ", ind*2)
 
 		var caretRune string
-		isExpandable := len(node.children) > 0 || node.kind == nodeKindTable || node.kind == nodeKindView
+		isExpandable := len(node.children) > 0 || node.kind == nodeKindTable || node.kind == nodeKindView || node.kind == nodeKindTrigger
 		if isExpandable {
 			if node.expanded {
 				caretRune = "▾"
@@ -424,6 +447,9 @@ func (e Explorer) Rows(width, height int) []string {
 		case nodeKindIndex:
 			iconRune = "◇"
 			iconStyle = infoS
+		case nodeKindTrigger:
+			iconRune = "⚡"
+			iconStyle = warnS
 		case nodeKindCol:
 			iconRune = "·"
 			iconStyle = faintS

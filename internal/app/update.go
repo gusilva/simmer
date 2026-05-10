@@ -143,13 +143,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, cmd
 
-	case tea.PasteMsg:
+	case tea.PasteMsg, tea.ClipboardMsg:
+		if m.dbViewerModal != nil {
+			updated, cmd := m.dbViewerModal.Update(msg)
+			m.dbViewerModal = &updated
+			return m, cmd
+		}
 		if m.sqliteModal != nil {
 			updated, cmd := m.sqliteModal.Update(msg)
 			m.sqliteModal = &updated
 			return m, cmd
 		}
-
 		return m, nil
 
 	case autoRefreshMsg:
@@ -399,7 +403,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case dbviewer.SQLiteVersionMsg, dbviewer.TablesLoadedMsg, dbviewer.ColumnsLoadedMsg, dbviewer.FileSavedMsg, dbviewer.QueryResultMsg:
+	case dbviewer.SQLiteVersionMsg, dbviewer.TablesLoadedMsg, dbviewer.ColumnsLoadedMsg, dbviewer.FileSavedMsg, dbviewer.QueryResultMsg, dbviewer.SettingsSavedMsg, dbviewer.SettingsCancelMsg:
 		if m.dbViewerModal != nil {
 			updated, cmd := m.dbViewerModal.Update(msg)
 			m.dbViewerModal = &updated
