@@ -14,10 +14,11 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		m.settingsOpen = false
 		if sm.Err == nil {
 			cfg, _ := config.Load()
-			m.tablesQuery = cfg.EffectiveTablesQuery()
-			m.scriptDir = cfg.ScriptPath
+			dbcfg := cfg.ForDB(m.dbName)
+			m.tablesQuery = dbcfg.EffectiveTablesQuery()
+			m.scriptDir = dbcfg.ScriptPath
 			if qp, ok := m.panes[paneQuery].(queryPaneAdapter); ok {
-				m.panes[paneQuery] = queryPaneAdapter{qp.inner.withScriptDir(cfg.ScriptPath)}
+				m.panes[paneQuery] = queryPaneAdapter{qp.inner.withScriptDir(dbcfg.ScriptPath)}
 			}
 			return m, tea.Batch(m.fetchTablesCmd(), m.fetchScriptsCmd())
 		}

@@ -17,10 +17,28 @@ const DefaultTablesQuery = "SELECT type, name FROM sqlite_master" +
 	" WHERE type IN ('table','view','index','trigger') AND name NOT LIKE 'sqlite_%'" +
 	" ORDER BY type, name;"
 
-// Config holds user-configurable settings persisted to ~/.config/simmer/config.toml.
-type Config struct {
+// DBConfig holds settings that are stored per database.
+type DBConfig struct {
 	ScriptPath  string
 	TablesQuery string
+}
+
+// EffectiveTablesQuery returns TablesQuery, falling back to DefaultTablesQuery
+// when the stored value is empty.
+func (d DBConfig) EffectiveTablesQuery() string {
+	if q := strings.TrimSpace(d.TablesQuery); q != "" {
+		return q
+	}
+	return DefaultTablesQuery
+}
+
+// Config holds user-configurable settings persisted to ~/.config/simmer/config.toml.
+// Top-level fields are global defaults; Databases holds per-db overrides keyed by
+// database display name.
+type Config struct {
+	ScriptPath  string // global default
+	TablesQuery string // global default
+	Databases   map[string]DBConfig
 }
 
 // Default returns factory settings.
@@ -31,13 +49,52 @@ func Default() Config {
 	}
 }
 
-// EffectiveTablesQuery returns TablesQuery, falling back to DefaultTablesQuery
-// when the stored value is empty.
+// EffectiveTablesQuery returns the global TablesQuery, falling back to DefaultTablesQuery.
 func (c Config) EffectiveTablesQuery() string {
 	if q := strings.TrimSpace(c.TablesQuery); q != "" {
 		return q
 	}
 	return DefaultTablesQuery
+}
+
+// ForDB returns the effective DBConfig for a named database.
+// Per-db values override the global defaults; empty per-db fields inherit the global value.
+// When dbName is empty the global values are returned directly.
+func (c Config) ForDB(dbName string) DBConfig {
+	base := DBConfig{
+		ScriptPath:  c.ScriptPath,
+		TablesQuery: c.TablesQuery,
+	}
+	if dbName == "" {
+		return base
+	}
+	override, ok := c.Databases[dbName]
+	if !ok {
+		return base
+	}
+	if override.ScriptPath != "" {
+		base.ScriptPath = override.ScriptPath
+	}
+	if override.TablesQuery != "" {
+		base.TablesQuery = override.TablesQuery
+	}
+	return base
+}
+
+// WithDB returns a copy of c with the named database's config replaced.
+func (c Config) WithDB(dbName string, dbcfg DBConfig) Config {
+	if c.Databases == nil {
+		c.Databases = make(map[string]DBConfig)
+	} else {
+		// Copy map so we don't mutate the original.
+		m := make(map[string]DBConfig, len(c.Databases))
+		for k, v := range c.Databases {
+			m[k] = v
+		}
+		c.Databases = m
+	}
+	c.Databases[dbName] = dbcfg
+	return c
 }
 
 func configPath() (string, error) {
@@ -63,24 +120,59 @@ func Load() (Config, error) {
 		}
 		return cfg, fmt.Errorf("read config: %w", err)
 	}
+
+	var currentDB string // "" = global section
+	inDBSection := false
+
 	scanner := bufio.NewScanner(strings.NewReader(string(data)))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
+
+		// Section header?
+		if strings.HasPrefix(line, "[") {
+			if dbName, ok := parseDBSectionHeader(line); ok {
+				currentDB = dbName
+				inDBSection = true
+				if cfg.Databases == nil {
+					cfg.Databases = make(map[string]DBConfig)
+				}
+				if _, exists := cfg.Databases[dbName]; !exists {
+					cfg.Databases[dbName] = DBConfig{}
+				}
+			} else {
+				// Unknown section — stop tracking any db section.
+				inDBSection = false
+				currentDB = ""
+			}
+			continue
+		}
+
 		k, v, ok := strings.Cut(line, "=")
 		if !ok {
 			continue
 		}
 		k = strings.TrimSpace(k)
-		v = strings.TrimSpace(v)
-		v = unquoteTOML(v)
-		switch k {
-		case "script_path":
-			cfg.ScriptPath = v
-		case "tables_query":
-			cfg.TablesQuery = v
+		v = unquoteTOML(strings.TrimSpace(v))
+
+		if inDBSection {
+			dbcfg := cfg.Databases[currentDB]
+			switch k {
+			case "script_path":
+				dbcfg.ScriptPath = v
+			case "tables_query":
+				dbcfg.TablesQuery = v
+			}
+			cfg.Databases[currentDB] = dbcfg
+		} else {
+			switch k {
+			case "script_path":
+				cfg.ScriptPath = v
+			case "tables_query":
+				cfg.TablesQuery = v
+			}
 		}
 	}
 	return cfg, nil
@@ -95,10 +187,45 @@ func Save(cfg Config) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("mkdir config dir: %w", err)
 	}
-	content := "# simmer configuration\n\n" +
-		"script_path = " + quoteTOML(cfg.ScriptPath) + "\n" +
-		"tables_query = " + quoteTOML(cfg.TablesQuery) + "\n"
-	return os.WriteFile(path, []byte(content), 0o644)
+
+	var sb strings.Builder
+	sb.WriteString("# simmer configuration\n\n")
+	sb.WriteString("script_path = " + quoteTOML(cfg.ScriptPath) + "\n")
+	sb.WriteString("tables_query = " + quoteTOML(cfg.TablesQuery) + "\n")
+
+	// Write per-db sections in deterministic order (sorted by name).
+	if len(cfg.Databases) > 0 {
+		names := make([]string, 0, len(cfg.Databases))
+		for name := range cfg.Databases {
+			names = append(names, name)
+		}
+		// Simple sort without importing sort package — insertion sort is fine for small N.
+		for i := 1; i < len(names); i++ {
+			for j := i; j > 0 && names[j] < names[j-1]; j-- {
+				names[j], names[j-1] = names[j-1], names[j]
+			}
+		}
+		for _, name := range names {
+			dbcfg := cfg.Databases[name]
+			sb.WriteString("\n[db." + quoteTOML(name) + "]\n")
+			sb.WriteString("script_path = " + quoteTOML(dbcfg.ScriptPath) + "\n")
+			sb.WriteString("tables_query = " + quoteTOML(dbcfg.TablesQuery) + "\n")
+		}
+	}
+
+	return os.WriteFile(path, []byte(sb.String()), 0o644)
+}
+
+// parseDBSectionHeader checks if line is a [db."<name>"] or [db.<name>] header.
+func parseDBSectionHeader(line string) (dbName string, ok bool) {
+	if !strings.HasPrefix(line, "[db.") || !strings.HasSuffix(line, "]") {
+		return "", false
+	}
+	inner := line[4 : len(line)-1] // content between "[db." and "]"
+	if strings.HasPrefix(inner, `"`) {
+		return unquoteTOML(inner), true
+	}
+	return inner, true
 }
 
 // quoteTOML wraps s in a TOML basic string, escaping special characters.

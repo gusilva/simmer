@@ -6,6 +6,7 @@ import (
 	"simmer/internal/config"
 	"simmer/internal/theme"
 
+	"charm.land/bubbles/v2/filepicker"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
@@ -24,22 +25,27 @@ const (
 
 // Settings is the in-overlay settings form shown when the user presses Ctrl+S.
 type Settings struct {
-	scriptPath  textinput.Model
-	tablesQuery textarea.Model
-	focus       settingsFocus
-	rh          renderHelpers
+	dbName       string // database this settings form is editing
+	scriptPath   textinput.Model
+	tablesQuery  textarea.Model
+	focus        settingsFocus
+	rh           renderHelpers
+	picker       filepicker.Model
+	pickerActive bool
 }
 
-func newSettings(cfg config.Config) Settings {
+func newSettings(cfg config.Config, dbName string) Settings {
+	dbcfg := cfg.ForDB(dbName)
+
 	si := textinput.New()
 	si.Placeholder = "./"
-	si.SetValue(cfg.ScriptPath)
+	si.SetValue(dbcfg.ScriptPath)
 	si.SetWidth(60)
 	_ = si.Focus()
 
 	tq := textarea.New()
 	tq.Placeholder = "SELECT type, name FROM sqlite_master…"
-	tq.SetValue(cfg.TablesQuery)
+	tq.SetValue(dbcfg.TablesQuery)
 	tq.SetWidth(60)
 	tq.SetHeight(3)
 	tq.ShowLineNumbers = false
@@ -58,22 +64,64 @@ func newSettings(cfg config.Config) Settings {
 	s.Blurred.EndOfBuffer = lipgloss.NewStyle().Background(theme.ColorBg)
 	tq.SetStyles(s)
 
+	fp := filepicker.New()
+	fp.DirAllowed = true
+	fp.FileAllowed = false
+	fp.ShowPermissions = false
+	fp.ShowSize = false
+	fp.AutoHeight = false
+	startDir := dbcfg.ScriptPath
+	if startDir == "" {
+		startDir = "."
+	}
+	fp.CurrentDirectory = startDir
+
+	fpStyles := filepicker.DefaultStyles()
+	fpStyles.Cursor = lipgloss.NewStyle().Foreground(theme.ColorAccent)
+	fpStyles.Directory = lipgloss.NewStyle().Foreground(theme.ColorAccent2)
+	fpStyles.DisabledFile = lipgloss.NewStyle().Foreground(theme.ColorFgFaint)
+	fpStyles.Selected = lipgloss.NewStyle().Foreground(theme.ColorAccent).Bold(true)
+	fpStyles.EmptyDirectory = lipgloss.NewStyle().Foreground(theme.ColorFgFaint).PaddingLeft(2).SetString("No directories found.")
+	fp.Styles = fpStyles
+
 	return Settings{
+		dbName:      dbName,
 		scriptPath:  si,
 		tablesQuery: tq,
 		focus:       settingsFocusScript,
 		rh:          newRenderHelpers(),
+		picker:      fp,
 	}
 }
 
-func (s Settings) currentConfig() config.Config {
-	return config.Config{
+func (s Settings) currentDBConfig() config.DBConfig {
+	return config.DBConfig{
 		ScriptPath:  s.scriptPath.Value(),
 		TablesQuery: s.tablesQuery.Value(),
 	}
 }
 
 func (s Settings) Update(msg tea.Msg) (Settings, tea.Cmd) {
+	// Picker mode: route all input there except Space (select) and Esc (cancel).
+	if s.pickerActive {
+		if k, ok := msg.(tea.KeyPressMsg); ok {
+			switch k.String() {
+			case "esc":
+				s.pickerActive = false
+				return s, nil
+			case "space", "enter":
+				// Select the directory the picker is currently browsing.
+				dir := s.picker.CurrentDirectory
+				s.scriptPath.SetValue(dir)
+				s.pickerActive = false
+				return s, nil
+			}
+		}
+		var cmd tea.Cmd
+		s.picker, cmd = s.picker.Update(msg)
+		return s, cmd
+	}
+
 	if k, ok := msg.(tea.KeyPressMsg); ok {
 		switch k.String() {
 		case "tab":
@@ -83,13 +131,23 @@ func (s Settings) Update(msg tea.Msg) (Settings, tea.Cmd) {
 		case "esc":
 			return s, func() tea.Msg { return SettingsCancelMsg{} }
 		case "super+s":
-			return s, saveConfigCmd(s.currentConfig())
+			return s, saveDBConfigCmd(s.dbName, s.currentDBConfig())
 		case "enter":
 			if s.focus == settingsFocusSave {
-				return s, saveConfigCmd(s.currentConfig())
+				return s, saveDBConfigCmd(s.dbName, s.currentDBConfig())
 			}
 			if s.focus == settingsFocusCancel {
 				return s, func() tea.Msg { return SettingsCancelMsg{} }
+			}
+			if s.focus == settingsFocusScript {
+				// Open filepicker starting from currently typed path.
+				dir := strings.TrimSpace(s.scriptPath.Value())
+				if dir == "" {
+					dir = "."
+				}
+				s.picker.CurrentDirectory = dir
+				s.pickerActive = true
+				return s, s.picker.Init()
 			}
 		}
 	}
@@ -138,6 +196,10 @@ func (s *Settings) Rows(width, height int) []string {
 		return out
 	}
 
+	if s.pickerActive {
+		return s.pickerRows(width, height)
+	}
+
 	const leftPad = 3
 	fieldW := width - leftPad*2
 	contentW := max(fieldW-2, 10) // inside border chars
@@ -181,10 +243,12 @@ func (s *Settings) Rows(width, height int) []string {
 	// Script Path
 	{
 		lbl := fgS.Render("Script Path")
+		hint := ""
 		if s.focus == settingsFocusScript {
 			lbl = accentS.Render("Script Path")
+			hint = faintS.Render("  Enter to browse")
 		}
-		emit(pad(lbl))
+		emit(pad(lbl + hint))
 		box := borderFor(s.focus == settingsFocusScript).Render(s.scriptPath.View())
 		for _, l := range strings.Split(box, "\n") {
 			emit(pad(l))
@@ -231,6 +295,60 @@ func (s *Settings) Rows(width, height int) []string {
 	out[btnRow] = fillTo(rh.BlankN(gap) + buttons)
 
 	_ = dimS
+
+	return out
+}
+
+// pickerRows renders the directory picker overlay in place of the settings form.
+func (s *Settings) pickerRows(width, height int) []string {
+	rh := s.rh
+	out := make([]string, height)
+	for i := range out {
+		out[i] = rh.BlankN(width)
+	}
+
+	accentS := lipgloss.NewStyle().Foreground(theme.ColorAccent).Background(theme.ColorBg).Bold(true)
+	faintS := lipgloss.NewStyle().Foreground(theme.ColorFgFaint).Background(theme.ColorBg)
+	dimS := lipgloss.NewStyle().Foreground(theme.ColorFgDim).Background(theme.ColorBg)
+	dirS := lipgloss.NewStyle().Foreground(theme.ColorFg).Background(theme.ColorBg)
+	fillTo := func(line string) string { return rh.FillTo(line, width) }
+	const leftPad = 2
+
+	// Fixed header rows.
+	const headerRows = 3 // title, sep, current-dir
+	// Fixed footer rows.
+	const footerRows = 2 // sep, hints
+
+	// How many rows the picker occupies.
+	pickerH := height - headerRows - footerRows
+	if pickerH < 1 {
+		pickerH = 1
+	}
+
+	// Header.
+	out[0] = fillTo(rh.BlankN(leftPad) + accentS.Render("Pick Script Folder"))
+	out[1] = rh.Sep(width)
+	out[2] = fillTo(rh.BlankN(leftPad) + faintS.Render("in ") + dirS.Render(s.picker.CurrentDirectory))
+
+	// Picker body — split view into individual lines.
+	pickerLines := strings.Split(s.picker.View(), "\n")
+	for i := range pickerH {
+		outRow := headerRows + i
+		if outRow >= height-footerRows {
+			break
+		}
+		if i < len(pickerLines) {
+			out[outRow] = fillTo(pickerLines[i])
+		}
+	}
+
+	// Footer.
+	out[height-2] = rh.Sep(width)
+	out[height-1] = fillTo(rh.BlankN(leftPad) +
+		dimS.Render("j/k") + faintS.Render(" navigate  ") +
+		dimS.Render("l/enter") + faintS.Render(" open  ") +
+		dimS.Render("space") + faintS.Render(" select  ") +
+		dimS.Render("esc") + faintS.Render(" cancel"))
 
 	return out
 }

@@ -80,8 +80,13 @@ func (m *Modal) SetFile(dev device.Device, packageID, dbPath, dbName string) tea
 	m.sqliteVersion = ""
 
 	cfg, _ := config.Load()
-	m.tablesQuery = cfg.EffectiveTablesQuery()
-	m.scriptDir = cfg.ScriptPath
+	dbcfg := cfg.ForDB(dbName)
+	m.tablesQuery = dbcfg.EffectiveTablesQuery()
+	m.scriptDir = dbcfg.ScriptPath
+
+	if qp, ok := m.panes[paneQuery].(queryPaneAdapter); ok {
+		m.panes[paneQuery] = queryPaneAdapter{qp.inner.withScriptDir(dbcfg.ScriptPath)}
+	}
 
 	if ep, ok := m.panes[paneSidebar].(explorerPane); ok {
 		ep.inner.SetLoading()
@@ -97,6 +102,9 @@ func (m *Modal) SetSize(w, h int) {
 	l := computeLayout(w, h)
 	rp := m.panes[paneResults].(resultsPaneAdapter)
 	m.panes[paneResults] = resultsPaneAdapter{rp.inner.withHeight(l.ResultsH)}
+	if m.settingsOpen && m.settings.pickerActive {
+		m.settings.picker.SetHeight(m.pickerBodyH())
+	}
 }
 
 func (m Modal) setFocus(idx int) (Modal, tea.Cmd) {
@@ -172,12 +180,25 @@ func (m Modal) sidebarScript() (path, name string, ok bool) {
 	return node.realName, node.label, true
 }
 
-// openSettings loads the persisted config and opens the settings form.
+// openSettings loads the persisted config and opens the settings form for the current database.
 func (m Modal) openSettings() Modal {
 	cfg, _ := config.Load()
-	m.settings = newSettings(cfg)
+	m.settings = newSettings(cfg, m.dbName)
 	m.settingsOpen = true
+	m.settings.picker.SetHeight(m.pickerBodyH())
 	return m
+}
+
+// pickerBodyH returns the number of rows available for the filepicker list.
+func (m Modal) pickerBodyH() int {
+	l := computeLayout(m.width, m.height)
+	const headerRows = 3 // title + sep + current-dir
+	const footerRows = 2 // sep + hints
+	h := l.BodyH - headerRows - footerRows
+	if h < 1 {
+		h = 1
+	}
+	return h
 }
 
 // ScrimView returns a full-terminal-size overlay that simulates opacity.

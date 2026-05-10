@@ -532,6 +532,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.fetchDevicesCmd(),
 			m.setStatus("deleted "+msg.name, ui.StatusOk),
 		)
+
+	default:
+		// Forward unrecognised messages (e.g. private filepicker readDirMsg) to
+		// whichever overlay is active so embedded components can process them.
+		if m.dbViewerModal != nil {
+			updated, cmd := m.dbViewerModal.Update(msg)
+			m.dbViewerModal = &updated
+			return m, cmd
+		}
 	}
 
 	return m, nil

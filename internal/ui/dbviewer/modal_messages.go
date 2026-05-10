@@ -13,8 +13,12 @@ type SettingsSavedMsg struct{ Err error }
 // SettingsCancelMsg is returned when the user dismisses the settings form.
 type SettingsCancelMsg struct{}
 
-func saveConfigCmd(cfg config.Config) tea.Cmd {
+// saveDBConfigCmd persists a per-database config by loading the current file,
+// applying the per-db override, then writing the result back.
+func saveDBConfigCmd(dbName string, dbcfg config.DBConfig) tea.Cmd {
 	return func() tea.Msg {
+		cfg, _ := config.Load()
+		cfg = cfg.WithDB(dbName, dbcfg)
 		err := config.Save(cfg)
 		return SettingsSavedMsg{Err: err}
 	}
