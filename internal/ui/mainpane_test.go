@@ -9,6 +9,170 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
+func newTestPane() MainPane {
+	m := NewMainPane()
+	m.SetSize(80, 24)
+	return m
+}
+
+func TestMainPane_SyncActiveDevice_NilActive(t *testing.T) {
+	m := newTestPane()
+	devs := []device.Device{{ID: "abc", Status: device.StatusRunning}}
+	m.SyncActiveDevice(devs)
+}
+
+func TestMainPane_SyncActiveDevice_Found(t *testing.T) {
+	m := newTestPane()
+	dev := &device.Device{ID: "abc", Status: device.StatusRunning}
+	m.SetDevice(dev, nil)
+	updated := device.Device{ID: "abc", Status: device.StatusOff}
+	m.SyncActiveDevice([]device.Device{updated})
+	if m.active == nil || m.active.Status != device.StatusOff {
+		t.Error("expected active device status updated")
+	}
+}
+
+func TestMainPane_SyncActiveDevice_NotFound(t *testing.T) {
+	m := newTestPane()
+	dev := &device.Device{ID: "abc", Status: device.StatusRunning}
+	m.SetDevice(dev, nil)
+	m.SyncActiveDevice([]device.Device{{ID: "other"}})
+	if m.active != nil {
+		t.Error("expected active to be nil when device removed")
+	}
+}
+
+func TestMainPane_SetInfo(t *testing.T) {
+	m := newTestPane()
+	info := device.DeviceInfo{Fields: []device.InfoField{
+		{Key: "Status", Value: "Running"},
+		{Key: "OS", Value: "iOS 17"},
+	}}
+	m.SetInfo(info)
+	if len(m.info.Fields) != 2 {
+		t.Errorf("expected 2 fields, got %d", len(m.info.Fields))
+	}
+}
+
+func TestMainPane_SetInfo_ClampsIdx(t *testing.T) {
+	m := newTestPane()
+	m.infoIdx = 10
+	info := device.DeviceInfo{Fields: []device.InfoField{{Key: "k", Value: "v"}}}
+	m.SetInfo(info)
+	if m.infoIdx != 0 {
+		t.Errorf("expected infoIdx clamped to 0, got %d", m.infoIdx)
+	}
+}
+
+func TestMainPane_SetFocused(t *testing.T) {
+	m := newTestPane()
+	m.SetFocused(true)
+	m.SetFocused(false)
+}
+
+func TestMainPane_LogBundle(t *testing.T) {
+	m := newTestPane()
+	m.SetLogBundle("com.example.app")
+	if m.LogBundle() != "com.example.app" {
+		t.Errorf("expected com.example.app, got %q", m.LogBundle())
+	}
+}
+
+func TestMainPane_Update_TabInfo_Navigation(t *testing.T) {
+	m := newTestPane()
+	dev := &device.Device{ID: "1", Name: "iPhone", Platform: device.PlatformIOS, Status: device.StatusRunning}
+	m.SetDevice(dev, nil)
+	m.SetInfo(device.DeviceInfo{Fields: []device.InfoField{{Key: "k", Value: "v"}, {Key: "k2", Value: "v2"}}})
+
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'j'})
+	if m.infoIdx != 1 {
+		t.Errorf("expected infoIdx 1, got %d", m.infoIdx)
+	}
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'k'})
+	if m.infoIdx != 0 {
+		t.Errorf("expected infoIdx 0, got %d", m.infoIdx)
+	}
+}
+
+func TestMainPane_Update_TabApps_Navigation(t *testing.T) {
+	m := newTestPane()
+	dev := &device.Device{ID: "1", Name: "iPhone", Platform: device.PlatformIOS, Status: device.StatusRunning}
+	m.SetDevice(dev, nil)
+	m.tab = TabApps
+	apps := []device.App{
+		{BundleID: "com.a", Name: "A"},
+		{BundleID: "com.b", Name: "B"},
+	}
+	m.SetApps(apps)
+
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'j'})
+	if m.appsIdx != 1 {
+		t.Errorf("expected appsIdx 1, got %d", m.appsIdx)
+	}
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'k'})
+	if m.appsIdx != 0 {
+		t.Errorf("expected appsIdx 0, got %d", m.appsIdx)
+	}
+}
+
+func TestMainPane_Update_TabApps_FilterEsc(t *testing.T) {
+	m := newTestPane()
+	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
+	m.SetDevice(dev, nil)
+	m.tab = TabApps
+	m.appsFilter = "test"
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.appsFilter != "" {
+		t.Errorf("expected filter cleared, got %q", m.appsFilter)
+	}
+}
+
+func TestMainPane_Update_TabFiles_HomeEnd(t *testing.T) {
+	m := newTestPane()
+	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
+	m.SetDevice(dev, nil)
+	m.tab = TabFiles
+	root := &device.FileNode{
+		Path:  "/",
+		Name:  "/",
+		IsDir: true,
+		Children: []device.FileNode{
+			{Path: "/a", Name: "a", IsDir: true},
+			{Path: "/b", Name: "b", IsDir: true},
+		},
+	}
+	m.SetTree(root)
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'G'})
+	rows := m.flattenTree()
+	if m.treeIdx != len(rows)-1 {
+		t.Errorf("expected last row, got %d", m.treeIdx)
+	}
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'g'})
+	if m.treeIdx != 0 {
+		t.Errorf("expected idx 0, got %d", m.treeIdx)
+	}
+}
+
+func TestMainPane_View_WithDevice_AllTabs(t *testing.T) {
+	m := newTestPane()
+	dev := &device.Device{
+		ID: "1", Name: "iPhone", Platform: device.PlatformIOS, Status: device.StatusRunning,
+	}
+	m.SetDevice(dev, nil)
+	m.SetInfo(device.DeviceInfo{Fields: []device.InfoField{{Key: "Status", Value: "Running"}}})
+	m.SetApps([]device.App{{BundleID: "com.test", Name: "Test"}})
+	root := &device.FileNode{Path: "/", Name: "/", IsDir: true}
+	m.SetTree(root)
+
+	for _, tab := range []MainTab{TabInfo, TabApps, TabFiles, TabLogs} {
+		m.tab = tab
+		got := m.View()
+		if got == "" {
+			t.Errorf("tab %d: expected non-empty view", tab)
+		}
+	}
+}
+
 func TestMainPane(t *testing.T) {
 	m := NewMainPane()
 	m.SetSize(80, 24)

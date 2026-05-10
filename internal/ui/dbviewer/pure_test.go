@@ -182,3 +182,227 @@ func TestComputeLayout_MinimumTerminal(t *testing.T) {
 		t.Errorf("expected clamped modal dims, got %+v", l)
 	}
 }
+
+// ---------- stripExt ----------
+
+func TestStripExt_WithExtension(t *testing.T) {
+	if got := stripExt("query.sql"); got != "query" {
+		t.Errorf("got %q, want query", got)
+	}
+}
+
+func TestStripExt_WithoutExtension(t *testing.T) {
+	if got := stripExt("noext"); got != "noext" {
+		t.Errorf("got %q, want noext", got)
+	}
+}
+
+func TestStripExt_DotAtStart(t *testing.T) {
+	// Leading dot is not treated as extension separator (i=0 not > 0).
+	if got := stripExt(".hidden"); got != ".hidden" {
+		t.Errorf("got %q, want .hidden", got)
+	}
+}
+
+func TestStripExt_MultipleDotsKeepsLast(t *testing.T) {
+	if got := stripExt("archive.tar.gz"); got != "archive.tar" {
+		t.Errorf("got %q, want archive.tar", got)
+	}
+}
+
+// ---------- explorerNode.realNameOrLabel ----------
+
+func TestRealNameOrLabel_WithRealName(t *testing.T) {
+	n := &explorerNode{label: "display", realName: "actual"}
+	if got := n.realNameOrLabel(); got != "actual" {
+		t.Errorf("got %q, want actual", got)
+	}
+}
+
+func TestRealNameOrLabel_FallsBackToLabel(t *testing.T) {
+	n := &explorerNode{label: "display"}
+	if got := n.realNameOrLabel(); got != "display" {
+		t.Errorf("got %q, want display", got)
+	}
+}
+
+// ---------- nodeMatchesFilter ----------
+
+func TestNodeMatchesFilter_LabelMatch(t *testing.T) {
+	n := &explorerNode{label: "users"}
+	if !nodeMatchesFilter(n, "user") {
+		t.Error("expected match for prefix of label")
+	}
+}
+
+func TestNodeMatchesFilter_NoMatch(t *testing.T) {
+	n := &explorerNode{label: "orders"}
+	if nodeMatchesFilter(n, "xyz") {
+		t.Error("expected no match")
+	}
+}
+
+func TestNodeMatchesFilter_ChildMatch(t *testing.T) {
+	child := &explorerNode{label: "id"}
+	parent := &explorerNode{label: "orders", children: []*explorerNode{child}}
+	if !nodeMatchesFilter(parent, "id") {
+		t.Error("expected match via child")
+	}
+}
+
+func TestNodeMatchesFilter_CaseInsensitive(t *testing.T) {
+	n := &explorerNode{label: "Users"}
+	if !nodeMatchesFilter(n, "users") {
+		t.Error("expected case-insensitive match")
+	}
+}
+
+// ---------- Explorer.allRoots ----------
+
+func TestAllRoots_NoScriptRoot(t *testing.T) {
+	e := newExplorer()
+	e.roots = []*explorerNode{{label: "a"}, {label: "b"}}
+	got := e.allRoots()
+	if len(got) != 2 {
+		t.Errorf("expected 2, got %d", len(got))
+	}
+}
+
+func TestAllRoots_WithScriptRoot(t *testing.T) {
+	e := newExplorer()
+	e.roots = []*explorerNode{{label: "a"}}
+	e.scriptRoot = &explorerNode{label: "scripts"}
+	got := e.allRoots()
+	if len(got) != 2 {
+		t.Errorf("expected 2 (root + scriptRoot), got %d", len(got))
+	}
+	if got[len(got)-1].label != "scripts" {
+		t.Error("scriptRoot should be last")
+	}
+}
+
+// ---------- Explorer.visibleItems ----------
+
+func TestVisibleItems_Empty(t *testing.T) {
+	e := newExplorer()
+	if got := e.visibleItems(); len(got) != 0 {
+		t.Errorf("expected 0, got %d", len(got))
+	}
+}
+
+func TestVisibleItems_CollapsedRoot(t *testing.T) {
+	child := &explorerNode{label: "child"}
+	root := &explorerNode{label: "root", children: []*explorerNode{child}, expanded: false}
+	e := newExplorer()
+	e.roots = []*explorerNode{root}
+	got := e.visibleItems()
+	if len(got) != 1 {
+		t.Errorf("expected 1 (root only), got %d", len(got))
+	}
+}
+
+func TestVisibleItems_ExpandedRoot(t *testing.T) {
+	child := &explorerNode{label: "child"}
+	root := &explorerNode{label: "root", children: []*explorerNode{child}, expanded: true}
+	e := newExplorer()
+	e.roots = []*explorerNode{root}
+	got := e.visibleItems()
+	if len(got) != 2 {
+		t.Errorf("expected 2 (root + child), got %d", len(got))
+	}
+	if got[1].indent != 1 {
+		t.Errorf("child indent: got %d, want 1", got[1].indent)
+	}
+}
+
+// ---------- Explorer.filteredVisibleItems ----------
+
+func TestFilteredVisibleItems_NoFilter(t *testing.T) {
+	root := &explorerNode{label: "users"}
+	e := newExplorer()
+	e.roots = []*explorerNode{root}
+	got := e.filteredVisibleItems()
+	if len(got) != 1 {
+		t.Errorf("expected 1, got %d", len(got))
+	}
+}
+
+func TestFilteredVisibleItems_MatchingFilter(t *testing.T) {
+	r1 := &explorerNode{label: "users"}
+	r2 := &explorerNode{label: "orders"}
+	e := newExplorer()
+	e.roots = []*explorerNode{r1, r2}
+	e.filterQuery = "user"
+	got := e.filteredVisibleItems()
+	if len(got) != 1 || got[0].node.label != "users" {
+		t.Errorf("expected only users, got %v", got)
+	}
+}
+
+func TestFilteredVisibleItems_NoMatch(t *testing.T) {
+	root := &explorerNode{label: "users"}
+	e := newExplorer()
+	e.roots = []*explorerNode{root}
+	e.filterQuery = "xyz"
+	got := e.filteredVisibleItems()
+	if len(got) != 0 {
+		t.Errorf("expected 0, got %d", len(got))
+	}
+}
+
+// ---------- Explorer.selectedNodeInfo ----------
+
+func TestSelectedNodeInfo_Empty(t *testing.T) {
+	e := newExplorer()
+	node, parent := e.selectedNodeInfo()
+	if node != nil {
+		t.Error("expected nil node for empty explorer")
+	}
+	if parent != "" {
+		t.Error("expected empty parent")
+	}
+}
+
+func TestSelectedNodeInfo_ValidCursor(t *testing.T) {
+	root := &explorerNode{label: "users", kind: nodeKindTable}
+	e := newExplorer()
+	e.roots = []*explorerNode{root}
+	e.cursor = 0
+	node, _ := e.selectedNodeInfo()
+	if node == nil || node.label != "users" {
+		t.Errorf("expected users node, got %v", node)
+	}
+}
+
+func TestSelectedNodeInfo_CursorOutOfRange(t *testing.T) {
+	root := &explorerNode{label: "users"}
+	e := newExplorer()
+	e.roots = []*explorerNode{root}
+	e.cursor = 99
+	node, _ := e.selectedNodeInfo()
+	if node != nil {
+		t.Error("expected nil for out-of-range cursor")
+	}
+}
+
+// ---------- Explorer.SetLoading ----------
+
+func TestExplorer_SetLoading_ClearsState(t *testing.T) {
+	e := newExplorer()
+	e.roots = []*explorerNode{{label: "a"}}
+	e.cursor = 5
+	e.filterQuery = "old"
+	e.SetLoading()
+	if !e.loading {
+		t.Error("expected loading=true")
+	}
+	if e.roots != nil {
+		t.Error("expected roots nil after SetLoading")
+	}
+	if e.cursor != 0 {
+		t.Error("expected cursor reset to 0")
+	}
+	if e.filterQuery != "" {
+		t.Error("expected filterQuery cleared")
+	}
+}
