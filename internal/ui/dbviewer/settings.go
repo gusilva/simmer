@@ -199,7 +199,7 @@ func (s *Settings) Rows(width, height int) []string {
 		if s.focus == settingsFocusQuery {
 			lbl = accentS.Render("Tables List Query")
 		}
-		emit(pad(lbl + faintS.Render("  SQL")))
+		emit(pad(lbl + faintS.Render("  SQL - ensure query returns a 'name' and 'custom_table_name' columns")))
 		box := borderFor(s.focus == settingsFocusQuery).Render(s.tablesQuery.View())
 		for _, l := range strings.Split(box, "\n") {
 			emit(pad(l))

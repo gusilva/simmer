@@ -47,6 +47,9 @@ type Modal struct {
 	lastStats      queryStats
 	queryStartedAt time.Time
 
+	statusMsg   string // transient message shown in the status bar
+	statusIsErr bool   // true → render statusMsg in error color
+
 	settingsOpen bool
 	settings     Settings
 }

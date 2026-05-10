@@ -154,10 +154,16 @@ func (m Modal) renderStatusRow(sb *strings.Builder, l layout, s viewerStyles) {
 		conn = s.Dim.Render("● no database")
 	}
 
-	// Last query stats.
-	var stats string
-	if m.lastStats.hasData {
-		stats = s.Dim.Render(fmt.Sprintf("⟳ %s  %d rows  %d cols",
+	// Transient status message (errors, save confirmation) takes priority over query stats.
+	var statsOrMsg string
+	if m.statusMsg != "" {
+		if m.statusIsErr {
+			statsOrMsg = s.Err.Render("✕ " + m.statusMsg)
+		} else {
+			statsOrMsg = s.Ok.Render("✓ " + m.statusMsg)
+		}
+	} else if m.lastStats.hasData {
+		statsOrMsg = s.Dim.Render(fmt.Sprintf("⟳ %s  %d rows  %d cols",
 			formatDuration(m.lastStats.elapsed),
 			m.lastStats.rowCount,
 			m.lastStats.colCount,
@@ -165,8 +171,8 @@ func (m Modal) renderStatusRow(sb *strings.Builder, l layout, s viewerStyles) {
 	}
 
 	left := modeBadge + s.Bg.Render("  ") + conn
-	if stats != "" {
-		left += s.Bg.Render("  ") + stats
+	if statsOrMsg != "" {
+		left += s.Bg.Render("  ") + statsOrMsg
 	}
 
 	hints := strings.Join([]string{

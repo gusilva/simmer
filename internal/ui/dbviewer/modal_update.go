@@ -3,13 +3,23 @@ package dbviewer
 import (
 	"time"
 
+	"simmer/internal/config"
+
 	tea "charm.land/bubbletea/v2"
 )
 
 func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 	// Settings messages are handled regardless of settingsOpen (save is async).
-	if _, ok := msg.(SettingsSavedMsg); ok {
+	if sm, ok := msg.(SettingsSavedMsg); ok {
 		m.settingsOpen = false
+		if sm.Err == nil {
+			cfg, _ := config.Load()
+			m.tablesQuery = cfg.EffectiveTablesQuery()
+			if qp, ok := m.panes[paneQuery].(queryPaneAdapter); ok {
+				m.panes[paneQuery] = queryPaneAdapter{qp.inner.withScriptDir(cfg.ScriptPath)}
+			}
+			return m, m.fetchTablesCmd()
+		}
 		return m, nil
 	}
 	if _, ok := msg.(SettingsCancelMsg); ok {
@@ -21,6 +31,14 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 	if m.settingsOpen {
 		var cmd tea.Cmd
 		m.settings, cmd = m.settings.Update(msg)
+		return m, cmd
+	}
+
+	// When the save-as prompt is active in the query pane, route all input there
+	// so global shortcuts (esc, tab, etc.) don't fire underneath it.
+	if qp, ok := m.panes[paneQuery].(queryPaneAdapter); ok && qp.inner.PromptActive() {
+		next, cmd := qp.inner.Update(msg)
+		m.panes[paneQuery] = queryPaneAdapter{next}
 		return m, cmd
 	}
 
@@ -41,10 +59,17 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		return m, nil
 	}
 
-	if _, ok := msg.(FileSavedMsg); ok {
+	if sm, ok := msg.(FileSavedMsg); ok {
 		if qp, ok := m.panes[paneQuery].(queryPaneAdapter); ok {
 			next, cmd := qp.inner.Update(msg)
 			m.panes[paneQuery] = queryPaneAdapter{next}
+			if sm.Err != nil {
+				m.statusMsg = "Save failed: " + sm.Err.Error()
+				m.statusIsErr = true
+			} else {
+				m.statusMsg = "Saved: " + next.filePath
+				m.statusIsErr = false
+			}
 			return m, cmd
 		}
 		return m, nil
@@ -80,6 +105,11 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 			rowCount: rowCount,
 			colCount: colCount,
 			hasData:  true,
+		}
+		m.statusMsg = ""
+		if qr.Err != nil {
+			m.statusMsg = "Query error: " + qr.Err.Error()
+			m.statusIsErr = true
 		}
 		return m, nil
 	}
@@ -117,13 +147,18 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 	}
 
 	switch k.String() {
-	case "ctrl+s":
-		return m.openSettings(), nil
-
-	case "super+s":
-		if qp, ok := m.panes[paneQuery].(queryPaneAdapter); ok {
-			return m, qp.inner.SaveCmd()
+	case "ctrl+s", "super+s":
+		// Save query file when query pane is active; open settings otherwise.
+		// macOS terminals encode CMD+S as ctrl+s, so both strings must be handled here.
+		if m.focus == paneQuery {
+			if qp, ok := m.panes[paneQuery].(queryPaneAdapter); ok {
+				next, cmd := qp.inner.TriggerSave()
+				m.panes[paneQuery] = queryPaneAdapter{next}
+				m.statusMsg = ""
+				return m, cmd
+			}
 		}
+		return m.openSettings(), nil
 
 	case "super+v":
 		// CMD+V fallback for terminals that don't produce bracketed paste.

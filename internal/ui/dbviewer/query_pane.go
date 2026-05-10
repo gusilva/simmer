@@ -3,11 +3,14 @@ package dbviewer
 import (
 	"image/color"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"simmer/internal/config"
 	"simmer/internal/theme"
 
 	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
@@ -28,11 +31,14 @@ const defaultQueryFile = "untitled-1.sql"
 // QueryPane renders the query head and the textarea editor in the right pane
 // above the horizontal divider.
 type QueryPane struct {
-	activeTab int
-	editor    textarea.Model
-	rh        renderHelpers
-	filePath  string
-	state     fileState
+	activeTab    int
+	editor       textarea.Model
+	savePrompt   textinput.Model
+	promptActive bool
+	rh           renderHelpers
+	filePath     string
+	scriptDir    string // directory from config.ScriptPath; file is written to scriptDir/filePath
+	state        fileState
 }
 
 func newQueryPane() QueryPane {
@@ -59,9 +65,13 @@ func newQueryPane() QueryPane {
 	s.Blurred.EndOfBuffer = lipgloss.NewStyle().Foreground(theme.ColorFgFaint).Background(theme.ColorBg)
 	ta.SetStyles(s)
 
+	cfg, _ := config.Load()
+	scriptDir := cfg.ScriptPath
+
 	state := fileStateNew
 	content := ""
-	if data, err := os.ReadFile(defaultQueryFile); err == nil {
+	fullPath := filepath.Join(scriptDir, defaultQueryFile)
+	if data, err := os.ReadFile(fullPath); err == nil {
 		content = string(data)
 		state = fileStateClean
 	}
@@ -69,12 +79,22 @@ func newQueryPane() QueryPane {
 	ta.SetValue(content)
 	ta.Blur()
 
+	sp := textinput.New()
+	sp.Placeholder = "path/to/query.sql"
+	spStyles := textinput.DefaultDarkStyles()
+	spStyles.Focused.Text = lipgloss.NewStyle().Foreground(theme.ColorFg).Background(theme.ColorBg)
+	spStyles.Focused.Prompt = lipgloss.NewStyle().Foreground(theme.ColorAccent).Background(theme.ColorBg)
+	spStyles.Focused.Placeholder = lipgloss.NewStyle().Foreground(theme.ColorFgFaint).Background(theme.ColorBg)
+	sp.SetStyles(spStyles)
+
 	return QueryPane{
-		activeTab: 0,
-		editor:    ta,
-		rh:        newRenderHelpers(),
-		filePath:  defaultQueryFile,
-		state:     state,
+		activeTab:  0,
+		editor:     ta,
+		savePrompt: sp,
+		rh:         newRenderHelpers(),
+		filePath:   defaultQueryFile,
+		scriptDir:  scriptDir,
+		state:      state,
 	}
 }
 
@@ -107,12 +127,47 @@ func (p QueryPane) BlurEditor() QueryPane {
 	return p
 }
 
-// SaveCmd writes current editor content to disk. Called externally by the modal.
+func (p QueryPane) withScriptDir(dir string) QueryPane {
+	p.scriptDir = dir
+	return p
+}
+
+// PromptActive reports whether the save-as filename prompt is visible.
+func (p QueryPane) PromptActive() bool { return p.promptActive }
+
+// TriggerSave opens the save-as prompt pre-filled with the current filename.
+// The user edits the filename only; scriptDir from config is always used as the
+// save directory.
+func (p QueryPane) TriggerSave() (QueryPane, tea.Cmd) {
+	p.savePrompt.SetValue(p.filePath)
+	p.savePrompt.CursorEnd()
+	cmd := p.savePrompt.Focus()
+	p.promptActive = true
+	return p, cmd
+}
+
+// confirmSave stores the filename the user typed and writes the file to scriptDir.
+func (p QueryPane) confirmSave() (QueryPane, tea.Cmd) {
+	name := strings.TrimSpace(p.savePrompt.Value())
+	if name == "" {
+		return p, nil
+	}
+	// Keep scriptDir from config; only the filename is user-editable here.
+	p.filePath = filepath.Base(name)
+	p.promptActive = false
+	p.savePrompt.Blur()
+	return p, p.SaveCmd()
+}
+
+// SaveCmd writes current editor content to scriptDir/filePath.
 func (p QueryPane) SaveCmd() tea.Cmd {
 	content := p.editor.Value()
-	path := p.filePath
+	path := filepath.Join(p.scriptDir, p.filePath)
 
 	return func() tea.Msg {
+		if dir := filepath.Dir(path); dir != "." {
+			_ = os.MkdirAll(dir, 0o755)
+		}
 		err := os.WriteFile(path, []byte(content), 0o644)
 		return FileSavedMsg{Err: err}
 	}
@@ -123,8 +178,23 @@ func (p QueryPane) Update(msg tea.Msg) (QueryPane, tea.Cmd) {
 		if sm.Err == nil {
 			p.state = fileStateClean
 		}
-
 		return p, nil
+	}
+
+	if p.promptActive {
+		if k, ok := msg.(tea.KeyPressMsg); ok {
+			switch k.String() {
+			case "enter":
+				return p.confirmSave()
+			case "esc":
+				p.promptActive = false
+				p.savePrompt.Blur()
+				return p, nil
+			}
+		}
+		var cmd tea.Cmd
+		p.savePrompt, cmd = p.savePrompt.Update(msg)
+		return p, cmd
 	}
 
 	prev := p.editor.Value()
@@ -183,10 +253,24 @@ func (p QueryPane) Rows(width, height int, focused bool) []string {
 
 func (p QueryPane) renderQueryHead(width int) string {
 	rh := p.rh
-	lbl := lipgloss.NewStyle().Foreground(theme.ColorAccent).Background(theme.ColorBg).Bold(true)
-	file := lipgloss.NewStyle().Foreground(theme.ColorFg).Background(theme.ColorBg)
 	kS := lipgloss.NewStyle().Foreground(theme.ColorBorderHi).Background(theme.ColorBg).Bold(true)
 	vS := lipgloss.NewStyle().Foreground(theme.ColorFgDim).Background(theme.ColorBg)
+
+	if p.promptActive {
+		dir := p.scriptDir
+		if dir == "" {
+			dir = "./"
+		}
+		lbl := lipgloss.NewStyle().Foreground(theme.ColorAccent).Background(theme.ColorBg).Bold(true).PaddingLeft(1).Render("Save as") +
+			lipgloss.NewStyle().Foreground(theme.ColorFgFaint).Background(theme.ColorBg).Render(" ("+dir+"):  ")
+		hints := kS.Render("Enter") + vS.Render(" save") + rh.BlankN(2) + kS.Render("Esc") + vS.PaddingRight(1).Render(" cancel")
+		inputW := max(width-lipgloss.Width(lbl)-lipgloss.Width(hints)-1, 10)
+		p.savePrompt.SetWidth(inputW)
+		return rh.FillTo(lbl+p.savePrompt.View()+rh.BlankN(1)+hints, width)
+	}
+
+	lbl := lipgloss.NewStyle().Foreground(theme.ColorAccent).Background(theme.ColorBg).Bold(true)
+	file := lipgloss.NewStyle().Foreground(theme.ColorFg).Background(theme.ColorBg)
 
 	var dotColor color.Color
 	switch p.state {
