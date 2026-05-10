@@ -8,6 +8,7 @@ import (
 
 	"simmer/internal/device"
 	"simmer/internal/ui"
+	"simmer/internal/ui/dbviewer"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -52,6 +53,7 @@ type model struct {
 	createAndModal *ui.CreateAndroidEmulatorModal
 	deleteAlert    *ui.DeleteSimulatorAlert
 	sqliteModal    *ui.SQLiteModal
+	dbViewerModal  *dbviewer.Modal
 }
 
 type clearStatusMsg int
@@ -378,6 +380,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.sqliteModal != nil {
 			m.sqliteModal.SetSize(m.width, m.height)
 		}
+		if m.dbViewerModal != nil {
+			m.dbViewerModal.SetSize(m.width, m.height)
+		}
 		return m, nil
 
 	case tea.KeyPressMsg:
@@ -385,6 +390,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "ctrl+c" {
 			m.quitting = true
 			return m, tea.Quit
+		}
+
+		// ctrl+d toggles the DB viewer regardless of focus or overlay state.
+		if msg.String() == "ctrl+d" {
+			if m.dbViewerModal != nil {
+				m.dbViewerModal = nil
+				return m, nil
+			}
+			if m.platformPicker == nil && m.createIOSModal == nil && m.createAndModal == nil && m.deleteAlert == nil && m.sqliteModal == nil {
+				modal := dbviewer.New(func() tea.Msg { return ui.CancelOverlayMsg{} })
+				modal.SetSize(m.width, m.height)
+				m.dbViewerModal = &modal
+			}
+			return m, nil
 		}
 
 		// Overlay intercepts all other keys when active.
@@ -411,6 +430,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.sqliteModal != nil {
 			updated, cmd := m.sqliteModal.Update(msg)
 			m.sqliteModal = &updated
+			return m, cmd
+		}
+		if m.dbViewerModal != nil {
+			updated, cmd := m.dbViewerModal.Update(msg)
+			m.dbViewerModal = &updated
 			return m, cmd
 		}
 
@@ -708,15 +732,44 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ui.ShowSQLiteViewerMsg:
-		modal, cmd := ui.NewSQLiteModal(msg.Device, msg.PackageID, msg.DBPath, msg.DBName)
+		modal := dbviewer.New(func() tea.Msg { return ui.CancelOverlayMsg{} })
 		modal.SetSize(m.width, m.height)
-		m.sqliteModal = &modal
-		return m, cmd
+
+		fileCmd := modal.SetFile(msg.Device, msg.PackageID, msg.DBPath, msg.DBName)
+
+		m.dbViewerModal = &modal
+		m.sqliteModal = nil
+
+		return m, fileCmd
 
 	case ui.SQLiteResultMsg:
 		if m.sqliteModal != nil {
 			m.sqliteModal.SetResult(msg.Rows, msg.Err)
 		}
+		return m, nil
+
+	case dbviewer.SQLiteVersionMsg, dbviewer.TablesLoadedMsg, dbviewer.ColumnsLoadedMsg, dbviewer.FileSavedMsg, dbviewer.QueryResultMsg:
+		if m.dbViewerModal != nil {
+			updated, cmd := m.dbViewerModal.Update(msg)
+			m.dbViewerModal = &updated
+
+			return m, cmd
+		}
+
+		return m, nil
+
+	case tea.MouseClickMsg, tea.MouseWheelMsg:
+		if m.dbViewerModal != nil {
+			updated, cmd := m.dbViewerModal.Update(msg)
+			m.dbViewerModal = &updated
+			return m, cmd
+		}
+		return m, nil
+
+	case dbviewer.ShowMsg:
+		modal := dbviewer.New(func() tea.Msg { return ui.CancelOverlayMsg{} })
+		modal.SetSize(m.width, m.height)
+		m.dbViewerModal = &modal
 		return m, nil
 
 	case ui.CancelOverlayMsg:
@@ -725,6 +778,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.createAndModal = nil
 		m.deleteAlert = nil
 		m.sqliteModal = nil
+		m.dbViewerModal = nil
 		return m, nil
 
 	case ui.ConfirmCreateSimulatorMsg:
@@ -898,9 +952,11 @@ func (m model) View() tea.View {
 
 	baseStr := lipgloss.JoinVertical(lipgloss.Left, topBar, body, footer)
 
-	if m.platformPicker != nil || m.createIOSModal != nil || m.createAndModal != nil || m.deleteAlert != nil || m.sqliteModal != nil {
+	if m.platformPicker != nil || m.createIOSModal != nil || m.createAndModal != nil || m.deleteAlert != nil || m.sqliteModal != nil || m.dbViewerModal != nil {
 		var overlayStr string
 		switch {
+		case m.dbViewerModal != nil:
+			overlayStr = m.dbViewerModal.View()
 		case m.platformPicker != nil:
 			overlayStr = m.platformPicker.View()
 		case m.createIOSModal != nil:
@@ -918,13 +974,20 @@ func (m model) View() tea.View {
 		y := max((m.height-mH)/2, 0)
 		bg := lipgloss.NewLayer(baseStr)
 		fg := lipgloss.NewLayer(overlayStr).X(x).Y(y).Z(1)
-		baseStr = lipgloss.NewCompositor(bg, fg).Render()
+		if m.dbViewerModal != nil {
+			scrim := lipgloss.NewLayer(m.dbViewerModal.ScrimView()).Z(0)
+			baseStr = lipgloss.NewCompositor(bg, scrim, fg).Render()
+		} else {
+			baseStr = lipgloss.NewCompositor(bg, fg).Render()
+		}
 	}
 
 	v := tea.NewView(baseStr)
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 	v.WindowTitle = "Simmer"
 	v.BackgroundColor = ui.ColorBg
+	v.KeyboardEnhancements.ReportAllKeysAsEscapeCodes = true
 	return v
 }
 
