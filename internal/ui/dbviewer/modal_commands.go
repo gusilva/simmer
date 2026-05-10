@@ -1,0 +1,114 @@
+package dbviewer
+
+import (
+	"context"
+	"strings"
+	"time"
+
+	"simmer/internal/device"
+
+	tea "charm.land/bubbletea/v2"
+)
+
+func (m Modal) fetchTablesCmd() tea.Cmd {
+	var (
+		dev  = m.device
+		pkg  = m.packageID
+		path = m.dbPath
+	)
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		objs, err := device.ListSQLiteObjects(ctx, dev, pkg, path)
+		return TablesLoadedMsg{Objects: objs, Err: err}
+	}
+}
+
+func (m Modal) fetchSQLiteVersionCmd() tea.Cmd {
+	var (
+		dev = m.device
+		pkg = m.packageID
+	)
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		ver, err := device.SQLiteVersion(ctx, dev, pkg)
+		return SQLiteVersionMsg{Version: ver, Err: err}
+	}
+}
+
+func (m Modal) fetchColumnsCmd(node *explorerNode) tea.Cmd {
+	var (
+		dev   = m.device
+		pkg   = m.packageID
+		path  = m.dbPath
+		table = node.label
+	)
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		cols, err := device.QueryTableColumns(ctx, dev, pkg, path, table)
+		return ColumnsLoadedMsg{node: node, cols: cols, err: err}
+	}
+}
+
+// tryFetchColumns fires fetchColumnsCmd if the cursor is on an unloaded table node.
+func (m Modal) tryFetchColumns() tea.Cmd {
+	ep, ok := m.panes[paneSidebar].(explorerPane)
+	if !ok {
+		return nil
+	}
+	items := ep.inner.filteredVisibleItems()
+	if ep.inner.cursor >= len(items) {
+		return nil
+	}
+	node := items[ep.inner.cursor].node
+	if node.kind != nodeKindTable {
+		return nil
+	}
+	if node.loading || len(node.children) > 0 {
+		return nil
+	}
+	node.loading = true
+	return m.fetchColumnsCmd(node)
+}
+
+func buildColumnNodes(cols []device.ColumnInfo) []*explorerNode {
+	nodes := make([]*explorerNode, len(cols))
+	for i, c := range cols {
+		var meta string
+		if c.Type != "" {
+			meta = strings.ToUpper(c.Type)
+		}
+		nodes[i] = &explorerNode{
+			kind:  nodeKindCol,
+			label: c.Name,
+			meta:  meta,
+			isPK:  c.IsPK,
+			isFK:  c.IsFK,
+		}
+	}
+	return nodes
+}
+
+func (m Modal) executeQueryCmd() tea.Cmd {
+	qp, ok := m.panes[paneQuery].(queryPaneAdapter)
+	if !ok {
+		return nil
+	}
+	query := strings.TrimSpace(qp.inner.Value())
+	if query == "" {
+		return nil
+	}
+	var (
+		dev  = m.device
+		pkg  = m.packageID
+		path = m.dbPath
+	)
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		rows, err := device.QuerySQLite(ctx, dev, pkg, path, query)
+		return QueryResultMsg{Rows: rows, Err: err}
+	}
+}
