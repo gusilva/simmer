@@ -113,6 +113,16 @@ func (p QueryPane) StatementUnderCursor() string {
 	return statementAtLine(p.editor.Value(), p.editor.Line())
 }
 
+// LoadScript loads file content into the editor and marks the file as clean.
+// filePath is just the base filename; scriptDir is kept from the current config.
+func (p QueryPane) LoadScript(content, fileName string) QueryPane {
+	p.editor.SetValue(content)
+	p.editor.MoveToEnd()
+	p.filePath = fileName
+	p.state = fileStateClean
+	return p
+}
+
 // SetQuery replaces the editor content and moves the cursor to the end.
 func (p QueryPane) SetQuery(sql string) QueryPane {
 	p.editor.SetValue(sql)
@@ -257,20 +267,76 @@ func (p QueryPane) renderQueryHead(width int) string {
 	vS := lipgloss.NewStyle().Foreground(theme.ColorFgDim).Background(theme.ColorBg)
 
 	if p.promptActive {
+		accentS := lipgloss.NewStyle().Foreground(theme.ColorAccent).Background(theme.ColorBg).Bold(true)
+		faintS := lipgloss.NewStyle().Foreground(theme.ColorFgFaint).Background(theme.ColorBg)
+
+		hints := kS.Render("Enter") + vS.Render(" save") + rh.BlankN(2) + kS.Render("Esc") + vS.Render(" cancel")
+		hintsW := lipgloss.Width(hints)
+
+		// Minimum input width; hints are dropped if the row is too narrow.
+		const minInput = 12
+		const gap = 2 // spaces between input and hints
+
+		prefix := accentS.PaddingLeft(1).Render("Save as")
+		prefixW := lipgloss.Width(prefix)
+
 		dir := p.scriptDir
 		if dir == "" {
 			dir = "./"
 		}
-		lbl := lipgloss.NewStyle().Foreground(theme.ColorAccent).Background(theme.ColorBg).Bold(true).PaddingLeft(1).Render("Save as") +
-			lipgloss.NewStyle().Foreground(theme.ColorFgFaint).Background(theme.ColorBg).Render(" ("+dir+"):  ")
-		hints := kS.Render("Enter") + vS.Render(" save") + rh.BlankN(2) + kS.Render("Esc") + vS.PaddingRight(1).Render(" cancel")
-		inputW := max(width-lipgloss.Width(lbl)-lipgloss.Width(hints)-1, 10)
+
+		// Budget available for the dir annotation + input area.
+		// layout: prefix + " (" + dir + "):  " + [input] + gap + hints
+		// We need at least minInput + gap + hintsW of space after the prefix.
+		remaining := width - prefixW
+		showHints := remaining >= minInput+gap+hintsW
+		if !showHints {
+			hintsW = 0
+			hints = ""
+		}
+		// Space consumed by the dir annotation: " (" + dir + "):  " = len(dir)+6
+		// Reserve minInput for the textinput itself.
+		dirBudget := remaining - minInput - 2 // 2 = gap between input and hints (or edge)
+		if showHints {
+			dirBudget -= hintsW + gap
+		}
+		dirAnnotation := " (" + dir + "):  "
+		if dirBudget < 6 {
+			// No room even for a short dir; omit it entirely.
+			dirAnnotation = ":  "
+		} else if len([]rune(dirAnnotation)) > dirBudget {
+			// Truncate the dir, keep the surrounding punctuation.
+			maxDir := dirBudget - 6 // " (" + "…" + "):  "
+			if maxDir > 0 {
+				runes := []rune(dir)
+				if len(runes) > maxDir {
+					dir = "…" + string(runes[len(runes)-maxDir:])
+				}
+			}
+			dirAnnotation = " (" + dir + "):  "
+		}
+
+		lbl := prefix + faintS.Render(dirAnnotation)
+		lblW := lipgloss.Width(lbl)
+
+		inputW := width - lblW - gap
+		if showHints {
+			inputW -= hintsW + gap
+		}
+		if inputW < minInput {
+			inputW = minInput
+		}
 		p.savePrompt.SetWidth(inputW)
-		return rh.FillTo(lbl+p.savePrompt.View()+rh.BlankN(1)+hints, width)
+
+		line := lbl + p.savePrompt.View()
+		if showHints {
+			line += rh.BlankN(gap) + hints
+		}
+		return rh.ExactWidth(line, width)
 	}
 
-	lbl := lipgloss.NewStyle().Foreground(theme.ColorAccent).Background(theme.ColorBg).Bold(true)
-	file := lipgloss.NewStyle().Foreground(theme.ColorFg).Background(theme.ColorBg)
+	lblS := lipgloss.NewStyle().Foreground(theme.ColorAccent).Background(theme.ColorBg).Bold(true)
+	fileS := lipgloss.NewStyle().Foreground(theme.ColorFg).Background(theme.ColorBg)
 
 	var dotColor color.Color
 	switch p.state {
@@ -284,12 +350,6 @@ func (p QueryPane) renderQueryHead(width int) string {
 
 	dot := lipgloss.NewStyle().Foreground(dotColor).Background(theme.ColorBg).Render("●")
 
-	left := lbl.PaddingLeft(1).Render("[q] Query") +
-		rh.BlankN(2) +
-		file.Render(p.filePath) +
-		rh.BlankN(1) +
-		dot
-
 	hints := []string{
 		kS.Render("F5") + vS.Render(" run stmt"),
 		kS.Render("^Enter") + vS.Render(" run all"),
@@ -298,8 +358,22 @@ func (p QueryPane) renderQueryHead(width int) string {
 	}
 	right := strings.Join(hints, rh.BlankN(2))
 
-	gap := max(width-lipgloss.Width(left)-lipgloss.Width(right), 1)
-	return left + rh.BlankN(gap) + right
+	// Fixed prefix: " [q] Query  " + dot + " "
+	queryLabel := lblS.PaddingLeft(1).Render("[q] Query")
+	fixedW := lipgloss.Width(queryLabel) + 2 + 1 + 1 // BlankN(2) + dot + BlankN(1)
+	rightW := lipgloss.Width(right)
+	fileNameBudget := max(width-fixedW-rightW-1, 5) // 1 = minimum gap
+
+	displayName := truncateLabel(p.filePath, fileNameBudget)
+
+	left := queryLabel +
+		rh.BlankN(2) +
+		fileS.Render(displayName) +
+		rh.BlankN(1) +
+		dot
+
+	gap := max(width-lipgloss.Width(left)-rightW, 1)
+	return rh.ExactWidth(left+rh.BlankN(gap)+right, width)
 }
 
 // statementAtLine extracts the SQL statement that contains cursorLine (0-indexed)

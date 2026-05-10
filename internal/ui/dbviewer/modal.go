@@ -43,6 +43,7 @@ type Modal struct {
 	dbName        string
 	sqliteVersion string
 	tablesQuery   string // from config; used by fetchTablesCmd
+	scriptDir     string // from config; used by fetchScriptsCmd
 
 	lastStats      queryStats
 	queryStartedAt time.Time
@@ -80,13 +81,14 @@ func (m *Modal) SetFile(dev device.Device, packageID, dbPath, dbName string) tea
 
 	cfg, _ := config.Load()
 	m.tablesQuery = cfg.EffectiveTablesQuery()
+	m.scriptDir = cfg.ScriptPath
 
 	if ep, ok := m.panes[paneSidebar].(explorerPane); ok {
 		ep.inner.SetLoading()
 		m.panes[paneSidebar] = ep
 	}
 
-	return tea.Batch(m.fetchSQLiteVersionCmd(), m.fetchTablesCmd())
+	return tea.Batch(m.fetchSQLiteVersionCmd(), m.fetchTablesCmd(), m.fetchScriptsCmd())
 }
 
 func (m *Modal) SetSize(w, h int) {
@@ -155,6 +157,19 @@ func (m Modal) sidebarSQL() (string, bool) {
 	}
 
 	return "", false
+}
+
+// sidebarScript returns the full path and filename when the cursor is on a script node.
+func (m Modal) sidebarScript() (path, name string, ok bool) {
+	ep, epOK := m.panes[paneSidebar].(explorerPane)
+	if !epOK {
+		return "", "", false
+	}
+	node, _ := ep.inner.selectedNodeInfo()
+	if node == nil || node.kind != nodeKindScript {
+		return "", "", false
+	}
+	return node.realName, node.label, true
 }
 
 // openSettings loads the persisted config and opens the settings form.

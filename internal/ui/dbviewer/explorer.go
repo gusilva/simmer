@@ -23,6 +23,7 @@ const (
 	nodeKindIndex
 	nodeKindTrigger
 	nodeKindCol
+	nodeKindScript
 )
 
 type explorerNode struct {
@@ -55,7 +56,8 @@ type visibleItem struct {
 
 // Explorer is the left-panel tree navigator inside the database viewer modal.
 type Explorer struct {
-	roots        []*explorerNode
+	roots        []*explorerNode // DB schema nodes
+	scriptRoot   *explorerNode   // Scripts folder; nil when no scripts are present
 	cursor       int
 	filterActive bool
 	filterQuery  string
@@ -72,6 +74,7 @@ func newExplorer() Explorer {
 func (e *Explorer) SetLoading() {
 	e.loading = true
 	e.roots = nil
+	e.scriptRoot = nil
 	e.cursor = 0
 	e.nTables = 0
 	e.filterActive = false
@@ -143,6 +146,45 @@ func (e *Explorer) SetTables(dbName string, objs device.SQLiteObjects) {
 	e.cursor = 0
 }
 
+// SetScripts rebuilds the Scripts folder from a list of filenames and their directory.
+// names must be base filenames only; dir is the absolute directory path.
+// Passing an empty names slice clears the Scripts section.
+func (e *Explorer) SetScripts(dir string, names []string) {
+	if len(names) == 0 {
+		e.scriptRoot = nil
+		return
+	}
+	children := make([]*explorerNode, len(names))
+	for i, name := range names {
+		children[i] = &explorerNode{
+			kind:     nodeKindScript,
+			label:    name,
+			realName: dir + "/" + name,
+		}
+	}
+	expanded := true
+	if e.scriptRoot != nil {
+		expanded = e.scriptRoot.expanded
+	}
+	e.scriptRoot = &explorerNode{
+		kind:     nodeKindFolder,
+		label:    "Scripts",
+		meta:     fmt.Sprintf("%d", len(names)),
+		expanded: expanded,
+		children: children,
+	}
+}
+
+func (e Explorer) allRoots() []*explorerNode {
+	if e.scriptRoot == nil {
+		return e.roots
+	}
+	out := make([]*explorerNode, 0, len(e.roots)+1)
+	out = append(out, e.roots...)
+	out = append(out, e.scriptRoot)
+	return out
+}
+
 func (e Explorer) visibleItems() []visibleItem {
 	var items []visibleItem
 	var walk func([]*explorerNode, int)
@@ -154,7 +196,7 @@ func (e Explorer) visibleItems() []visibleItem {
 			}
 		}
 	}
-	walk(e.roots, 0)
+	walk(e.allRoots(), 0)
 	return items
 }
 
@@ -188,7 +230,7 @@ func (e Explorer) filteredVisibleItems() []visibleItem {
 			}
 		}
 	}
-	walk(e.roots, 0)
+	walk(e.allRoots(), 0)
 	return items
 }
 
@@ -453,6 +495,9 @@ func (e Explorer) Rows(width, height int) []string {
 		case nodeKindCol:
 			iconRune = "·"
 			iconStyle = faintS
+		case nodeKindScript:
+			iconRune = "≡"
+			iconStyle = dimS
 		}
 		var icon string
 		if sel {

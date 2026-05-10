@@ -146,14 +146,6 @@ func (m Modal) renderStatusRow(sb *strings.Builder, l layout, s viewerStyles) {
 		modeBadge = s.ModeBadgeNormal.Render("NORMAL")
 	}
 
-	// Connection indicator.
-	var conn string
-	if m.dbName != "" {
-		conn = s.Ok.Render("● ") + s.Dim.Render(m.dbName)
-	} else {
-		conn = s.Dim.Render("● no database")
-	}
-
 	// Transient status message (errors, save confirmation) takes priority over query stats.
 	var statsOrMsg string
 	if m.statusMsg != "" {
@@ -170,7 +162,7 @@ func (m Modal) renderStatusRow(sb *strings.Builder, l layout, s viewerStyles) {
 		))
 	}
 
-	left := modeBadge + s.Bg.Render("  ") + conn
+	left := modeBadge + s.Bg.Render("  ")
 	if statsOrMsg != "" {
 		left += s.Bg.Render("  ") + statsOrMsg
 	}
@@ -208,7 +200,7 @@ func formatDuration(d time.Duration) string {
 }
 
 func (m Modal) renderBottomBorder(sb *strings.Builder, l layout, s viewerStyles) {
-	sb.WriteString(s.Outer.Render("╰" + strings.Repeat("─", l.SidebarW) + "┴" + strings.Repeat("─", l.RightW) + "╯"))
+	sb.WriteString(s.Outer.Render("╰" + strings.Repeat("─", l.SidebarW) + "─" + strings.Repeat("─", l.RightW) + "╯"))
 }
 
 // [TODO] The breadcrumb rendering logic is a bit complex. Is it a useful feat?

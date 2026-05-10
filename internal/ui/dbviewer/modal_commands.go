@@ -2,6 +2,7 @@ package dbviewer
 
 import (
 	"context"
+	"os"
 	"strings"
 	"time"
 
@@ -108,6 +109,32 @@ func (m Modal) executeAllCmd() tea.Cmd {
 		return nil
 	}
 	return m.runQuery(qp.inner.Value())
+}
+
+// fetchScriptsCmd scans m.scriptDir for .sql files and returns a ScriptsLoadedMsg.
+func (m Modal) fetchScriptsCmd() tea.Cmd {
+	dir := m.scriptDir
+	return func() tea.Msg {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return ScriptsLoadedMsg{Dir: dir, Err: err}
+		}
+		var names []string
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".sql") {
+				names = append(names, e.Name())
+			}
+		}
+		return ScriptsLoadedMsg{Dir: dir, Names: names}
+	}
+}
+
+// loadScriptCmd reads a script file and returns a ScriptLoadedMsg.
+func loadScriptCmd(path, name string) tea.Cmd {
+	return func() tea.Msg {
+		data, err := os.ReadFile(path)
+		return ScriptLoadedMsg{Content: string(data), Name: name, Err: err}
+	}
 }
 
 func (m Modal) runQuery(query string) tea.Cmd {

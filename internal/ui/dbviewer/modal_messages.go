@@ -47,3 +47,17 @@ type QueryResultMsg struct {
 	Rows [][]string
 	Err  error
 }
+
+// ScriptsLoadedMsg carries the list of .sql files found in the script directory.
+type ScriptsLoadedMsg struct {
+	Dir   string
+	Names []string
+	Err   error
+}
+
+// ScriptLoadedMsg carries the content of a script file selected by the user.
+type ScriptLoadedMsg struct {
+	Content string
+	Name    string
+	Err     error
+}

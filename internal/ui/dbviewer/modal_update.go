@@ -15,10 +15,11 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		if sm.Err == nil {
 			cfg, _ := config.Load()
 			m.tablesQuery = cfg.EffectiveTablesQuery()
+			m.scriptDir = cfg.ScriptPath
 			if qp, ok := m.panes[paneQuery].(queryPaneAdapter); ok {
 				m.panes[paneQuery] = queryPaneAdapter{qp.inner.withScriptDir(cfg.ScriptPath)}
 			}
-			return m, m.fetchTablesCmd()
+			return m, tea.Batch(m.fetchTablesCmd(), m.fetchScriptsCmd())
 		}
 		return m, nil
 	}
@@ -73,6 +74,26 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 			return m, cmd
 		}
 		return m, nil
+	}
+
+	if sl, ok := msg.(ScriptsLoadedMsg); ok {
+		if ep, ok := m.panes[paneSidebar].(explorerPane); ok {
+			ep.inner.SetScripts(sl.Dir, sl.Names)
+			m.panes[paneSidebar] = ep
+		}
+		return m, nil
+	}
+
+	if sl, ok := msg.(ScriptLoadedMsg); ok {
+		if sl.Err != nil {
+			m.statusMsg = "Load failed: " + sl.Err.Error()
+			m.statusIsErr = true
+			return m, nil
+		}
+		if qp, ok := m.panes[paneQuery].(queryPaneAdapter); ok {
+			m.panes[paneQuery] = queryPaneAdapter{qp.inner.LoadScript(sl.Content, sl.Name)}
+		}
+		return m.setFocus(paneQuery)
 	}
 
 	if cm, ok := msg.(ColumnsLoadedMsg); ok {
@@ -208,6 +229,9 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 
 	case "space":
 		if m.focus == paneSidebar {
+			if path, name, ok := m.sidebarScript(); ok {
+				return m, loadScriptCmd(path, name)
+			}
 			if sql, ok := m.sidebarSQL(); ok {
 				m2 := m.setQueryText(sql)
 				execCmd := m2.executeQueryCmd()
