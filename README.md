@@ -1,8 +1,7 @@
+
 <div align="center">
-  <br>
-  <img alt="simmer logo" src="./docs/simmer-logo.PNG" width="90" style="vertical-align:
-  middle;"/>
-  <span style="font-size: 2em; font-weight: bold; vertical-align: middle;">&nbsp;Simmer</span>
+  <img alt="simmer logo" src="./docs/simmer-logo.PNG" width="90" style="vertical-align: middle;" /> 
+  <span style="font-size: 2em; font-weight: bold; vertical-align: middle; line-height: 90px;">Simmer</span>
 </div>
 
 > A lightweight, modern TUI for managing iOS Simulators and Android Emulators on macOS.
