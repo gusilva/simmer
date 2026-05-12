@@ -4,11 +4,12 @@ import (
 	"fmt"
 	"strings"
 
+	"simmer/internal/theme"
+
 	"charm.land/bubbles/v2/table"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
-	"simmer/internal/theme"
 )
 
 // ResultsPane renders the query results below the horizontal divider.
@@ -257,7 +258,6 @@ func (p ResultsPane) tableToTSV() string {
 //
 // Layout:
 //
-//	row 0        WHERE filter bar
 //	row 1        filter separator ──────
 //	rows 2..h-3  table.View() — header + scrollable data rows
 //	row h-2      pager separator ──────
@@ -276,25 +276,7 @@ func (p ResultsPane) Rows(width, height int, focused bool) []string {
 
 	errS := lipgloss.NewStyle().Foreground(theme.ColorErr).Background(theme.ColorBg)
 	faintS := lipgloss.NewStyle().Foreground(theme.ColorFgFaint).Background(theme.ColorBg)
-	warnS := lipgloss.NewStyle().Foreground(theme.ColorWarn).Background(theme.ColorBg)
 	dimS := lipgloss.NewStyle().Foreground(theme.ColorFgDim).Background(theme.ColorBg)
-	kS := lipgloss.NewStyle().Foreground(theme.ColorBorderHi).Background(theme.ColorBg).Bold(true)
-	vS := lipgloss.NewStyle().Foreground(theme.ColorFgDim).Background(theme.ColorBg)
-
-	// row 0: filter bar
-	{
-		badge := warnS.Render("[WHERE]")
-		input := dimS.Render(" —")
-		hints := strings.Join([]string{
-			kS.Render("^F") + vS.Render(" filter"),
-			kS.Render("^E") + vS.Render(" export"),
-			kS.Render("a") + vS.Render(" add"),
-			kS.Render("d") + vS.Render(" delete"),
-		}, rh.BlankN(2))
-		left := badge + input
-		gap := max(width-lipgloss.Width(left)-lipgloss.Width(hints), 1)
-		out[0] = fillTo(left + rh.BlankN(gap) + hints)
-	}
 
 	out[1] = rh.Sep(width)
 
@@ -359,24 +341,15 @@ func (p ResultsPane) Rows(width, height int, focused bool) []string {
 		}
 
 		nav := strings.Join([]string{
-			btnS.Render("⏮"),
+			btnS.Render("⏮ "),
 			btnS.Render("◀"),
 			btnActS.Render(fmt.Sprintf("%d", cursor+1)),
 			btnS.Render("▶"),
-			btnS.Render("⏭"),
+			btnS.Render("⏭ "),
 		}, rh.BlankN(1))
 
-		hints := strings.Join([]string{
-			kS.Render("j/k") + vS.Render(" move"),
-			kS.Render("g/G") + vS.Render(" top/end"),
-			kS.Render("h/l") + vS.Render(" scroll") + rh.BlankN(1) + kS.Render("w/b") + vS.Render(" col") + rh.BlankN(1) + kS.Render("H/L") + vS.Render(" edge"),
-			kS.Render("spc") + vS.Render(" copy row"),
-			kS.Render("spc²") + vS.Render(" copy all"),
-		}, rh.BlankN(2))
-
 		left := count + tot + rh.BlankN(2) + nav
-		gap := max(width-lipgloss.Width(left)-lipgloss.Width(hints), 1)
-		out[height-1] = fillTo(left + rh.BlankN(gap) + hints)
+		out[height-1] = fillTo(left)
 	}
 
 	return out

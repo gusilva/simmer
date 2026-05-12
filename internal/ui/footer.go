@@ -4,6 +4,7 @@ import (
 	"image/color"
 	"strings"
 
+	"charm.land/bubbles/v2/help"
 	"charm.land/lipgloss/v2"
 )
 
@@ -26,55 +27,34 @@ type FooterParams struct {
 	Width  int
 	Status string
 	Kind   StatusKind
-}
-
-var footerHints = []struct{ key, verb string }{
-	{"↑↓/jk", "select"},
-	{"←→/hl", "pane"},
-	{"b", "boot"},
-	{"s", "shutdown"},
-	{"f", "filter"},
-	{"a", "add"},
-	{"d", "delete"},
-	{"1-4", "tab"},
-	{"space", "load device"},
-	{"?", "help"},
-	{"q", "quit"},
-
-	// [TODO] feature ideas:
-	// {"r", "reboot"},
-	// {"i", "install"},
-	// {"/", "cmd"},
+	Help   help.Model
 }
 
 // RenderFooter renders the footer/status-bar string for the given params.
+// The left side shows key binding hints via the bubbles help component.
 // The right side shows a transient status message (latest user-action result).
 func RenderFooter(p FooterParams) string {
 	if p.Width == 0 {
 		return ""
 	}
 
-	keyStyle := lipgloss.NewStyle().Foreground(ColorBorderHi).Background(ColorBg).Bold(true)
-	verbStyle := lipgloss.NewStyle().Foreground(ColorFgDim).Background(ColorBg)
+	innerWidth := p.Width - 2
+	hints := p.Help.View(GlobalKeys)
 
-	var hintParts []string
-	for _, h := range footerHints {
-		hintParts = append(hintParts, keyStyle.Render(h.key)+verbStyle.Render(" "+h.verb))
-	}
-	left := strings.Join(hintParts, StyleFaint.Render("  "))
-
-	right := ""
+	left := ""
 	if p.Status != "" {
-		right = lipgloss.NewStyle().
+		left = lipgloss.NewStyle().
 			Foreground(statusColor(p.Kind)).
 			Background(ColorBg).
 			Render(p.Status)
 	}
 
-	innerWidth := p.Width - 2
-	gap := max(innerWidth-lipgloss.Width(left)-lipgloss.Width(right), 0)
-
-	return StyleFooter.Width(p.Width).Render(left + strings.Repeat(" ", gap) + right)
+	gap := max(innerWidth-lipgloss.Width(left)-lipgloss.Width(hints), 0)
+	// Render WITHOUT Width to prevent lipgloss word-wrapping the pre-styled ANSI
+	// content at the unstyled space inside the hints string.
+	// Content visual width (innerWidth) + Padding(0,1) already equals p.Width.
+	gapStr := lipgloss.NewStyle().Background(ColorBg).Render(strings.Repeat(" ", gap))
+	return StyleFooter.Render(left + gapStr + hints)
 }
 
 func statusColor(k StatusKind) color.Color {

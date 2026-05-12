@@ -221,7 +221,7 @@ func (p QueryPane) Update(msg tea.Msg) (QueryPane, tea.Cmd) {
 //
 // Layout:
 //
-//	row 0        query head  "[q] Query  untitled-1.sql ● …  F5 run …"
+//	row 0        query head  "[q] Query  untitled-1.sql ●
 //	row 1        ─── separator
 //	rows 2..h-1  textarea
 func (p QueryPane) Rows(width, height int, focused bool) []string {
@@ -350,19 +350,9 @@ func (p QueryPane) renderQueryHead(width int) string {
 
 	dot := lipgloss.NewStyle().Foreground(dotColor).Background(theme.ColorBg).Render("●")
 
-	hints := []string{
-		kS.Render("F5") + vS.Render(" run stmt"),
-		kS.Render("^Enter") + vS.Render(" run all"),
-		kS.Render("⌘S") + vS.Render(" save"),
-		kS.Render("⇥") + vS.PaddingRight(1).Render(" complete"),
-	}
-	right := strings.Join(hints, rh.BlankN(2))
-
-	// Fixed prefix: " [q] Query  " + dot + " "
 	queryLabel := lblS.PaddingLeft(1).Render("[q] Query")
 	fixedW := lipgloss.Width(queryLabel) + 2 + 1 + 1 // BlankN(2) + dot + BlankN(1)
-	rightW := lipgloss.Width(right)
-	fileNameBudget := max(width-fixedW-rightW-1, 5) // 1 = minimum gap
+	fileNameBudget := max(width-fixedW, 5)
 
 	displayName := truncateLabel(p.filePath, fileNameBudget)
 
@@ -372,8 +362,7 @@ func (p QueryPane) renderQueryHead(width int) string {
 		rh.BlankN(1) +
 		dot
 
-	gap := max(width-lipgloss.Width(left)-rightW, 1)
-	return rh.ExactWidth(left+rh.BlankN(gap)+right, width)
+	return rh.ExactWidth(left, width)
 }
 
 // statementAtLine extracts the SQL statement that contains cursorLine (0-indexed)

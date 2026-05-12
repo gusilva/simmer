@@ -7,9 +7,6 @@ type layout struct {
 	InnerW, InnerH          int
 	SidebarW, DivW, RightW  int
 	BodyH, QueryH, ResultsH int
-	// DivRow is the body-relative row index of the horizontal divider between
-	// the query pane and the results pane.
-	DivRow int
 }
 
 const (
@@ -37,7 +34,7 @@ func computeLayout(termW, termH int) layout {
 	bodyH := innerH - titleRows - statusRows
 
 	queryH := max(bodyH/3, 3)
-	resultsH := bodyH - queryH - 1
+	resultsH := bodyH - queryH
 
 	return layout{
 		ModalW:   modalW,
@@ -50,6 +47,5 @@ func computeLayout(termW, termH int) layout {
 		BodyH:    bodyH,
 		QueryH:   queryH,
 		ResultsH: resultsH,
-		DivRow:   queryH,
 	}
 }

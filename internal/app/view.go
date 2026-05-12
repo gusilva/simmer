@@ -17,10 +17,13 @@ func (m model) View() tea.View {
 		ToolVersions: m.toolVersions,
 	})
 
+	footerHelp := ui.NewHelpModel()
+	footerHelp.SetWidth(m.width - 4)
 	footer := ui.RenderFooter(ui.FooterParams{
 		Width:  m.width,
 		Status: m.status,
 		Kind:   m.statusKind,
+		Help:   footerHelp,
 	})
 
 	bodyH := max(m.height-lipgloss.Height(topBar)-lipgloss.Height(footer), 0)
@@ -51,6 +54,8 @@ func (m model) View() tea.View {
 
 	baseStr := lipgloss.JoinVertical(lipgloss.Left, topBar, body, footer)
 
+	// Primary overlays (db viewer, create/delete dialogs). Rendered before help
+	// so the help panel always sits on top.
 	if m.platformPicker != nil || m.createIOSModal != nil || m.createAndModal != nil || m.deleteAlert != nil || m.sqliteModal != nil || m.dbViewerModal != nil {
 		var overlayStr string
 		switch {
@@ -79,6 +84,18 @@ func (m model) View() tea.View {
 		} else {
 			baseStr = lipgloss.NewCompositor(bg, fg).Render()
 		}
+	}
+
+	// Help overlay is always the topmost layer so it appears over the db viewer.
+	if m.helpOverlay != nil {
+		overlayStr := m.helpOverlay.View()
+		mW := lipgloss.Width(overlayStr)
+		mH := lipgloss.Height(overlayStr)
+		x := max((m.width-mW)/2, 0)
+		y := max((m.height-mH)/2, 0)
+		bg := lipgloss.NewLayer(baseStr)
+		fg := lipgloss.NewLayer(overlayStr).X(x).Y(y).Z(1)
+		baseStr = lipgloss.NewCompositor(bg, fg).Render()
 	}
 
 	v := tea.NewView(baseStr)

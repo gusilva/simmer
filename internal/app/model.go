@@ -47,6 +47,8 @@ type model struct {
 	statusKind ui.StatusKind
 	statusSeq  int
 
+	helpOverlay *ui.HelpOverlay
+
 	platformPicker *ui.PlatformPickerModal
 	createIOSModal *ui.CreateSimulatorModal
 	createAndModal *ui.CreateAndroidEmulatorModal
@@ -92,6 +94,18 @@ func (m *model) setStatus(text string, kind ui.StatusKind) tea.Cmd {
 	return tea.Tick(4*time.Second, func(_ time.Time) tea.Msg {
 		return clearStatusMsg(seq)
 	})
+}
+
+// contextHelpOverlay returns a HelpOverlay keyed to the currently active context:
+// DB viewer, main pane, or sidebar.
+func (m *model) contextHelpOverlay() ui.HelpOverlay {
+	if m.dbViewerModal != nil {
+		return ui.NewHelpOverlay("DB Viewer", ui.DBViewerKeys)
+	}
+	if m.focus == focusMain {
+		return ui.NewHelpOverlay("Main Pane", ui.MainPaneKeys)
+	}
+	return ui.NewHelpOverlay("Sidebar", ui.SidebarKeys)
 }
 
 const autoRefreshInterval = 30 * time.Second

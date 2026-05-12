@@ -43,6 +43,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
+		// ? toggles context-aware help; esc also closes it.
+		if msg.String() == "?" || (msg.String() == "esc" && m.helpOverlay != nil) {
+			if m.helpOverlay != nil {
+				m.helpOverlay = nil
+				return m, nil
+			}
+			ov := m.contextHelpOverlay()
+			m.helpOverlay = &ov
+			return m, nil
+		}
+		// Consume all other keys while help is open.
+		if m.helpOverlay != nil {
+			return m, nil
+		}
+
 		// ctrl+d toggles the DB viewer regardless of focus or overlay state.
 		if msg.String() == "ctrl+d" {
 			if m.dbViewerModal != nil {

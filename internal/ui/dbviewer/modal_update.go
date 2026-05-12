@@ -14,11 +14,10 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		m.settingsOpen = false
 		if sm.Err == nil {
 			cfg, _ := config.Load()
-			dbcfg := cfg.ForDB(m.dbName)
-			m.tablesQuery = dbcfg.EffectiveTablesQuery()
-			m.scriptDir = dbcfg.ScriptPath
+			m.tablesQuery = cfg.EffectiveTablesQuery()
+			m.scriptDir = cfg.ScriptPath
 			if qp, ok := m.panes[paneQuery].(queryPaneAdapter); ok {
-				m.panes[paneQuery] = queryPaneAdapter{qp.inner.withScriptDir(dbcfg.ScriptPath)}
+				m.panes[paneQuery] = queryPaneAdapter{qp.inner.withScriptDir(cfg.ScriptPath)}
 			}
 			return m, tea.Batch(m.fetchTablesCmd(), m.fetchScriptsCmd())
 		}
@@ -290,7 +289,7 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 //	rows 4..4+bodyH  body rows
 //	  cols 2..1+SidebarW   sidebar
 //	  col  2+SidebarW      vertical divider
-//	  cols 3+SidebarW..    right pane (query above DivRow, results below)
+//	  cols 3+SidebarW..    right pane (query rows 0..QueryH-1, results rows QueryH..BodyH-1)
 func (m Modal) handleMouseClick(mc tea.MouseClickMsg) (Modal, tea.Cmd) {
 	if mc.Button != tea.MouseLeft {
 		return m, nil
@@ -324,24 +323,22 @@ func (m Modal) handleMouseClick(mc tea.MouseClickMsg) (Modal, tea.Cmd) {
 		return m, cmd
 
 	case mc.X >= rightColStart:
-		if bodyRow < l.DivRow {
+		if bodyRow < l.QueryH {
 			return m.setFocus(paneQuery)
 		}
-		if bodyRow > l.DivRow {
-			m, cmd := m.setFocus(paneResults)
-			if rp, ok := m.panes[paneResults].(resultsPaneAdapter); ok {
-				ri := bodyRow - l.DivRow - 1
-				if ri >= 3 {
-					displayDataRow := ri - 3
-					viewStart := max(rp.inner.tbl.Cursor()-rp.inner.tbl.Height(), 0)
-					targetRow := viewStart + displayDataRow
-					rp.inner.tbl.GotoTop()
-					rp.inner.tbl.MoveDown(targetRow)
-					m.panes[paneResults] = resultsPaneAdapter{rp.inner}
-				}
+		m, cmd := m.setFocus(paneResults)
+		if rp, ok := m.panes[paneResults].(resultsPaneAdapter); ok {
+			ri := bodyRow - l.QueryH
+			if ri >= 3 {
+				displayDataRow := ri - 3
+				viewStart := max(rp.inner.tbl.Cursor()-rp.inner.tbl.Height(), 0)
+				targetRow := viewStart + displayDataRow
+				rp.inner.tbl.GotoTop()
+				rp.inner.tbl.MoveDown(targetRow)
+				m.panes[paneResults] = resultsPaneAdapter{rp.inner}
 			}
-			return m, cmd
 		}
+		return m, cmd
 	}
 	return m, nil
 }
@@ -376,7 +373,7 @@ func (m Modal) handleMouseWheel(mw tea.MouseWheelMsg) (Modal, tea.Cmd) {
 		return m, nil
 	}
 
-	if bodyRow > l.DivRow {
+	if bodyRow >= l.QueryH {
 		if rp, ok := m.panes[paneResults].(resultsPaneAdapter); ok {
 			rp.inner.tbl.Focus()
 			if down {
@@ -389,11 +386,7 @@ func (m Modal) handleMouseWheel(mw tea.MouseWheelMsg) (Modal, tea.Cmd) {
 		return m, nil
 	}
 
-	if bodyRow < l.DivRow {
-		var cmd tea.Cmd
-		m.panes[paneQuery], cmd = m.panes[paneQuery].Update(mw)
-		return m, cmd
-	}
-
-	return m, nil
+	var cmd tea.Cmd
+	m.panes[paneQuery], cmd = m.panes[paneQuery].Update(mw)
+	return m, cmd
 }

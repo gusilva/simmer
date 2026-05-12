@@ -18,6 +18,7 @@ func TestRenderFooter(t *testing.T) {
 				Width:  100,
 				Status: "Ready",
 				Kind:   StatusInfo,
+				Help:   NewHelpModel(),
 			},
 		},
 		{
@@ -26,6 +27,7 @@ func TestRenderFooter(t *testing.T) {
 				Width:  100,
 				Status: "Booted iPhone 15",
 				Kind:   StatusOk,
+				Help:   NewHelpModel(),
 			},
 		},
 		{
@@ -34,6 +36,7 @@ func TestRenderFooter(t *testing.T) {
 				Width:  100,
 				Status: "Failed to boot",
 				Kind:   StatusErr,
+				Help:   NewHelpModel(),
 			},
 		},
 		{
@@ -41,12 +44,14 @@ func TestRenderFooter(t *testing.T) {
 			params: FooterParams{
 				Width:  40,
 				Status: "Busy",
+				Help:   NewHelpModel(),
 			},
 		},
 		{
 			name: "Zero width",
 			params: FooterParams{
 				Width: 0,
+				Help:  NewHelpModel(),
 			},
 		},
 	}
@@ -72,12 +77,15 @@ func TestRenderFooter(t *testing.T) {
 				t.Errorf("status %q not found in output", tt.params.Status)
 			}
 
-			// Check help hints (just a few key ones)
-			hints := []string{"select", "quit", "boot"}
-			for _, h := range hints {
-				if tt.params.Width > 80 && !strings.Contains(got, h) {
-					t.Errorf("hint %q not found in output", h)
-				}
+			// Check that the active hint is rendered (only ? is active in GlobalKeys)
+			if tt.params.Width > 40 && !strings.Contains(got, "?") {
+				t.Errorf("help hint %q not found in output", "?")
+			}
+
+			// Check single-line content (border top + one content row = 2 lines total)
+			lines := strings.Split(got, "\n")
+			if len(lines) != 2 {
+				t.Errorf("footer rendered %d lines, want 2", len(lines))
 			}
 		})
 	}

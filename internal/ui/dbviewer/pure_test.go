@@ -160,12 +160,6 @@ func TestComputeLayout_PaneWidthsAddUp(t *testing.T) {
 	}
 }
 
-func TestComputeLayout_DivRowWithinBody(t *testing.T) {
-	l := computeLayout(120, 40)
-	if l.DivRow <= 0 || l.DivRow >= l.BodyH {
-		t.Errorf("DivRow %d outside body [1, %d)", l.DivRow, l.BodyH)
-	}
-}
 
 func TestComputeLayout_SmallTerminal(t *testing.T) {
 	// Should not panic or return nonsensical negatives.

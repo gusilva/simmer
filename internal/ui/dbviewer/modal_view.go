@@ -44,10 +44,6 @@ func (m Modal) renderTitleRow(sb *strings.Builder, l layout, s viewerStyles) {
 		verLabel = "SQLite " + m.sqliteVersion
 	}
 
-	right := s.Label.Render("Esc") + s.Dim.Render(" close  ") +
-		s.Label.Render("Ctrl+D") + s.Dim.Render(" toggle  ") +
-		s.Faint.Render("[×]")
-
 	prefix := s.Icon.Render("▤") + " " +
 		s.Label.Render("Database Viewer") + "  " +
 		s.Dot.Render("●") + " " +
@@ -55,12 +51,12 @@ func (m Modal) renderTitleRow(sb *strings.Builder, l layout, s viewerStyles) {
 		s.Faint.Render("| ")
 
 	const minGap = 1
-	breadcrumbBudget := max(l.InnerW-lipgloss.Width(prefix)-lipgloss.Width(right)-minGap, 8)
+	breadcrumbBudget := max(l.InnerW-lipgloss.Width(prefix)-minGap, 8)
 
 	left := prefix + m.renderPathBreadcrumb(s, breadcrumbBudget)
 
-	gap := max(l.InnerW-lipgloss.Width(left)-lipgloss.Width(right), 1)
-	titleRow := left + blank(gap) + right
+	gap := max(l.InnerW-lipgloss.Width(left), 1)
+	titleRow := left + blank(gap)
 
 	sb.WriteString(s.Outer.Render("│"))
 	sb.WriteString(titleRow)
@@ -83,7 +79,7 @@ func (m Modal) renderBody(sb *strings.Builder, l layout, s viewerStyles) {
 	blank := func(n int) string { return s.Bg.Render(strings.Repeat(" ", n)) }
 
 	sidebarRows := m.panes[paneSidebar].Rows(l.SidebarW, l.BodyH, m.focus == paneSidebar)
-	queryRows := m.panes[paneQuery].Rows(l.RightW, l.DivRow, m.focus == paneQuery)
+	queryRows := m.panes[paneQuery].Rows(l.RightW, l.QueryH, m.focus == paneQuery)
 	resultsRows := m.panes[paneResults].Rows(l.RightW, l.ResultsH, m.focus == paneResults)
 
 	for row := range l.BodyH {
@@ -95,28 +91,22 @@ func (m Modal) renderBody(sb *strings.Builder, l layout, s viewerStyles) {
 			sb.WriteString(blank(l.SidebarW))
 		}
 
-		switch {
-		case row == l.DivRow:
-			sb.WriteString(s.Inner.Render("├" + strings.Repeat("─", l.RightW)))
-			sb.WriteString(s.Outer.Render("│"))
-		case row > l.DivRow:
-			sb.WriteString(s.Inner.Render("│"))
-			ri := row - l.DivRow - 1
-			if ri < len(resultsRows) {
-				sb.WriteString(resultsRows[ri])
-			} else {
-				sb.WriteString(blank(l.RightW))
-			}
-			sb.WriteString(s.Outer.Render("│"))
-		default:
-			sb.WriteString(s.Inner.Render("│"))
+		sb.WriteString(s.Inner.Render("│"))
+		if row < l.QueryH {
 			if row < len(queryRows) {
 				sb.WriteString(queryRows[row])
 			} else {
 				sb.WriteString(blank(l.RightW))
 			}
-			sb.WriteString(s.Outer.Render("│"))
+		} else {
+			ri := row - l.QueryH
+			if ri < len(resultsRows) {
+				sb.WriteString(resultsRows[ri])
+			} else {
+				sb.WriteString(blank(l.RightW))
+			}
 		}
+		sb.WriteString(s.Outer.Render("│"))
 		sb.WriteByte('\n')
 	}
 }
@@ -168,10 +158,8 @@ func (m Modal) renderStatusRow(sb *strings.Builder, l layout, s viewerStyles) {
 	}
 
 	hints := strings.Join([]string{
-		s.Key.Render("F5") + s.Val.Render(" execute"),
-		s.Key.Render("⌘S") + s.Val.Render(" save"),
-		s.Key.Render("^S") + s.Val.Render(" settings"),
 		s.Key.Render("?") + s.Val.Render(" help"),
+		s.Key.Render("Esc") + s.Val.Render(" close"),
 	}, s.Faint.Render("  "))
 
 	width := l.InnerW
