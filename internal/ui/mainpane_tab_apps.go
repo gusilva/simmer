@@ -117,12 +117,22 @@ func (m MainPane) renderAppRow(app device.App, w int, cursor bool, streaming boo
 	nameStr := truncateName(label, nameMax)
 	gap := max(w-leadW-lipgloss.Width(nameStr)-iconW-metaW-trailW, minGap)
 
+	system := app.Type == "System"
+
 	if cursor {
-		sel := lipgloss.NewStyle().Foreground(ColorBg).Background(ColorAccent).Bold(true)
+		selBg := ColorAccent
+		if system {
+			selBg = ColorFgDim
+		}
+		sel := lipgloss.NewStyle().Foreground(ColorBg).Background(selBg).Bold(true)
 		return sel.Render(" " + nameStr + iconStr + strings.Repeat(" ", gap) + meta + " ")
 	}
 
-	nameStyled := lipgloss.NewStyle().Foreground(ColorFg).Background(ColorBg).Render(nameStr)
+	nameFg := ColorFg
+	if system {
+		nameFg = ColorFgDim
+	}
+	nameStyled := lipgloss.NewStyle().Foreground(nameFg).Background(ColorBg).Render(nameStr)
 	metaStyled := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg).Render(meta)
 
 	if streaming {

@@ -29,6 +29,12 @@ type deleteSimulatorResultMsg struct {
 	err  error
 }
 
+type deleteAppResultMsg struct {
+	deviceID string
+	appLabel string
+	err      error
+}
+
 type androidSystemImagesMsg struct {
 	images []device.Runtime
 	err    error

@@ -30,5 +30,17 @@ type ConfirmCreateAndroidEmulatorMsg struct {
 // ConfirmDeleteSimulatorMsg is emitted when the user confirms deletion.
 type ConfirmDeleteSimulatorMsg struct{ Device device.Device }
 
+// ShowDeleteAppMsg is emitted by MainPane when 'd' is pressed on an app row.
+type ShowDeleteAppMsg struct {
+	Device device.Device
+	App    device.App
+}
+
+// ConfirmDeleteAppMsg is emitted when the user confirms app deletion.
+type ConfirmDeleteAppMsg struct {
+	Device device.Device
+	App    device.App
+}
+
 // CancelOverlayMsg is emitted when the user dismisses any overlay.
 type CancelOverlayMsg struct{}

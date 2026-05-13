@@ -64,7 +64,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.dbViewerModal = nil
 				return m, nil
 			}
-			if m.platformPicker == nil && m.createIOSModal == nil && m.createAndModal == nil && m.deleteAlert == nil && m.sqliteModal == nil {
+			if m.platformPicker == nil && m.createIOSModal == nil && m.createAndModal == nil && m.deleteAlert == nil && m.deleteAppAlert == nil && m.sqliteModal == nil {
 				modal := dbviewer.New(func() tea.Msg { return ui.CancelOverlayMsg{} })
 				modal.SetSize(m.width, m.height)
 				m.dbViewerModal = &modal
@@ -91,6 +91,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.deleteAlert != nil {
 			updated, cmd := m.deleteAlert.Update(msg)
 			m.deleteAlert = &updated
+			return m, cmd
+		}
+		if m.deleteAppAlert != nil {
+			updated, cmd := m.deleteAppAlert.Update(msg)
+			m.deleteAppAlert = &updated
 			return m, cmd
 		}
 		if m.sqliteModal != nil {
@@ -401,6 +406,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.deleteAlert = &alert
 		return m, nil
 
+	case ui.ShowDeleteAppMsg:
+		alert := ui.NewDeleteAppAlert(msg.Device, msg.App)
+		m.deleteAppAlert = &alert
+		return m, nil
+
 	case ui.ShowSQLiteViewerMsg:
 		modal := dbviewer.New(func() tea.Msg { return ui.CancelOverlayMsg{} })
 		modal.SetSize(m.width, m.height)
@@ -447,6 +457,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.createIOSModal = nil
 		m.createAndModal = nil
 		m.deleteAlert = nil
+		m.deleteAppAlert = nil
 		m.sqliteModal = nil
 		m.dbViewerModal = nil
 		return m, nil
@@ -462,6 +473,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ui.ConfirmDeleteSimulatorMsg:
 		m.deleteAlert = nil
 		return m, m.deleteDeviceCmd(msg.Device)
+
+	case ui.ConfirmDeleteAppMsg:
+		m.deleteAppAlert = nil
+		return m, m.deleteAppCmd(msg.Device, msg.App)
+
+	case deleteAppResultMsg:
+		if msg.err != nil {
+			m.errs = append(m.errs, msg.err)
+			return m, m.setStatus("delete app failed: "+errPreview(msg.err), ui.StatusErr)
+		}
+		sel := m.sidebar.SelectedDevice()
+		var reloadCmd tea.Cmd
+		if sel != nil && sel.ID == msg.deviceID {
+			reloadCmd = m.loadAppsCmd(*sel)
+		}
+		return m, tea.Batch(
+			reloadCmd,
+			m.setStatus("deleted "+msg.appLabel, ui.StatusOk),
+		)
 
 	case deviceTypesMsg:
 		if msg.err != nil {

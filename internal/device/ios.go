@@ -389,6 +389,20 @@ func (m *iosManager) Create(ctx context.Context, name, deviceTypeID, runtimeID s
 	return strings.TrimSpace(string(out)), nil
 }
 
+// DeleteApp uninstalls an app from an iOS simulator via `xcrun simctl uninstall`.
+func (m *iosManager) DeleteApp(ctx context.Context, deviceID, bundleID string) error {
+	cmd := exec.CommandContext(ctx, "xcrun", "simctl", "uninstall", deviceID, bundleID)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			return fmt.Errorf("xcrun simctl uninstall %s %s: %w", deviceID, bundleID, err)
+		}
+		return fmt.Errorf("xcrun simctl uninstall %s %s: %w: %s", deviceID, bundleID, err, msg)
+	}
+	return nil
+}
+
 func (m *iosManager) Delete(ctx context.Context, id string) error {
 	cmd := exec.CommandContext(ctx, "xcrun", "simctl", "delete", id)
 	out, err := cmd.CombinedOutput()

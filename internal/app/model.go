@@ -53,6 +53,7 @@ type model struct {
 	createIOSModal *ui.CreateSimulatorModal
 	createAndModal *ui.CreateAndroidEmulatorModal
 	deleteAlert    *ui.DeleteSimulatorAlert
+	deleteAppAlert *ui.DeleteAppAlert
 	sqliteModal    *ui.SQLiteModal
 	dbViewerModal  *dbviewer.Modal
 }

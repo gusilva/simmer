@@ -137,6 +137,24 @@ func (m *androidManager) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// DeleteApp uninstalls an app from an Android emulator via `adb uninstall`.
+func (m *androidManager) DeleteApp(ctx context.Context, deviceID, bundleID string) error {
+	serial, err := findAndroidSerial(ctx, deviceID)
+	if err != nil {
+		return fmt.Errorf("find android serial: %w", err)
+	}
+	cmd := exec.CommandContext(ctx, "adb", "-s", serial, "uninstall", bundleID)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			return fmt.Errorf("adb uninstall %s: %w", bundleID, err)
+		}
+		return fmt.Errorf("adb uninstall %s: %w: %s", bundleID, err, msg)
+	}
+	return nil
+}
+
 // ListDeviceTypes returns Android device profiles via `avdmanager list device`.
 func (m *androidManager) ListDeviceTypes(ctx context.Context) ([]DeviceType, error) {
 	out, err := exec.CommandContext(ctx, "avdmanager", "list", "device").Output()

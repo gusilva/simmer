@@ -136,6 +136,15 @@ func (m model) loadAndroidRootFileTreeCmd(dev device.Device) tea.Cmd {
 	}
 }
 
+func (m model) deleteAppCmd(dev device.Device, app device.App) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		err := m.coordinator.DeleteApp(ctx, dev, app.BundleID)
+		return deleteAppResultMsg{deviceID: dev.ID, appLabel: app.Label(), err: err}
+	}
+}
+
 func (m model) loadAppsCmd(dev device.Device) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
