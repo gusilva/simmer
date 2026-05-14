@@ -49,13 +49,16 @@ type model struct {
 
 	helpOverlay *ui.HelpOverlay
 
-	platformPicker *ui.PlatformPickerModal
-	createIOSModal *ui.CreateSimulatorModal
-	createAndModal *ui.CreateAndroidEmulatorModal
-	deleteAlert    *ui.DeleteSimulatorAlert
-	deleteAppAlert *ui.DeleteAppAlert
-	sqliteModal    *ui.SQLiteModal
-	dbViewerModal  *dbviewer.Modal
+	platformPicker  *ui.PlatformPickerModal
+	createIOSModal  *ui.CreateSimulatorModal
+	createAndModal  *ui.CreateAndroidEmulatorModal
+	deleteAlert     *ui.DeleteSimulatorAlert
+	deleteAppAlert  *ui.DeleteAppAlert
+	installAppModal *ui.InstallAppModal
+	buildStream     *device.BuildStream
+	buildDeviceID   string
+	sqliteModal     *ui.SQLiteModal
+	dbViewerModal   *dbviewer.Modal
 }
 
 func initialModel(version string) model {
@@ -100,6 +103,9 @@ func (m *model) setStatus(text string, kind ui.StatusKind) tea.Cmd {
 // contextHelpOverlay returns a HelpOverlay keyed to the currently active context:
 // DB viewer, main pane, or sidebar.
 func (m *model) contextHelpOverlay() ui.HelpOverlay {
+	if m.installAppModal != nil {
+		return ui.NewHelpOverlay("Install App", ui.InstallPickerKeys)
+	}
 	if m.dbViewerModal != nil {
 		return ui.NewHelpOverlay("DB Viewer", ui.DBViewerKeys)
 	}

@@ -140,6 +140,40 @@ var MainPaneKeys = MainPaneKeyMap{
 	Help:   key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 }
 
+// ── Install app file picker key map ─────────────────────────────────────────
+
+// InstallPickerKeyMap contains bindings for the install-app file picker modal.
+type InstallPickerKeyMap struct {
+	Select   key.Binding
+	Open     key.Binding
+	Up       key.Binding
+	Down     key.Binding
+	Back     key.Binding
+	Cancel   key.Binding
+}
+
+func (k InstallPickerKeyMap) ShortHelp() []key.Binding {
+	return []key.Binding{k.Select, k.Open, k.Back, k.Cancel}
+}
+
+func (k InstallPickerKeyMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{
+		{k.Select, k.Open},
+		{k.Up, k.Down, k.Back},
+		{k.Cancel},
+	}
+}
+
+// InstallPickerKeys is the install-app picker key map singleton.
+var InstallPickerKeys = InstallPickerKeyMap{
+	Select: key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "select file/folder")),
+	Open:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open folder")),
+	Up:     key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
+	Down:   key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+	Back:   key.NewBinding(key.WithKeys("h", "backspace", "left"), key.WithHelp("h/←", "go back")),
+	Cancel: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
+}
+
 // ── DB viewer key map ────────────────────────────────────────────────────────
 
 // DBViewerKeyMap contains all bindings for the SQLite DB viewer modal.

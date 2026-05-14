@@ -277,6 +277,7 @@ func TestMainPane(t *testing.T) {
 	if len(m.logs) != 2 {
 		t.Errorf("expected 2 log lines, got %d", len(m.logs))
 	}
+	m.flushLogs() // lazy flush: AppendLog no longer calls SetContent directly
 	if !strings.Contains(m.logsVP.View(), "Log line 1") {
 		t.Error("Log content not found in viewport")
 	}

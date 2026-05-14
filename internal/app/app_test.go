@@ -306,10 +306,10 @@ func TestUpdate_AppFocusedMsg_SetsStatus(t *testing.T) {
 	}
 }
 
-func TestUpdate_LogLineMsg_NonMatchingBundleID(t *testing.T) {
+func TestUpdate_LogBatchMsg_NonMatchingBundleID(t *testing.T) {
 	m := newTestModel()
 	m.logBundleID = "com.other"
-	result, _ := m.Update(logLineMsg{bundleID: "com.example", line: "log line"})
+	result, _ := m.Update(logBatchMsg{bundleID: "com.example", lines: []string{"log line"}})
 	m2 := result.(model)
 	_ = m2
 }

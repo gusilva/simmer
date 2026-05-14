@@ -389,6 +389,236 @@ func (m *iosManager) Create(ctx context.Context, name, deviceTypeID, runtimeID s
 	return strings.TrimSpace(string(out)), nil
 }
 
+// InstallApp builds a .xcworkspace/.xcodeproj with xcodebuild (or installs a
+// pre-built .app/.ipa directly) and installs the result onto the simulator.
+func (m *iosManager) InstallApp(ctx context.Context, deviceID, path, scheme string) error {
+	p := expandPath(path)
+	lower := strings.ToLower(p)
+
+	if strings.HasSuffix(lower, ".app") || strings.HasSuffix(lower, ".ipa") {
+		return simctlInstall(ctx, deviceID, p)
+	}
+
+	derivedData, err := os.MkdirTemp("", "simmer-build-*")
+	if err != nil {
+		return fmt.Errorf("create build dir: %w", err)
+	}
+	defer os.RemoveAll(derivedData)
+
+	appPath, err := xcodeBuild(ctx, p, scheme, derivedData)
+	if err != nil {
+		return err
+	}
+	return simctlInstall(ctx, deviceID, appPath)
+}
+
+func simctlInstall(ctx context.Context, deviceID, appPath string) error {
+	cmd := exec.CommandContext(ctx, "xcrun", "simctl", "install", deviceID, appPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			return fmt.Errorf("xcrun simctl install: %w", err)
+		}
+		return fmt.Errorf("xcrun simctl install: %w: %s", err, msg)
+	}
+	return nil
+}
+
+func xcodeBuild(ctx context.Context, projectPath, scheme, derivedData string) (string, error) {
+	lower := strings.ToLower(projectPath)
+	projectFlag := "-project"
+	if strings.HasSuffix(lower, ".xcworkspace") {
+		projectFlag = "-workspace"
+	}
+	args := []string{
+		projectFlag, projectPath,
+		"-scheme", scheme,
+		"-configuration", "Debug",
+		"-sdk", "iphonesimulator",
+		"-derivedDataPath", derivedData,
+		"build",
+	}
+	cmd := exec.CommandContext(ctx, "xcodebuild", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("xcodebuild: %w: %s", err, trimBuildOutput(string(out)))
+	}
+	return findBuiltApp(derivedData)
+}
+
+func findBuiltApp(derivedData string) (string, error) {
+	productsDir := filepath.Join(derivedData, "Build", "Products")
+	var found string
+	_ = filepath.Walk(productsDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || found != "" {
+			return err
+		}
+		if info.IsDir() && strings.HasSuffix(path, ".app") {
+			found = path
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if found == "" {
+		return "", fmt.Errorf("no .app found in build products (%s)", productsDir)
+	}
+	return found, nil
+}
+
+func trimBuildOutput(output string) string {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	var errLines []string
+	for _, l := range lines {
+		l = strings.TrimSpace(l)
+		if strings.Contains(l, "error:") || l == "BUILD FAILED" {
+			errLines = append(errLines, l)
+		}
+	}
+	if len(errLines) > 0 {
+		if len(errLines) > 3 {
+			errLines = errLines[len(errLines)-3:]
+		}
+		return strings.Join(errLines, "; ")
+	}
+	if len(lines) > 3 {
+		lines = lines[len(lines)-3:]
+	}
+	return strings.Join(lines, "; ")
+}
+
+// ListXcodeSchemes returns the scheme names for a .xcworkspace or .xcodeproj.
+// It scans for shared .xcscheme files on disk (no subprocess, works even when
+// xcodebuild can't open the workspace) and falls back to xcodebuild -list only
+// when no scheme files are found that way.
+func ListXcodeSchemes(ctx context.Context, projectPath string) ([]string, error) {
+	p := expandPath(projectPath)
+
+	if _, err := os.Stat(p); err != nil {
+		return nil, fmt.Errorf("path not found: %s", p)
+	}
+
+	lower := strings.ToLower(p)
+	if !strings.HasSuffix(lower, ".xcworkspace") && !strings.HasSuffix(lower, ".xcodeproj") {
+		return nil, fmt.Errorf("expected .xcworkspace or .xcodeproj, got: %s", projectPath)
+	}
+
+	schemes := scanXcschemeFiles(p)
+	if len(schemes) > 0 {
+		return schemes, nil
+	}
+
+	return listSchemesViaXcodebuild(ctx, p)
+}
+
+// scanXcschemeFiles finds shared .xcscheme files without invoking xcodebuild.
+// For a workspace it also follows project references in contents.xcworkspacedata.
+func scanXcschemeFiles(projectPath string) []string {
+	lower := strings.ToLower(projectPath)
+	var dirs []string
+
+	if strings.HasSuffix(lower, ".xcworkspace") {
+		dirs = append(dirs, filepath.Join(projectPath, "xcshareddata", "xcschemes"))
+		if projects, err := workspaceProjectPaths(projectPath); err == nil {
+			base := filepath.Dir(projectPath)
+			for _, rel := range projects {
+				dirs = append(dirs, filepath.Join(base, rel, "xcshareddata", "xcschemes"))
+			}
+		}
+	} else {
+		dirs = append(dirs, filepath.Join(projectPath, "xcshareddata", "xcschemes"))
+	}
+
+	seen := map[string]bool{}
+	var schemes []string
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".xcscheme") {
+				continue
+			}
+			name := strings.TrimSuffix(e.Name(), ".xcscheme")
+			if !seen[name] {
+				seen[name] = true
+				schemes = append(schemes, name)
+			}
+		}
+	}
+	sort.Strings(schemes)
+	return schemes
+}
+
+// workspaceProjectPaths parses contents.xcworkspacedata and returns the
+// relative .xcodeproj paths referenced by the workspace.
+func workspaceProjectPaths(workspacePath string) ([]string, error) {
+	data, err := os.ReadFile(filepath.Join(workspacePath, "contents.xcworkspacedata"))
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.Contains(line, "location") || !strings.Contains(line, ".xcodeproj") {
+			continue
+		}
+		start := strings.IndexByte(line, '"')
+		end := strings.LastIndexByte(line, '"')
+		if start < 0 || end <= start {
+			continue
+		}
+		loc := line[start+1 : end]
+		if i := strings.IndexByte(loc, ':'); i >= 0 {
+			loc = loc[i+1:]
+		}
+		if strings.HasSuffix(loc, ".xcodeproj") {
+			paths = append(paths, loc)
+		}
+	}
+	return paths, nil
+}
+
+// listSchemesViaXcodebuild is the fallback when no .xcscheme files are found.
+func listSchemesViaXcodebuild(ctx context.Context, projectPath string) ([]string, error) {
+	lower := strings.ToLower(projectPath)
+	flag := "-project"
+	if strings.HasSuffix(lower, ".xcworkspace") {
+		flag = "-workspace"
+	}
+	cmd := exec.CommandContext(ctx, "xcodebuild", "-list", flag, projectPath, "-json")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			return nil, fmt.Errorf("xcodebuild -list: %w", err)
+		}
+		return nil, fmt.Errorf("xcodebuild -list: %s", msg)
+	}
+	return parseXcodeSchemes(out)
+}
+
+func parseXcodeSchemes(data []byte) ([]string, error) {
+	var v struct {
+		Workspace struct{ Schemes []string `json:"schemes"` } `json:"workspace"`
+		Project   struct{ Schemes []string `json:"schemes"` } `json:"project"`
+	}
+	if err := json.Unmarshal(data, &v); err != nil {
+		return nil, fmt.Errorf("parse schemes: %w", err)
+	}
+	schemes := v.Workspace.Schemes
+	if len(schemes) == 0 {
+		schemes = v.Project.Schemes
+	}
+	if len(schemes) == 0 {
+		return nil, fmt.Errorf("no schemes found in project")
+	}
+	return schemes, nil
+}
+
 // DeleteApp uninstalls an app from an iOS simulator via `xcrun simctl uninstall`.
 func (m *iosManager) DeleteApp(ctx context.Context, deviceID, bundleID string) error {
 	cmd := exec.CommandContext(ctx, "xcrun", "simctl", "uninstall", deviceID, bundleID)
@@ -399,6 +629,166 @@ func (m *iosManager) DeleteApp(ctx context.Context, deviceID, bundleID string) e
 			return fmt.Errorf("xcrun simctl uninstall %s %s: %w", deviceID, bundleID, err)
 		}
 		return fmt.Errorf("xcrun simctl uninstall %s %s: %w: %s", deviceID, bundleID, err, msg)
+	}
+	return nil
+}
+
+// StartInstall runs build → install → launch in a background goroutine and
+// streams progress events. The pipeline runs entirely outside the caller's
+// context; call BuildStream.Stop to cancel it.
+func (m *iosManager) StartInstall(dev Device, path, scheme string) (*BuildStream, error) {
+	events := make(chan string, 64)
+	done := make(chan error, 1)
+	ctx, cancel := newBuildContext()
+
+	go func() {
+		defer close(events)
+		defer cancel()
+
+		p := expandPath(path)
+		lower := strings.ToLower(p)
+
+		var appPath string
+
+		if strings.HasSuffix(lower, ".app") || strings.HasSuffix(lower, ".ipa") {
+			appPath = p
+		} else {
+			derivedData, err := os.MkdirTemp("", "simmer-build-*")
+			if err != nil {
+				done <- fmt.Errorf("create build dir: %w", err)
+				return
+			}
+			defer os.RemoveAll(derivedData)
+
+			sendEvent(ctx, events, "Building "+scheme+"…")
+			built, err := xcodeBuildStream(ctx, events, p, scheme, derivedData)
+			if err != nil {
+				done <- err
+				return
+			}
+			appPath = built
+		}
+
+		sendEvent(ctx, events, "Installing…")
+		if err := simctlInstall(ctx, dev.ID, appPath); err != nil {
+			done <- err
+			return
+		}
+
+		bundleID, err := readBundleID(appPath)
+		if err != nil {
+			// install succeeded; launch is best-effort
+			done <- nil
+			return
+		}
+
+		sendEvent(ctx, events, "Launching…")
+		_ = simctlLaunch(ctx, dev.ID, bundleID)
+		done <- nil
+	}()
+
+	return &BuildStream{Events: events, Done: done, Stop: cancel}, nil
+}
+
+// xcodeBuildStream runs xcodebuild and forwards filtered output to events.
+func xcodeBuildStream(ctx context.Context, events chan<- string, projectPath, scheme, derivedData string) (string, error) {
+	lower := strings.ToLower(projectPath)
+	projectFlag := "-project"
+	if strings.HasSuffix(lower, ".xcworkspace") {
+		projectFlag = "-workspace"
+	}
+	args := []string{
+		projectFlag, projectPath,
+		"-scheme", scheme,
+		"-configuration", "Debug",
+		"-sdk", "iphonesimulator",
+		"-derivedDataPath", derivedData,
+		"build",
+	}
+	cmd := exec.CommandContext(ctx, "xcodebuild", args...)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", fmt.Errorf("xcodebuild stdout pipe: %w", err)
+	}
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
+
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("xcodebuild start: %w", err)
+	}
+
+	scanner := bufio.NewScanner(stdout)
+	for scanner.Scan() {
+		if line := filterBuildLine(scanner.Text()); line != "" {
+			sendEvent(ctx, events, line)
+		}
+	}
+
+	if err := cmd.Wait(); err != nil {
+		msg := trimBuildOutput(stderrBuf.String())
+		if msg == "" {
+			return "", fmt.Errorf("xcodebuild: %w", err)
+		}
+		return "", fmt.Errorf("xcodebuild: %w: %s", err, msg)
+	}
+	return findBuiltApp(derivedData)
+}
+
+// filterBuildLine returns a short human-readable summary for interesting
+// xcodebuild output lines, or "" to suppress the line.
+func filterBuildLine(line string) string {
+	line = strings.TrimSpace(line)
+	switch {
+	case strings.HasPrefix(line, "CompileSwift "),
+		strings.HasPrefix(line, "CompileC "),
+		strings.HasPrefix(line, "Compile "):
+		// Extract just the source filename
+		parts := strings.Fields(line)
+		if len(parts) >= 2 {
+			return "Compiling " + filepath.Base(parts[len(parts)-1])
+		}
+	case strings.HasPrefix(line, "Ld "):
+		return "Linking…"
+	case strings.HasPrefix(line, "CodeSign "):
+		return "Signing…"
+	case line == "BUILD SUCCEEDED":
+		return "Build succeeded"
+	case strings.Contains(line, "error:"):
+		return line
+	}
+	return ""
+}
+
+// readBundleID reads CFBundleIdentifier from an .app bundle's Info.plist via plutil.
+func readBundleID(appPath string) (string, error) {
+	plist := filepath.Join(appPath, "Info.plist")
+	out, err := exec.Command("plutil", "-convert", "json", "-o", "-", plist).Output()
+	if err != nil {
+		return "", fmt.Errorf("read Info.plist: %w", err)
+	}
+	var info struct {
+		BundleID string `json:"CFBundleIdentifier"`
+	}
+	if err := json.Unmarshal(out, &info); err != nil {
+		return "", fmt.Errorf("parse Info.plist: %w", err)
+	}
+	if info.BundleID == "" {
+		return "", fmt.Errorf("CFBundleIdentifier not found in Info.plist")
+	}
+	return info.BundleID, nil
+}
+
+// simctlLaunch launches an app in a simulator via `xcrun simctl launch`.
+func simctlLaunch(ctx context.Context, deviceID, bundleID string) error {
+	cmd := exec.CommandContext(ctx, "xcrun", "simctl", "launch", deviceID, bundleID)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			return fmt.Errorf("xcrun simctl launch: %w", err)
+		}
+		return fmt.Errorf("xcrun simctl launch: %w: %s", err, msg)
 	}
 	return nil
 }

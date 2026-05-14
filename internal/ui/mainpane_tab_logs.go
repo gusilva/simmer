@@ -8,7 +8,8 @@ import (
 
 // ── Logs tab ───────────────────────────────────────────────────────────
 
-func (m MainPane) renderLogs(w, h int) string {
+func (m *MainPane) renderLogs(w, h int) string {
+	m.flushLogs()
 	bg := lipgloss.NewStyle().Background(ColorBg)
 
 	if m.logBundle == "" {

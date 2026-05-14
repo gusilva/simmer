@@ -30,6 +30,23 @@ type ConfirmCreateAndroidEmulatorMsg struct {
 // ConfirmDeleteSimulatorMsg is emitted when the user confirms deletion.
 type ConfirmDeleteSimulatorMsg struct{ Device device.Device }
 
+// ShowInstallAppMsg is emitted by MainPane when 'i' is pressed in the Apps tab.
+type ShowInstallAppMsg struct {
+	Device device.Device
+}
+
+// ConfirmInstallAppMsg is emitted when the user submits the install form.
+type ConfirmInstallAppMsg struct {
+	Device device.Device
+	Path   string
+	Scheme string // Xcode scheme; empty for Android or direct .app/.ipa installs
+}
+
+// RequestXcodeSchemesMsg is emitted by InstallAppModal when it needs schemes for a project path.
+type RequestXcodeSchemesMsg struct {
+	Path string
+}
+
 // ShowDeleteAppMsg is emitted by MainPane when 'd' is pressed on an app row.
 type ShowDeleteAppMsg struct {
 	Device device.Device

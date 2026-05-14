@@ -2,6 +2,21 @@ package app
 
 import "simmer/internal/device"
 
+type buildStartedMsg struct {
+	device device.Device
+	stream *device.BuildStream
+}
+
+type buildEventMsg struct {
+	deviceID string
+	text     string
+}
+
+type buildDoneMsg struct {
+	deviceID string
+	err      error
+}
+
 type clearStatusMsg int
 
 type autoRefreshMsg struct{}
@@ -33,6 +48,12 @@ type deleteAppResultMsg struct {
 	deviceID string
 	appLabel string
 	err      error
+}
+
+
+type xcodeSchemesMsg struct {
+	schemes []string
+	err     error
 }
 
 type androidSystemImagesMsg struct {
@@ -83,9 +104,9 @@ type bootPollMsg struct {
 	remaining int
 }
 
-type logLineMsg struct {
+type logBatchMsg struct {
 	bundleID string
-	line     string
+	lines    []string
 }
 
 type logEndedMsg struct {

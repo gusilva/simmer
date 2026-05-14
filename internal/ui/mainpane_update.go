@@ -138,6 +138,12 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 			if len(filtered) > 0 {
 				m.appsIdx = len(filtered) - 1
 			}
+		case "i":
+			if m.active == nil {
+				return m, nil
+			}
+			dev := *m.active
+			return m, func() tea.Msg { return ShowInstallAppMsg{Device: dev} }
 		case "d":
 			if len(filtered) == 0 || m.appsIdx >= len(filtered) || m.active == nil {
 				return m, nil

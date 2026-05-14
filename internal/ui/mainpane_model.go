@@ -49,6 +49,7 @@ type MainPane struct {
 	infoIdx       int              // Cursor row in the info list
 	logs          []string         // Buffered log lines
 	logBundle     string           // Which app's logs we're streaming
+	logsDirty     bool             // True when logs changed but logsVP not yet refreshed
 	logsVP        viewport.Model   // Scrollable viewport for logs
 	focused       bool             // Does this pane have keyboard focus?
 	width         int              // Outer width available to the pane (including borders)
@@ -197,26 +198,35 @@ func (m MainPane) SelectedApp() *device.App {
 func (m *MainPane) SetLogBundle(bundleID string) {
 	m.logBundle = bundleID
 	m.logs = nil
+	m.logsDirty = false
 	m.logsVP.SetContent("")
 	m.logsVP.GotoTop()
 }
 
 // AppendLog adds a line to the rolling log buffer. The buffer is capped at
-// the most recent 1000 lines. If the viewport was at the bottom before the
-// append, it scrolls to the new bottom; otherwise the user's scroll position
-// is preserved.
+// the most recent 1000 lines. The viewport is updated lazily on the next
+// View() call to avoid O(n) joins on every incoming log line.
 func (m *MainPane) AppendLog(line string) {
 	const max = 1000
-	atBottom := m.logsVP.AtBottom()
-
 	m.logs = append(m.logs, line)
 	if len(m.logs) > max {
 		m.logs = m.logs[len(m.logs)-max:]
 	}
+	m.logsDirty = true
+}
+
+// flushLogs pushes buffered log lines into the viewport when logsDirty is set.
+// Called from View() so the O(n) join happens once per render, not per line.
+func (m *MainPane) flushLogs() {
+	if !m.logsDirty {
+		return
+	}
+	atBottom := m.logsVP.AtBottom()
 	m.logsVP.SetContent(strings.Join(m.logs, "\n"))
 	if atBottom {
 		m.logsVP.GotoBottom()
 	}
+	m.logsDirty = false
 }
 
 // LogBundle returns the bundle identifier whose logs are currently buffered,

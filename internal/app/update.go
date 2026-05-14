@@ -59,12 +59,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// ctrl+d toggles the DB viewer regardless of focus or overlay state.
+		// [TODO] remove it. Used only for testing and debugging.
 		if msg.String() == "ctrl+d" {
 			if m.dbViewerModal != nil {
 				m.dbViewerModal = nil
 				return m, nil
 			}
-			if m.platformPicker == nil && m.createIOSModal == nil && m.createAndModal == nil && m.deleteAlert == nil && m.deleteAppAlert == nil && m.sqliteModal == nil {
+			if m.platformPicker == nil && m.createIOSModal == nil && m.createAndModal == nil && m.deleteAlert == nil && m.deleteAppAlert == nil && m.installAppModal == nil && m.sqliteModal == nil {
 				modal := dbviewer.New(func() tea.Msg { return ui.CancelOverlayMsg{} })
 				modal.SetSize(m.width, m.height)
 				m.dbViewerModal = &modal
@@ -96,6 +97,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.deleteAppAlert != nil {
 			updated, cmd := m.deleteAppAlert.Update(msg)
 			m.deleteAppAlert = &updated
+			return m, cmd
+		}
+		if m.installAppModal != nil {
+			updated, cmd := m.installAppModal.Update(msg)
+			m.installAppModal = &updated
 			return m, cmd
 		}
 		if m.sqliteModal != nil {
@@ -363,16 +369,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.logDeviceID = sel.ID
 		m.mainPane.SetLogBundle(bundleID)
 		return m, tea.Batch(
-			nextLogLineCmd(stream, bundleID),
+			nextLogBatchCmd(stream, bundleID),
 			m.setStatus("streaming "+bundleID, ui.StatusOk),
 		)
 
-	case logLineMsg:
+	case logBatchMsg:
 		if msg.bundleID != m.logBundleID || m.logStream == nil {
 			return m, nil
 		}
-		m.mainPane.AppendLog(msg.line)
-		return m, nextLogLineCmd(m.logStream, m.logBundleID)
+		for _, line := range msg.lines {
+			m.mainPane.AppendLog(line)
+		}
+		return m, nextLogBatchCmd(m.logStream, m.logBundleID)
 
 	case logEndedMsg:
 		if msg.bundleID != m.logBundleID {
@@ -405,6 +413,67 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		alert := ui.NewDeleteSimulatorAlert(msg.Device)
 		m.deleteAlert = &alert
 		return m, nil
+
+	case ui.ShowInstallAppMsg:
+		modal, focusCmd := ui.NewInstallAppModal(msg.Device)
+		m.installAppModal = &modal
+		return m, focusCmd
+
+	case ui.RequestXcodeSchemesMsg:
+		return m, fetchXcodeSchemesCmd(msg.Path)
+
+	case xcodeSchemesMsg:
+		if m.installAppModal != nil {
+			if msg.err != nil {
+				m.installAppModal.SetSchemesError(msg.err.Error())
+			} else {
+				m.installAppModal.SetSchemes(msg.schemes)
+			}
+		}
+		return m, nil
+
+	case ui.ConfirmInstallAppMsg:
+		m.installAppModal = nil
+		if m.buildStream != nil {
+			m.buildStream.Stop()
+			m.buildStream = nil
+		}
+		return m, tea.Batch(
+			m.startInstallCmd(msg.Device, msg.Path, msg.Scheme),
+			m.setStatus("Starting build…", ui.StatusInfo),
+		)
+
+	case buildStartedMsg:
+		m.buildStream = msg.stream
+		m.buildDeviceID = msg.device.ID
+		return m, nextBuildEventCmd(msg.stream, msg.device.ID)
+
+	case buildEventMsg:
+		if m.buildStream == nil || msg.deviceID != m.buildDeviceID {
+			return m, nil
+		}
+		return m, tea.Batch(
+			m.setStatus(msg.text, ui.StatusInfo),
+			nextBuildEventCmd(m.buildStream, msg.deviceID),
+		)
+
+	case buildDoneMsg:
+		stream := m.buildStream
+		m.buildStream = nil
+		m.buildDeviceID = ""
+		if stream != nil {
+			stream.Stop()
+		}
+		if msg.err != nil {
+			m.errs = append(m.errs, msg.err)
+			return m, m.setStatus("install failed: "+errPreview(msg.err), ui.StatusErr)
+		}
+		sel := m.sidebar.SelectedDevice()
+		var reloadCmd tea.Cmd
+		if sel != nil && sel.ID == msg.deviceID {
+			reloadCmd = m.loadAppsCmd(*sel)
+		}
+		return m, tea.Batch(reloadCmd, m.setStatus("Installed & launched", ui.StatusOk))
 
 	case ui.ShowDeleteAppMsg:
 		alert := ui.NewDeleteAppAlert(msg.Device, msg.App)
@@ -458,6 +527,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.createAndModal = nil
 		m.deleteAlert = nil
 		m.deleteAppAlert = nil
+		m.installAppModal = nil
 		m.sqliteModal = nil
 		m.dbViewerModal = nil
 		return m, nil
@@ -581,6 +651,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	default:
 		// Forward unrecognised messages (e.g. private filepicker readDirMsg) to
 		// whichever overlay is active so embedded components can process them.
+		if m.installAppModal != nil {
+			updated, cmd := m.installAppModal.Update(msg)
+			m.installAppModal = &updated
+			return m, cmd
+		}
 		if m.dbViewerModal != nil {
 			updated, cmd := m.dbViewerModal.Update(msg)
 			m.dbViewerModal = &updated

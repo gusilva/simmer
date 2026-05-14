@@ -136,6 +136,36 @@ func (m model) loadAndroidRootFileTreeCmd(dev device.Device) tea.Cmd {
 	}
 }
 
+func (m model) startInstallCmd(dev device.Device, path, scheme string) tea.Cmd {
+	return func() tea.Msg {
+		stream, err := m.coordinator.StartInstall(dev, path, scheme)
+		if err != nil {
+			return buildDoneMsg{deviceID: dev.ID, err: err}
+		}
+		return buildStartedMsg{device: dev, stream: stream}
+	}
+}
+
+func nextBuildEventCmd(stream *device.BuildStream, deviceID string) tea.Cmd {
+	return func() tea.Msg {
+		text, ok := <-stream.Events
+		if !ok {
+			err := <-stream.Done
+			return buildDoneMsg{deviceID: deviceID, err: err}
+		}
+		return buildEventMsg{deviceID: deviceID, text: text}
+	}
+}
+
+func fetchXcodeSchemesCmd(path string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		schemes, err := device.ListXcodeSchemes(ctx, path)
+		return xcodeSchemesMsg{schemes: schemes, err: err}
+	}
+}
+
 func (m model) deleteAppCmd(dev device.Device, app device.App) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -176,13 +206,28 @@ func scheduleBootPoll(dev device.Device, remaining int) tea.Cmd {
 	})
 }
 
-func nextLogLineCmd(stream *device.LogStream, bundleID string) tea.Cmd {
+// nextLogBatchCmd blocks until at least one log line is available, then drains
+// up to 100 additional lines that are immediately available. This batches
+// rapid log output into a single Update+View cycle instead of one per line.
+func nextLogBatchCmd(stream *device.LogStream, bundleID string) tea.Cmd {
 	return func() tea.Msg {
 		line, ok := <-stream.Lines
 		if !ok {
 			err := <-stream.Done
 			return logEndedMsg{bundleID: bundleID, err: err}
 		}
-		return logLineMsg{bundleID: bundleID, line: line}
+		lines := []string{line}
+		for len(lines) < 100 {
+			select {
+			case l, ok := <-stream.Lines:
+				if !ok {
+					return logEndedMsg{bundleID: bundleID, err: <-stream.Done}
+				}
+				lines = append(lines, l)
+			default:
+				return logBatchMsg{bundleID: bundleID, lines: lines}
+			}
+		}
+		return logBatchMsg{bundleID: bundleID, lines: lines}
 	}
 }
