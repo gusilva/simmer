@@ -207,10 +207,14 @@ func (m *MainPane) SetLogBundle(bundleID string) {
 // the most recent 1000 lines. The viewport is updated lazily on the next
 // View() call to avoid O(n) joins on every incoming log line.
 func (m *MainPane) AppendLog(line string) {
-	const max = 1000
+	const maxLines = 1000
 	m.logs = append(m.logs, line)
-	if len(m.logs) > max {
-		m.logs = m.logs[len(m.logs)-max:]
+	if len(m.logs) > maxLines {
+		// Allocate a fresh slice so the old backing array — which may be
+		// 2× larger due to prior reslicing — becomes eligible for GC.
+		compacted := make([]string, maxLines)
+		copy(compacted, m.logs[len(m.logs)-maxLines:])
+		m.logs = compacted
 	}
 	m.logsDirty = true
 }

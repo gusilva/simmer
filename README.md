@@ -79,8 +79,12 @@ go run ./cmd/simmer
 
 ### Building for production
 ```bash
-go build -o simmer ./cmd/simmer
+go build -tags release -o simmer ./cmd/simmer
 ```
+
+The `release` build tag strips all profiling code — `--pprof` and `--heap-out` flags are not registered,
+and no `net/http/pprof` or `runtime/pprof` symbols are linked into the binary.
+Dev builds (no tag) include profiling support by default.
 
 ### Versioning
 
@@ -90,6 +94,101 @@ Local builds default to `dev` unless you set the linker variable manually.
 ### Running Tests
 ```bash
 go test ./... -v
+```
+
+## 🔬 Profiling & Heap Analysis
+
+> **Dev only.** Profiling is compiled out of release binaries (`-tags release`). Run a dev build to use these flags.
+
+Simmer ships two flags for memory profiling. Because it is a full-screen TUI that owns the terminal,
+the standard approach of curling a pprof HTTP endpoint from the same shell is awkward.
+The flags below give you two complementary workflows.
+
+### Live HTTP endpoint (`--pprof`)
+
+Starts a `net/http/pprof` server in the background. The TUI runs normally; you query the endpoint from a second terminal.
+
+```bash
+go run ./cmd/simmer --pprof localhost:6060
+```
+
+**Useful queries from a second terminal:**
+
+```bash
+# Interactive browser (flamegraph, top, source)
+go tool pprof -http=:8080 http://localhost:6060/debug/pprof/heap
+
+# Dump to file (add ?gc=1 to force GC before sampling)
+curl -s "http://localhost:6060/debug/pprof/heap?gc=1" > heap.out
+go tool pprof heap.out
+```
+
+### Signal-triggered file dumps (`--heap-out`)
+
+Writes a timestamped heap profile every time you send `SIGUSR1` to the process, and one final
+profile on clean exit. No second terminal needed for the curl — just `kill -USR1`.
+
+```bash
+go run ./cmd/simmer --heap-out /tmp/simmer-heap
+```
+
+Each signal creates a file named `<prefix>_HHMMSS.out`:
+
+```
+/tmp/simmer-heap_143022.out   ← baseline
+/tmp/simmer-heap_143158.out   ← after doing something
+/tmp/simmer-heap_143310.out   ← final (also written on exit)
+```
+
+**Taking a snapshot:**
+
+```bash
+kill -USR1 $(pgrep simmer)
+```
+
+### Recommended investigation workflow
+
+Use `--heap-out` to capture snapshots at known points, then diff them with `go tool pprof -base` to isolate what grew.
+
+```bash
+# 1. Start
+go run ./cmd/simmer --heap-out /tmp/h
+
+# 2. Baseline — app just launched
+kill -USR1 $(pgrep simmer)          # /tmp/h_HH0000.out
+
+# 3. Peak — do the thing (load sims, stream logs, etc.)
+kill -USR1 $(pgrep simmer)          # /tmp/h_HH0100.out
+
+# 4. Recovery — undo the thing (stop sims, switch device)
+kill -USR1 $(pgrep simmer)          # /tmp/h_HH0200.out
+
+# 5. Diff peak vs recovery — anything still live is a candidate leak
+go tool pprof -base /tmp/h_HH0100.out /tmp/h_HH0200.out
+(pprof) top10
+(pprof) list <FuncName>
+```
+
+Both flags can be combined:
+
+```bash
+go run ./cmd/simmer --pprof localhost:6060 --heap-out /tmp/simmer-heap
+```
+
+### Reading the output
+
+| pprof type | What it measures |
+|---|---|
+| `inuse_space` (default) | Bytes currently live on the heap |
+| `alloc_space` (`-alloc_space`) | Total bytes ever allocated (ignores GC) |
+
+`inuse_space` is the right view for leak hunting — if a symbol shows up here after you expect it to be freed,
+it is retained. Use `-alloc_space` to find hot allocation paths regardless of liveness.
+
+```bash
+# Show allocation hot-paths instead of live memory
+go tool pprof -alloc_space heap.out
+(pprof) top10
 ```
 
 ## 🏗 Project Structure

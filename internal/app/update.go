@@ -9,6 +9,7 @@ import (
 	"simmer/internal/ui/dbviewer"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/bubbles/v2/spinner"
 )
 
 func (m model) Init() tea.Cmd {
@@ -143,7 +144,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if sel == nil || sel.Status == device.StatusRunning {
 				return m, nil
 			}
-			return m, m.bootDeviceCmd(*sel)
+			m.booting = true
+			return m, tea.Batch(
+				m.bootDeviceCmd(*sel),
+				m.setStatus("Booting "+sel.Name+"…", ui.StatusInfo),
+				tea.Cmd(m.installSpinner.Tick),
+			)
 		case "s":
 			sel := m.sidebar.SelectedDevice()
 			if sel == nil || sel.Status != device.StatusRunning {
@@ -154,6 +160,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			sel := m.sidebar.SelectedDevice()
 			if sel == nil || sel.Status != device.StatusRunning {
 				return m, nil
+			}
+
+			if m.logStream != nil {
+				m.logStream.Stop()
+				m.logStream = nil
+				m.logBundleID = ""
+				m.logDeviceID = ""
+				m.mainPane.SetLogBundle("")
 			}
 
 			m.focus = focusMain
@@ -179,6 +193,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			updated, cmd := m.sqliteModal.Update(msg)
 			m.sqliteModal = &updated
 			return m, cmd
+		}
+		return m, nil
+
+	case spinner.TickMsg:
+		if m.installing || m.booting {
+			var spinCmd tea.Cmd
+			m.installSpinner, spinCmd = m.installSpinner.Update(msg)
+			return m, spinCmd
 		}
 		return m, nil
 
@@ -208,35 +230,43 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.androidCount = android
 		m.sidebar.SetDevices(msg.Devices)
 		m.mainPane.SyncActiveDevice(msg.Devices)
+		if !m.mainPane.HasDevice() && m.logStream != nil {
+			m.logStream.Stop()
+			m.logStream = nil
+			m.logBundleID = ""
+			m.logDeviceID = ""
+		}
 		return m, nil
 
 	case bootResultMsg:
 		if msg.err != nil {
+			m.booting = false
 			m.errs = append(m.errs, msg.err)
-
 			return m, m.setStatus("boot failed: "+errPreview(msg.err), ui.StatusErr)
 		}
 
 		m.loading = true
 
-		cmds := []tea.Cmd{
-			m.fetchDevicesCmd(),
-			m.setStatus("booted "+msg.device.Name, ui.StatusOk),
-		}
-
 		if msg.device.Platform == device.PlatformAndroid {
-			// Emulator registers with adb asynchronously; poll until it appears.
-			cmds = append(cmds, scheduleBootPoll(msg.device, 15))
+			// Emulator registers with adb asynchronously; keep spinner and poll
+			// until adb confirms it's running before clearing booting state.
+			return m, tea.Batch(m.fetchDevicesCmd(), scheduleBootPoll(msg.device, 15))
 		}
 
-		return m, tea.Batch(cmds...)
+		m.booting = false
+		return m, tea.Batch(m.fetchDevicesCmd(), m.setStatus("booted "+msg.device.Name, ui.StatusOk))
 
 	case bootPollMsg:
 		// Check if the device now shows as running; if so, stop polling.
 		for _, dev := range m.sidebar.Devices() {
 			if dev.ID == msg.device.ID && dev.Status == device.StatusRunning {
-				return m, nil
+				m.booting = false
+				return m, m.setStatus("booted "+msg.device.Name, ui.StatusOk)
 			}
+		}
+
+		if msg.remaining-1 <= 0 {
+			m.booting = false
 		}
 
 		return m, tea.Batch(
@@ -304,7 +334,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.setStatus("app: "+msg.App.Label(), ui.StatusInfo)
 
 	case clearStatusMsg:
-		if int(msg) == m.statusSeq {
+		if int(msg) == m.statusSeq && !m.installing && !m.booting {
 			m.status = ""
 		}
 
@@ -387,6 +417,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.logStream = nil
+		m.logBundleID = ""
+		m.logDeviceID = ""
+		m.mainPane.SetLogBundle("")
 		if msg.err != nil {
 			m.errs = append(m.errs, msg.err)
 			return m, m.setStatus("stream ended: "+errPreview(msg.err), ui.StatusWarn)
@@ -438,9 +471,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.buildStream.Stop()
 			m.buildStream = nil
 		}
+		m.installing = true
 		return m, tea.Batch(
 			m.startInstallCmd(msg.Device, msg.Path, msg.Scheme),
 			m.setStatus("Starting build…", ui.StatusInfo),
+			tea.Cmd(m.installSpinner.Tick),
 		)
 
 	case buildStartedMsg:
@@ -461,6 +496,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		stream := m.buildStream
 		m.buildStream = nil
 		m.buildDeviceID = ""
+		m.installing = false
 		if stream != nil {
 			stream.Stop()
 		}

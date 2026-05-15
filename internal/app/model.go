@@ -10,6 +10,7 @@ import (
 	"simmer/internal/ui/dbviewer"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/bubbles/v2/spinner"
 	"charm.land/lipgloss/v2"
 )
 
@@ -57,6 +58,9 @@ type model struct {
 	installAppModal *ui.InstallAppModal
 	buildStream     *device.BuildStream
 	buildDeviceID   string
+	installing      bool
+	booting         bool
+	installSpinner  spinner.Model
 	sqliteModal     *ui.SQLiteModal
 	dbViewerModal   *dbviewer.Modal
 }
@@ -75,6 +79,10 @@ func initialModel(version string) model {
 		loading:      true,
 		toolVersions: make(map[device.Platform]string),
 		appVersion:   version,
+		installSpinner: spinner.New(
+			spinner.WithSpinner(spinner.MiniDot),
+			spinner.WithStyle(lipgloss.NewStyle().Foreground(ui.ColorAccent)),
+		),
 	}
 	m.applyFocus()
 	return m

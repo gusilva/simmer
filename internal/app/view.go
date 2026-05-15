@@ -19,9 +19,18 @@ func (m model) View() tea.View {
 
 	footerHelp := ui.NewHelpModel()
 	footerHelp.SetWidth(m.width - 4)
+	footerStatus := m.status
+	if m.installing || m.booting {
+		spinView := m.installSpinner.View()
+		if footerStatus != "" {
+			footerStatus = spinView + " " + footerStatus
+		} else {
+			footerStatus = spinView
+		}
+	}
 	footer := ui.RenderFooter(ui.FooterParams{
 		Width:  m.width,
-		Status: m.status,
+		Status: footerStatus,
 		Kind:   m.statusKind,
 		Help:   footerHelp,
 	})

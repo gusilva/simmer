@@ -638,8 +638,10 @@ func (m *androidManager) ListApps(ctx context.Context, id string) ([]App, error)
 		if eq < 0 {
 			continue
 		}
-		bundleID := strings.TrimSpace(after[eq+1:])
-		path := after[:eq]
+		// Clone breaks the reference to the large pkgOut backing array so it
+		// can be GC'd once this function returns.
+		bundleID := strings.Clone(strings.TrimSpace(after[eq+1:]))
+		path := strings.Clone(after[:eq])
 		if bundleID != "" {
 			byID[bundleID] = entry{path: path}
 		}
@@ -686,7 +688,8 @@ func androidFetchVersions[E any](ctx context.Context, serial string, byID map[st
 		trimmed := strings.TrimSpace(line)
 		if after, ok := strings.CutPrefix(trimmed, "Package ["); ok {
 			if before, _, ok0 := strings.Cut(after, "]"); ok0 {
-				cur = before
+				// Clone breaks the reference to the large dumpsys backing array.
+				cur = strings.Clone(before)
 			}
 			continue
 		}
@@ -698,7 +701,7 @@ func androidFetchVersions[E any](ctx context.Context, serial string, byID map[st
 		}
 		if after, ok := strings.CutPrefix(trimmed, "versionName="); ok {
 			if parts := strings.Fields(after); len(parts) > 0 {
-				result[cur] = parts[0]
+				result[cur] = strings.Clone(parts[0])
 			}
 		}
 	}
