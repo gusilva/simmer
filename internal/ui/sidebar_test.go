@@ -229,3 +229,89 @@ func TestSidebar(t *testing.T) {
 		t.Errorf("View width %d < sidebar width %d", lipgloss.Width(view), s.Width())
 	}
 }
+
+func TestSidebar_Update_A_ShowsPlatformPicker(t *testing.T) {
+	s := NewSidebar()
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyTab}) // switch to available pane
+	_, cmd := s.Update(tea.KeyPressMsg{Text: "a"})
+	if cmd == nil {
+		t.Fatal("expected cmd from 'a' in available pane")
+	}
+	if _, ok := cmd().(ShowPlatformPickerMsg); !ok {
+		t.Error("expected ShowPlatformPickerMsg")
+	}
+}
+
+func TestSidebar_Update_D_ShowsDeleteSimulator(t *testing.T) {
+	s := NewSidebar()
+	s.SetDevices([]device.Device{
+		{ID: "avail1", Name: "iPhone 14", Status: device.StatusOff, Platform: device.PlatformIOS},
+	})
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyTab}) // go to available pane
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // skip iOS header to device row
+	_, cmd := s.Update(tea.KeyPressMsg{Text: "d"})
+	if cmd == nil {
+		t.Fatal("expected cmd from 'd' on device")
+	}
+	msg := cmd()
+	del, ok := msg.(ShowDeleteSimulatorMsg)
+	if !ok {
+		t.Fatalf("expected ShowDeleteSimulatorMsg, got %T", msg)
+	}
+	if del.Device.ID != "avail1" {
+		t.Errorf("wrong device: %v", del.Device)
+	}
+}
+
+func TestSidebar_Update_D_NoDeviceAtPos_NoCmd(t *testing.T) {
+	s := NewSidebar()
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	// availIdx=0 is the iOS group header — no device here
+	_, cmd := s.Update(tea.KeyPressMsg{Text: "d"})
+	if cmd != nil {
+		t.Error("expected no cmd when cursor is on group header")
+	}
+}
+
+func TestSidebar_Update_Esc_ClearsFilterQuery(t *testing.T) {
+	s := NewSidebar()
+	s.SetDevices([]device.Device{
+		{ID: "1", Name: "iPhone", Status: device.StatusOff, Platform: device.PlatformIOS},
+	})
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	// Type "f" then "x" to set filterQuery without being in filterMode
+	s, _ = s.Update(tea.KeyPressMsg{Text: "f"})
+	s, _ = s.Update(tea.KeyPressMsg{Text: "x"}) // types in filterMode
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEsc}) // exits filterMode, keeps query
+	// Now in nav mode with filterQuery="x" — esc should clear query
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if s.filterQuery != "" {
+		t.Errorf("expected filterQuery cleared by esc in nav mode, got %q", s.filterQuery)
+	}
+}
+
+func TestSidebar_FilterMode_Enter_ExitsFilter(t *testing.T) {
+	s := NewSidebar()
+	s.SetDevices([]device.Device{
+		{ID: "1", Name: "iPhone", Status: device.StatusOff, Platform: device.PlatformIOS},
+	})
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	s, _ = s.Update(tea.KeyPressMsg{Text: "f"}) // enter filter mode
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if s.filterMode {
+		t.Error("expected filterMode=false after enter")
+	}
+}
+
+func TestSidebar_FilterMode_BackspaceOnEmpty_NoOp(t *testing.T) {
+	s := NewSidebar()
+	s.SetDevices([]device.Device{
+		{ID: "1", Name: "iPhone", Status: device.StatusOff, Platform: device.PlatformIOS},
+	})
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	s, _ = s.Update(tea.KeyPressMsg{Text: "f"}) // enter filter mode
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyBackspace}) // nothing to delete
+	if s.filterQuery != "" {
+		t.Error("expected filterQuery still empty after backspace on empty")
+	}
+}

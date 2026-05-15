@@ -9,6 +9,127 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
+// ── CreateAndroidEmulatorModal ────────────────────────────────────────────
+
+func TestCreateAndroidEmulatorModal_Loading(t *testing.T) {
+	m, _ := NewCreateAndroidEmulatorModal()
+	if !m.loading {
+		t.Error("expected loading=true initially")
+	}
+	if !strings.Contains(m.View(), "Loading") {
+		t.Error("expected loading message in view")
+	}
+}
+
+func TestCreateAndroidEmulatorModal_SetSystemImages_AloneKeepsLoading(t *testing.T) {
+	m, _ := NewCreateAndroidEmulatorModal()
+	m.SetSystemImages([]device.Runtime{{Name: "API 34", Identifier: "s34", IsAvailable: true}})
+	if !m.loading {
+		t.Error("expected still loading when only system images set")
+	}
+}
+
+func TestCreateAndroidEmulatorModal_SetBothLists_ClearsLoading(t *testing.T) {
+	m, _ := NewCreateAndroidEmulatorModal()
+	m.SetDeviceProfiles([]device.DeviceType{{Name: "Pixel 8", Identifier: "pixel_8"}})
+	m.SetSystemImages([]device.Runtime{{Name: "API 34", Identifier: "s34", IsAvailable: true}})
+	if m.loading {
+		t.Error("expected loading=false after both lists set")
+	}
+}
+
+func TestCreateAndroidEmulatorModal_View_Loaded(t *testing.T) {
+	m, _ := NewCreateAndroidEmulatorModal()
+	m.SetDeviceProfiles([]device.DeviceType{{Name: "Pixel 8", Identifier: "pixel_8"}})
+	m.SetSystemImages([]device.Runtime{{Name: "API 34", Identifier: "s34", IsAvailable: true}})
+	got := m.View()
+	if !strings.Contains(got, "New Android Emulator") {
+		t.Error("expected title in loaded view")
+	}
+	if !strings.Contains(got, "API 34") {
+		t.Error("expected system image in view")
+	}
+}
+
+func TestCreateAndroidEmulatorModal_Update_Esc_Cancels(t *testing.T) {
+	m, _ := NewCreateAndroidEmulatorModal()
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if cmd == nil {
+		t.Fatal("expected command from esc")
+	}
+	if _, ok := cmd().(CancelOverlayMsg); !ok {
+		t.Error("expected CancelOverlayMsg")
+	}
+}
+
+func TestCreateAndroidEmulatorModal_Update_Tab_CyclesFocus(t *testing.T) {
+	m, _ := NewCreateAndroidEmulatorModal()
+	// Name → DeviceType
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	if m.focused != fieldDeviceType {
+		t.Errorf("expected fieldDeviceType, got %v", m.focused)
+	}
+	// DeviceType → Runtime
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	if m.focused != fieldRuntime {
+		t.Errorf("expected fieldRuntime, got %v", m.focused)
+	}
+	// Runtime → Name (wraps)
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	if m.focused != fieldName {
+		t.Errorf("expected fieldName after wrap, got %v", m.focused)
+	}
+}
+
+func TestCreateAndroidEmulatorModal_Update_ShiftTab_CyclesBack(t *testing.T) {
+	m, _ := NewCreateAndroidEmulatorModal()
+	// Name → Runtime (wraps backward)
+	m, _ = m.Update(tea.KeyPressMsg{Text: "shift+tab"})
+	if m.focused != fieldRuntime {
+		t.Errorf("expected fieldRuntime, got %v", m.focused)
+	}
+}
+
+func TestCreateAndroidEmulatorModal_Update_Enter_SubmitWhenReady(t *testing.T) {
+	m, _ := NewCreateAndroidEmulatorModal()
+	m.SetDeviceProfiles([]device.DeviceType{{Name: "Pixel 8", Identifier: "pixel_8"}})
+	m.SetSystemImages([]device.Runtime{{Name: "API 34", Identifier: "s34", IsAvailable: true}})
+	// Set name
+	m.nameInput.SetValue("MyEmulator")
+	// Focus on Runtime (the "submit" field)
+	m.focused = fieldRuntime
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected cmd on submit")
+	}
+	msg := cmd()
+	confirm, ok := msg.(ConfirmCreateAndroidEmulatorMsg)
+	if !ok {
+		t.Fatalf("expected ConfirmCreateAndroidEmulatorMsg, got %T", msg)
+	}
+	if confirm.Name != "MyEmulator" || confirm.SystemImagePkg != "s34" {
+		t.Errorf("wrong confirm: %+v", confirm)
+	}
+}
+
+func TestCreateAndroidEmulatorModal_Update_DownUp_Navigation(t *testing.T) {
+	m, _ := NewCreateAndroidEmulatorModal()
+	m.SetDeviceProfiles([]device.DeviceType{})
+	m.SetSystemImages([]device.Runtime{
+		{Name: "API 34", Identifier: "s34"},
+		{Name: "API 35", Identifier: "s35"},
+	})
+	m.focused = fieldDeviceType
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if m.imgIdx != 1 {
+		t.Errorf("expected imgIdx 1, got %d", m.imgIdx)
+	}
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	if m.imgIdx != 0 {
+		t.Errorf("expected imgIdx 0 after up, got %d", m.imgIdx)
+	}
+}
+
 func TestPlatformPickerModal(t *testing.T) {
 	m := NewPlatformPickerModal()
 
@@ -310,6 +431,70 @@ func TestPlatformPickerModal_Update_Down_NoBounce(t *testing.T) {
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // already at bottom
 	if m.idx != 1 {
 		t.Errorf("expected idx 1 at bottom, got %d", m.idx)
+	}
+}
+
+func TestCreateSimulatorModal_Esc_Cancels(t *testing.T) {
+	m, _ := NewCreateSimulatorModal()
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if cmd == nil {
+		t.Fatal("expected cmd from esc")
+	}
+	if _, ok := cmd().(CancelOverlayMsg); !ok {
+		t.Error("expected CancelOverlayMsg")
+	}
+}
+
+func TestCreateSimulatorModal_Tab_CyclesFocus(t *testing.T) {
+	m, _ := NewCreateSimulatorModal()
+	m.SetDeviceTypes([]device.DeviceType{{Name: "iPhone 16", Identifier: "i16"}})
+	m.SetRuntimes([]device.Runtime{{Name: "iOS 18", Identifier: "ios18", IsAvailable: true}})
+	// Name → DeviceType
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	if m.focused != fieldDeviceType {
+		t.Errorf("expected fieldDeviceType, got %v", m.focused)
+	}
+}
+
+func TestCreateSimulatorModal_DownUp_OnDeviceType(t *testing.T) {
+	m, _ := NewCreateSimulatorModal()
+	m.SetDeviceTypes([]device.DeviceType{
+		{Name: "iPhone 16", Identifier: "i16"},
+		{Name: "iPhone 15", Identifier: "i15"},
+	})
+	m.SetRuntimes([]device.Runtime{{Name: "iOS 18", Identifier: "ios18", IsAvailable: true}})
+	m.focused = fieldDeviceType
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if m.dtIdx != 1 {
+		t.Errorf("expected dtIdx 1, got %d", m.dtIdx)
+	}
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	if m.dtIdx != 0 {
+		t.Errorf("expected dtIdx 0 after up, got %d", m.dtIdx)
+	}
+}
+
+func TestCreateSimulatorModal_View_Loaded(t *testing.T) {
+	m, _ := NewCreateSimulatorModal()
+	m.SetDeviceTypes([]device.DeviceType{{Name: "iPhone 16", Identifier: "i16"}})
+	m.SetRuntimes([]device.Runtime{{Name: "iOS 18", Identifier: "ios18", IsAvailable: true}})
+	got := m.View()
+	if !strings.Contains(got, "iPhone 16") {
+		t.Error("expected device type in view")
+	}
+	if !strings.Contains(got, "iOS 18") {
+		t.Error("expected runtime in view")
+	}
+}
+
+func TestCreateSimulatorModal_ShiftTab_CyclesBack(t *testing.T) {
+	m, _ := NewCreateSimulatorModal()
+	m.SetDeviceTypes([]device.DeviceType{{Name: "iPhone 16", Identifier: "i16"}})
+	m.SetRuntimes([]device.Runtime{{Name: "iOS 18", Identifier: "ios18", IsAvailable: true}})
+	// Name → Runtime (wraps backward)
+	m, _ = m.Update(tea.KeyPressMsg{Text: "shift+tab"})
+	if m.focused != fieldRuntime {
+		t.Errorf("expected fieldRuntime, got %v", m.focused)
 	}
 }
 

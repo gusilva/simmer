@@ -31,6 +31,15 @@ func TestRenderFooter(t *testing.T) {
 			},
 		},
 		{
+			name: "Status warn",
+			params: FooterParams{
+				Width:  100,
+				Status: "Warning: low space",
+				Kind:   StatusWarn,
+				Help:   NewHelpModel(),
+			},
+		},
+		{
 			name: "Status error",
 			params: FooterParams{
 				Width:  100,
