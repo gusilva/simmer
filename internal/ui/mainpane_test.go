@@ -173,6 +173,92 @@ func TestMainPane_View_WithDevice_AllTabs(t *testing.T) {
 	}
 }
 
+func TestMainPane_AppendLog_Compaction(t *testing.T) {
+	m := newTestPane()
+	// Fill past the 1000-line cap to trigger compaction.
+	for i := 0; i < 1010; i++ {
+		m.AppendLog("line")
+	}
+	if len(m.logs) != 1000 {
+		t.Errorf("expected 1000 lines after compaction, got %d", len(m.logs))
+	}
+}
+
+func TestMainPane_AppendLog_BelowCap_NoCompaction(t *testing.T) {
+	m := newTestPane()
+	for i := 0; i < 500; i++ {
+		m.AppendLog("x")
+	}
+	if len(m.logs) != 500 {
+		t.Errorf("expected 500 lines, got %d", len(m.logs))
+	}
+}
+
+func TestMainPane_AppendLog_CompactionKeepsLatest(t *testing.T) {
+	m := newTestPane()
+	for i := 0; i < 1000; i++ {
+		m.AppendLog("old")
+	}
+	m.AppendLog("newest")
+	// After compaction the last line must be "newest".
+	if m.logs[len(m.logs)-1] != "newest" {
+		t.Errorf("expected last line to be 'newest', got %q", m.logs[len(m.logs)-1])
+	}
+}
+
+func TestMainPane_SyncActiveDevice_UpdatesStatusInfoField(t *testing.T) {
+	m := newTestPane()
+	dev := &device.Device{ID: "d1", Status: device.StatusRunning}
+	m.SetDevice(dev, nil)
+	m.SetInfo(device.DeviceInfo{Fields: []device.InfoField{
+		{Key: "Status", Value: "Running"},
+		{Key: "OS", Value: "iOS 17"},
+	}})
+
+	m.SyncActiveDevice([]device.Device{{ID: "d1", Status: device.StatusOff}})
+
+	// Status field in info must reflect new status.
+	found := false
+	for _, f := range m.info.Fields {
+		if f.Key == "Status" {
+			found = true
+			if f.Value != string(device.StatusOff) {
+				t.Errorf("Status field: got %q, want %q", f.Value, string(device.StatusOff))
+			}
+		}
+	}
+	if !found {
+		t.Error("Status field not found in info")
+	}
+}
+
+func TestMainPane_SetLogBundle_ClearsLogs(t *testing.T) {
+	m := newTestPane()
+	dev := &device.Device{ID: "d1", Status: device.StatusRunning}
+	m.SetDevice(dev, nil)
+	m.AppendLog("some log line")
+	m.SetLogBundle("com.new.app")
+	if len(m.logs) != 0 {
+		t.Errorf("expected logs cleared after SetLogBundle, got %d lines", len(m.logs))
+	}
+	if m.LogBundle() != "com.new.app" {
+		t.Errorf("expected bundle com.new.app, got %q", m.LogBundle())
+	}
+}
+
+func TestMainPane_HasDevice_FalseAfterSetDeviceNil(t *testing.T) {
+	m := newTestPane()
+	dev := &device.Device{ID: "d1", Status: device.StatusRunning}
+	m.SetDevice(dev, nil)
+	if !m.HasDevice() {
+		t.Error("expected HasDevice true")
+	}
+	m.SetDevice(nil, nil)
+	if m.HasDevice() {
+		t.Error("expected HasDevice false after SetDevice(nil)")
+	}
+}
+
 func TestMainPane(t *testing.T) {
 	m := NewMainPane()
 	m.SetSize(80, 24)

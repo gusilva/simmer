@@ -10,6 +10,142 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
+// ─── SetFocused / SetSize / Devices ──────────────────────────────────────
+
+func TestSidebar_SetFocused(t *testing.T) {
+	s := NewSidebar()
+	s.SetFocused(false)
+	if s.outerFocused {
+		t.Error("expected outerFocused false")
+	}
+	s.SetFocused(true)
+	if !s.outerFocused {
+		t.Error("expected outerFocused true")
+	}
+}
+
+func TestSidebar_SetSize(t *testing.T) {
+	s := NewSidebar()
+	s.SetSize(50, 30)
+	if s.Width() != 50 {
+		t.Errorf("expected width 50, got %d", s.Width())
+	}
+	// Zero width must not overwrite.
+	s.SetSize(0, 30)
+	if s.Width() != 50 {
+		t.Errorf("zero width must not change width; got %d", s.Width())
+	}
+}
+
+func TestSidebar_Devices_ReturnsAll(t *testing.T) {
+	s := NewSidebar()
+	devs := []device.Device{
+		{ID: "1", Status: device.StatusRunning, Platform: device.PlatformIOS},
+		{ID: "2", Status: device.StatusOff, Platform: device.PlatformIOS},
+		{ID: "3", Status: device.StatusOff, Platform: device.PlatformAndroid},
+	}
+	s.SetDevices(devs)
+	all := s.Devices()
+	if len(all) != 3 {
+		t.Errorf("expected 3 devices, got %d", len(all))
+	}
+}
+
+func TestSidebar_SelectedDevice_BootedEmpty(t *testing.T) {
+	s := NewSidebar()
+	// No devices loaded — focused pane is PaneBooted, which is empty.
+	sel := s.SelectedDevice()
+	if sel != nil {
+		t.Errorf("expected nil, got %v", sel)
+	}
+}
+
+func TestSidebar_SelectedDevice_Available(t *testing.T) {
+	s := NewSidebar()
+	s.SetDevices([]device.Device{
+		{ID: "avail", Name: "iPhone 14", Status: device.StatusOff, Platform: device.PlatformIOS},
+	})
+	// Switch to available pane and move past the iOS group header to the device row.
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // skip header
+	sel := s.SelectedDevice()
+	if sel == nil || sel.ID != "avail" {
+		t.Errorf("expected avail device selected, got %v", sel)
+	}
+}
+
+func TestSidebar_View_Unfocused(t *testing.T) {
+	s := NewSidebar()
+	s.SetSize(40, 30)
+	s.SetFocused(false)
+	view := s.View()
+	if view == "" {
+		t.Error("expected non-empty view")
+	}
+}
+
+func TestSidebar_ToggleGroupCollapse(t *testing.T) {
+	s := NewSidebar()
+	s.SetDevices([]device.Device{
+		{ID: "1", Name: "iPhone 14", Status: device.StatusOff, Platform: device.PlatformIOS},
+	})
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyTab}) // go to available pane
+	// availIdx=0 is the iOS header — enter toggles the current group.
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !s.iosCollapsed {
+		t.Error("expected iOS group collapsed after enter on header")
+	}
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if s.iosCollapsed {
+		t.Error("expected iOS group expanded after second enter")
+	}
+}
+
+func TestSidebar_FilterMode_ClearsOnEsc(t *testing.T) {
+	s := NewSidebar()
+	s.SetDevices([]device.Device{
+		{ID: "1", Name: "iPhone", Status: device.StatusOff, Platform: device.PlatformIOS},
+	})
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	s, _ = s.Update(tea.KeyPressMsg{Text: "f"}) // enter filter
+	s, _ = s.Update(tea.KeyPressMsg{Text: "x"})
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if s.filterMode || s.filterQuery != "" {
+		t.Error("expected filter cleared after esc")
+	}
+}
+
+func TestSidebar_BootedNavigation_UpDown(t *testing.T) {
+	s := NewSidebar()
+	s.SetDevices([]device.Device{
+		{ID: "1", Name: "A", Status: device.StatusRunning, Platform: device.PlatformIOS},
+		{ID: "2", Name: "B", Status: device.StatusRunning, Platform: device.PlatformIOS},
+	})
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if s.bootedIdx != 1 {
+		t.Errorf("expected bootedIdx 1, got %d", s.bootedIdx)
+	}
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	if s.bootedIdx != 0 {
+		t.Errorf("expected bootedIdx 0, got %d", s.bootedIdx)
+	}
+}
+
+func TestSidebar_View_WithFilter(t *testing.T) {
+	s := NewSidebar()
+	s.SetSize(40, 30)
+	s.SetDevices([]device.Device{
+		{ID: "1", Name: "iPhone 14", Status: device.StatusOff, Platform: device.PlatformIOS},
+	})
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	s, _ = s.Update(tea.KeyPressMsg{Text: "f"})
+	s, _ = s.Update(tea.KeyPressMsg{Text: "i"})
+	view := s.View()
+	if view == "" {
+		t.Error("expected non-empty view in filter mode")
+	}
+}
+
 func TestSidebar(t *testing.T) {
 	s := NewSidebar()
 
