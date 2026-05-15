@@ -37,3 +37,6 @@ go.work
 *.tmp
 /tmp 
 /.tmp
+
+# Planning tools
+.planning/
