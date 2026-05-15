@@ -36,6 +36,21 @@ type AppLister interface {
 	ListApps(ctx context.Context, id string) ([]App, error)
 }
 
+// AppDeleter is an optional interface a Manager may implement to uninstall an
+// application from a device.
+type AppDeleter interface {
+	Platform() Platform
+	DeleteApp(ctx context.Context, deviceID, bundleID string) error
+}
+
+// AppInstaller is an optional interface a Manager may implement to install an
+// application onto a device. path is platform-specific (see iosManager and
+// androidManager). scheme is the Xcode build scheme; Android ignores it.
+type AppInstaller interface {
+	Platform() Platform
+	InstallApp(ctx context.Context, deviceID, path, scheme string) error
+}
+
 // ListApps routes to the Manager that implements AppLister for the device's
 // Platform. Returns an error if no AppLister is registered for the platform.
 func (c *Coordinator) ListApps(ctx context.Context, dev Device) ([]App, error) {
@@ -50,4 +65,30 @@ func (c *Coordinator) ListApps(ctx context.Context, dev Device) ([]App, error) {
 		return a.ListApps(ctx, dev.ID)
 	}
 	return nil, fmt.Errorf("no app lister registered for platform %s", dev.Platform)
+}
+
+// InstallApp installs an app onto a device, routing to the Manager that
+// implements AppInstaller for the device's Platform.
+func (c *Coordinator) InstallApp(ctx context.Context, dev Device, path, scheme string) error {
+	for _, m := range c.Managers {
+		i, ok := m.(AppInstaller)
+		if !ok || i.Platform() != dev.Platform {
+			continue
+		}
+		return i.InstallApp(ctx, dev.ID, path, scheme)
+	}
+	return fmt.Errorf("no app installer registered for platform %s", dev.Platform)
+}
+
+// DeleteApp uninstalls the given app from a device, routing to the Manager that
+// implements AppDeleter for the device's Platform.
+func (c *Coordinator) DeleteApp(ctx context.Context, dev Device, bundleID string) error {
+	for _, m := range c.Managers {
+		d, ok := m.(AppDeleter)
+		if !ok || d.Platform() != dev.Platform {
+			continue
+		}
+		return d.DeleteApp(ctx, dev.ID, bundleID)
+	}
+	return fmt.Errorf("no app deleter registered for platform %s", dev.Platform)
 }

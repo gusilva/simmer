@@ -19,9 +19,18 @@ func (m model) View() tea.View {
 
 	footerHelp := ui.NewHelpModel()
 	footerHelp.SetWidth(m.width - 4)
+	footerStatus := m.status
+	if m.installing || m.booting {
+		spinView := m.installSpinner.View()
+		if footerStatus != "" {
+			footerStatus = spinView + " " + footerStatus
+		} else {
+			footerStatus = spinView
+		}
+	}
 	footer := ui.RenderFooter(ui.FooterParams{
 		Width:  m.width,
-		Status: m.status,
+		Status: footerStatus,
 		Kind:   m.statusKind,
 		Help:   footerHelp,
 	})
@@ -56,7 +65,7 @@ func (m model) View() tea.View {
 
 	// Primary overlays (db viewer, create/delete dialogs). Rendered before help
 	// so the help panel always sits on top.
-	if m.platformPicker != nil || m.createIOSModal != nil || m.createAndModal != nil || m.deleteAlert != nil || m.sqliteModal != nil || m.dbViewerModal != nil {
+	if m.platformPicker != nil || m.createIOSModal != nil || m.createAndModal != nil || m.deleteAlert != nil || m.deleteAppAlert != nil || m.installAppModal != nil || m.sqliteModal != nil || m.dbViewerModal != nil {
 		var overlayStr string
 		switch {
 		case m.dbViewerModal != nil:
@@ -69,6 +78,10 @@ func (m model) View() tea.View {
 			overlayStr = m.createAndModal.View()
 		case m.sqliteModal != nil:
 			overlayStr = m.sqliteModal.View()
+		case m.installAppModal != nil:
+			overlayStr = m.installAppModal.View()
+		case m.deleteAppAlert != nil:
+			overlayStr = m.deleteAppAlert.View()
 		default:
 			overlayStr = m.deleteAlert.View()
 		}

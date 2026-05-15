@@ -137,6 +137,257 @@ func (m *androidManager) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// InstallApp installs an APK (or builds one via gradle) onto an Android emulator.
+// If path ends with .apk it is installed directly; otherwise path is treated as
+// a gradle project root, where `./gradlew assembleDebug` is run first.
+func (m *androidManager) InstallApp(ctx context.Context, deviceID, path, _ string) error {
+	p := expandPath(path)
+	serial, err := findAndroidSerial(ctx, deviceID)
+	if err != nil {
+		return fmt.Errorf("find android serial: %w", err)
+	}
+	apkPath := p
+	if !strings.HasSuffix(strings.ToLower(p), ".apk") {
+		apkPath, err = gradleBuild(ctx, p)
+		if err != nil {
+			return err
+		}
+	}
+	return adbInstall(ctx, serial, apkPath)
+}
+
+func adbInstall(ctx context.Context, serial, apkPath string) error {
+	cmd := exec.CommandContext(ctx, "adb", "-s", serial, "install", "-r", apkPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			return fmt.Errorf("adb install: %w", err)
+		}
+		return fmt.Errorf("adb install: %w: %s", err, msg)
+	}
+	return nil
+}
+
+func gradleBuild(ctx context.Context, projectDir string) (string, error) {
+	info, err := os.Stat(projectDir)
+	if err != nil {
+		return "", fmt.Errorf("project path %q: %w", projectDir, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("%q is not a directory", projectDir)
+	}
+
+	gradlew := filepath.Join(projectDir, "gradlew")
+	if _, err := os.Stat(gradlew); err != nil {
+		return "", fmt.Errorf("gradlew not found in %s (not a gradle project?)", projectDir)
+	}
+
+	cmd := exec.CommandContext(ctx, gradlew, "assembleDebug")
+	cmd.Dir = projectDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		return "", fmt.Errorf("gradle assembleDebug: %w: %s", err, msg)
+	}
+
+	apk, err := findAPKInOutputs(projectDir)
+	if err != nil {
+		return "", fmt.Errorf("build succeeded but %w", err)
+	}
+	return apk, nil
+}
+
+func findAPKInOutputs(projectDir string) (string, error) {
+	outputsDir := filepath.Join(projectDir, "app", "build", "outputs", "apk")
+	var found string
+	err := filepath.Walk(outputsDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || found != "" {
+			return err
+		}
+		if !info.IsDir() && strings.HasSuffix(strings.ToLower(path), ".apk") {
+			found = path
+		}
+		return nil
+	})
+	if err != nil && found == "" {
+		return "", fmt.Errorf("no APK found in %s", outputsDir)
+	}
+	if found == "" {
+		return "", fmt.Errorf("no APK found in %s", outputsDir)
+	}
+	return found, nil
+}
+
+// DeleteApp uninstalls an app from an Android emulator via `adb uninstall`.
+func (m *androidManager) DeleteApp(ctx context.Context, deviceID, bundleID string) error {
+	serial, err := findAndroidSerial(ctx, deviceID)
+	if err != nil {
+		return fmt.Errorf("find android serial: %w", err)
+	}
+	cmd := exec.CommandContext(ctx, "adb", "-s", serial, "uninstall", bundleID)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			return fmt.Errorf("adb uninstall %s: %w", bundleID, err)
+		}
+		return fmt.Errorf("adb uninstall %s: %w: %s", bundleID, err, msg)
+	}
+	return nil
+}
+
+// StartInstall runs build → install → launch in a background goroutine and
+// streams progress events. The pipeline runs entirely outside the caller's
+// context; call BuildStream.Stop to cancel it.
+func (m *androidManager) StartInstall(dev Device, path, _ string) (*BuildStream, error) {
+	events := make(chan string, 64)
+	done := make(chan error, 1)
+	ctx, cancel := newBuildContext()
+
+	go func() {
+		defer close(events)
+		defer cancel()
+
+		p := expandPath(path)
+
+		serial, err := findAndroidSerial(ctx, dev.ID)
+		if err != nil {
+			done <- fmt.Errorf("find android serial: %w", err)
+			return
+		}
+
+		apkPath := p
+		if !strings.HasSuffix(strings.ToLower(p), ".apk") {
+			sendEvent(ctx, events, "Building…")
+			apkPath, err = gradleBuildStream(ctx, events, p)
+			if err != nil {
+				done <- err
+				return
+			}
+		}
+
+		sendEvent(ctx, events, "Installing…")
+		if err := adbInstall(ctx, serial, apkPath); err != nil {
+			done <- err
+			return
+		}
+
+		pkg, err := apkPackageName(ctx, apkPath)
+		if err != nil {
+			done <- nil
+			return
+		}
+
+		sendEvent(ctx, events, "Launching…")
+		_ = adbLaunch(ctx, serial, pkg)
+		done <- nil
+	}()
+
+	return &BuildStream{Events: events, Done: done, Stop: cancel}, nil
+}
+
+// gradleBuildStream runs ./gradlew assembleDebug and forwards filtered lines to events.
+func gradleBuildStream(ctx context.Context, events chan<- string, projectDir string) (string, error) {
+	info, err := os.Stat(projectDir)
+	if err != nil {
+		return "", fmt.Errorf("project path %q: %w", projectDir, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("%q is not a directory", projectDir)
+	}
+
+	gradlew := filepath.Join(projectDir, "gradlew")
+	if _, err := os.Stat(gradlew); err != nil {
+		return "", fmt.Errorf("gradlew not found in %s", projectDir)
+	}
+
+	cmd := exec.CommandContext(ctx, gradlew, "assembleDebug")
+	cmd.Dir = projectDir
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", fmt.Errorf("gradle stdout pipe: %w", err)
+	}
+	var stderrBuf strings.Builder
+	cmd.Stderr = &stderrBuf
+
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("gradle start: %w", err)
+	}
+
+	scanner := bufio.NewScanner(stdout)
+	for scanner.Scan() {
+		if line := filterGradleLine(scanner.Text()); line != "" {
+			sendEvent(ctx, events, line)
+		}
+	}
+
+	if err := cmd.Wait(); err != nil {
+		msg := strings.TrimSpace(stderrBuf.String())
+		if msg == "" {
+			return "", fmt.Errorf("gradle assembleDebug: %w", err)
+		}
+		return "", fmt.Errorf("gradle assembleDebug: %w: %s", err, msg)
+	}
+
+	apk, err := findAPKInOutputs(projectDir)
+	if err != nil {
+		return "", fmt.Errorf("build succeeded but %w", err)
+	}
+	return apk, nil
+}
+
+// filterGradleLine returns a short summary for interesting gradle lines, or "".
+func filterGradleLine(line string) string {
+	line = strings.TrimSpace(line)
+	switch {
+	case strings.HasPrefix(line, "> Task "):
+		return line[len("> Task "):]
+	case strings.HasPrefix(line, "BUILD SUCCESSFUL"):
+		return "Build succeeded"
+	case strings.Contains(line, "FAILED") || strings.Contains(line, "error:"):
+		return line
+	}
+	return ""
+}
+
+// apkPackageName extracts the package name from an APK via `aapt dump badging`.
+func apkPackageName(ctx context.Context, apkPath string) (string, error) {
+	out, err := exec.CommandContext(ctx, "aapt", "dump", "badging", apkPath).Output()
+	if err != nil {
+		return "", fmt.Errorf("aapt dump badging: %w", err)
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.HasPrefix(line, "package:") {
+			continue
+		}
+		for _, field := range strings.Fields(line) {
+			if strings.HasPrefix(field, "name='") {
+				pkg := strings.TrimPrefix(field, "name='")
+				pkg = strings.TrimSuffix(pkg, "'")
+				return pkg, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("package name not found in aapt output")
+}
+
+// adbLaunch launches an app on an Android device via `adb shell monkey`.
+func adbLaunch(ctx context.Context, serial, packageName string) error {
+	cmd := exec.CommandContext(ctx, "adb", "-s", serial, "shell",
+		"monkey", "-p", packageName, "-c", "android.intent.category.LAUNCHER", "1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			return fmt.Errorf("adb shell monkey: %w", err)
+		}
+		return fmt.Errorf("adb shell monkey: %w: %s", err, msg)
+	}
+	return nil
+}
+
 // ListDeviceTypes returns Android device profiles via `avdmanager list device`.
 func (m *androidManager) ListDeviceTypes(ctx context.Context) ([]DeviceType, error) {
 	out, err := exec.CommandContext(ctx, "avdmanager", "list", "device").Output()
@@ -387,8 +638,10 @@ func (m *androidManager) ListApps(ctx context.Context, id string) ([]App, error)
 		if eq < 0 {
 			continue
 		}
-		bundleID := strings.TrimSpace(after[eq+1:])
-		path := after[:eq]
+		// Clone breaks the reference to the large pkgOut backing array so it
+		// can be GC'd once this function returns.
+		bundleID := strings.Clone(strings.TrimSpace(after[eq+1:]))
+		path := strings.Clone(after[:eq])
 		if bundleID != "" {
 			byID[bundleID] = entry{path: path}
 		}
@@ -435,7 +688,8 @@ func androidFetchVersions[E any](ctx context.Context, serial string, byID map[st
 		trimmed := strings.TrimSpace(line)
 		if after, ok := strings.CutPrefix(trimmed, "Package ["); ok {
 			if before, _, ok0 := strings.Cut(after, "]"); ok0 {
-				cur = before
+				// Clone breaks the reference to the large dumpsys backing array.
+				cur = strings.Clone(before)
 			}
 			continue
 		}
@@ -447,7 +701,7 @@ func androidFetchVersions[E any](ctx context.Context, serial string, byID map[st
 		}
 		if after, ok := strings.CutPrefix(trimmed, "versionName="); ok {
 			if parts := strings.Fields(after); len(parts) > 0 {
-				result[cur] = parts[0]
+				result[cur] = strings.Clone(parts[0])
 			}
 		}
 	}

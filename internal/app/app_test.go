@@ -306,10 +306,10 @@ func TestUpdate_AppFocusedMsg_SetsStatus(t *testing.T) {
 	}
 }
 
-func TestUpdate_LogLineMsg_NonMatchingBundleID(t *testing.T) {
+func TestUpdate_LogBatchMsg_NonMatchingBundleID(t *testing.T) {
 	m := newTestModel()
 	m.logBundleID = "com.other"
-	result, _ := m.Update(logLineMsg{bundleID: "com.example", line: "log line"})
+	result, _ := m.Update(logBatchMsg{bundleID: "com.example", lines: []string{"log line"}})
 	m2 := result.(model)
 	_ = m2
 }
@@ -579,4 +579,205 @@ func TestApplyFocus_MainFocus(t *testing.T) {
 	m := newTestModel()
 	m.focus = focusMain
 	m.applyFocus()
+}
+
+// ─── clearStatusMsg with installing/booting guards ────────────────────────
+
+func TestUpdate_ClearStatusMsg_BlockedDuringInstall(t *testing.T) {
+	m := newTestModel()
+	m.status = "Building…"
+	m.statusSeq = 1
+	m.installing = true
+	result, _ := m.Update(clearStatusMsg(1))
+	m2 := result.(model)
+	if m2.status == "" {
+		t.Error("status must not clear while installing")
+	}
+}
+
+func TestUpdate_ClearStatusMsg_BlockedDuringBoot(t *testing.T) {
+	m := newTestModel()
+	m.status = "Booting…"
+	m.statusSeq = 1
+	m.booting = true
+	result, _ := m.Update(clearStatusMsg(1))
+	m2 := result.(model)
+	if m2.status == "" {
+		t.Error("status must not clear while booting")
+	}
+}
+
+// ─── logEndedMsg matching bundleID ────────────────────────────────────────
+
+func TestUpdate_LogEndedMsg_MatchingBundleID_ClearsState(t *testing.T) {
+	m := newTestModel()
+	stopCalled := false
+	m.logStream = &device.LogStream{
+		Lines: make(chan string),
+		Done:  make(chan error),
+		Stop:  func() { stopCalled = true },
+	}
+	m.logBundleID = "com.example"
+	m.logDeviceID = "device-1"
+	dev := &device.Device{ID: "device-1", Status: device.StatusRunning}
+	m.mainPane.SetDevice(dev, nil)
+	m.mainPane.SetLogBundle("com.example")
+
+	result, _ := m.Update(logEndedMsg{bundleID: "com.example"})
+	m2 := result.(model)
+
+	if m2.logStream != nil {
+		t.Error("logStream must be nil after logEndedMsg")
+	}
+	if m2.logBundleID != "" {
+		t.Errorf("logBundleID must be cleared, got %q", m2.logBundleID)
+	}
+	if m2.logDeviceID != "" {
+		t.Errorf("logDeviceID must be cleared, got %q", m2.logDeviceID)
+	}
+	if m2.mainPane.LogBundle() != "" {
+		t.Errorf("mainPane.LogBundle must be cleared, got %q", m2.mainPane.LogBundle())
+	}
+	_ = stopCalled // Stop not called by logEndedMsg; stream already ended
+}
+
+func TestUpdate_LogEndedMsg_WithError_AppendsError(t *testing.T) {
+	m := newTestModel()
+	m.logBundleID = "com.example"
+	result, _ := m.Update(logEndedMsg{bundleID: "com.example", err: errorString("stream broke")})
+	m2 := result.(model)
+	if len(m2.errs) == 0 {
+		t.Error("expected error appended")
+	}
+}
+
+// ─── discoveryMsg stops log stream when device gone ───────────────────────
+
+func TestUpdate_DiscoveryMsg_StopsLogStreamWhenDeviceGone(t *testing.T) {
+	m := newTestModel()
+	stopCalled := false
+	m.logStream = &device.LogStream{
+		Lines: make(chan string),
+		Done:  make(chan error),
+		Stop:  func() { stopCalled = true },
+	}
+	m.logBundleID = "com.example"
+	m.logDeviceID = "device-1"
+
+	// discoveryMsg with no devices → mainPane has no device → stream must stop
+	result, _ := m.Update(discoveryMsg{})
+	m2 := result.(model)
+
+	if !stopCalled {
+		t.Error("Stop must be called when device disappears")
+	}
+	if m2.logStream != nil {
+		t.Error("logStream must be nil after device disappears")
+	}
+	if m2.logBundleID != "" {
+		t.Errorf("logBundleID must be cleared, got %q", m2.logBundleID)
+	}
+}
+
+// ─── bootPollMsg clears booting at last poll ─────────────────────────────
+
+func TestUpdate_BootPollMsg_LastPoll_ClearsBooting(t *testing.T) {
+	m := newTestModel()
+	m.booting = true
+	dev := device.Device{ID: "abc", Status: device.StatusOff}
+	m.sidebar.SetDevices([]device.Device{dev})
+	result, _ := m.Update(bootPollMsg{device: dev, remaining: 1})
+	m2 := result.(model)
+	if m2.booting {
+		t.Error("booting must be false after last poll")
+	}
+}
+
+func TestUpdate_BootPollMsg_DeviceRunning_ClearsBooting(t *testing.T) {
+	m := newTestModel()
+	m.booting = true
+	dev := device.Device{ID: "abc", Status: device.StatusRunning}
+	m.sidebar.SetDevices([]device.Device{dev})
+	result, _ := m.Update(bootPollMsg{device: dev, remaining: 5})
+	m2 := result.(model)
+	if m2.booting {
+		t.Error("booting must be false when device confirmed running")
+	}
+}
+
+// ─── bootResultMsg Android stays booting ─────────────────────────────────
+
+func TestUpdate_BootResultMsg_Android_KeepsBooting(t *testing.T) {
+	m := newTestModel()
+	m.booting = true
+	dev := device.Device{Name: "Pixel", Platform: device.PlatformAndroid}
+	result, _ := m.Update(bootResultMsg{device: dev})
+	m2 := result.(model)
+	// Android boot starts poll; booting flag remains until poll resolves.
+	if !m2.booting {
+		t.Error("booting must stay true until Android poll confirms running")
+	}
+}
+
+func TestUpdate_BootResultMsg_IOS_ClearsBooting(t *testing.T) {
+	m := newTestModel()
+	m.booting = true
+	dev := device.Device{Name: "iPhone", Platform: device.PlatformIOS}
+	result, _ := m.Update(bootResultMsg{device: dev})
+	m2 := result.(model)
+	if m2.booting {
+		t.Error("booting must be false after iOS boot result")
+	}
+}
+
+// ─── buildDoneMsg clears installing ──────────────────────────────────────
+
+func TestUpdate_BuildDoneMsg_ClearsInstalling(t *testing.T) {
+	m := newTestModel()
+	m.installing = true
+	result, _ := m.Update(buildDoneMsg{deviceID: "d1"})
+	m2 := result.(model)
+	if m2.installing {
+		t.Error("installing must be false after buildDoneMsg")
+	}
+}
+
+func TestUpdate_BuildDoneMsg_Error_AppendsError(t *testing.T) {
+	m := newTestModel()
+	m.installing = true
+	result, _ := m.Update(buildDoneMsg{err: errorString("build failed")})
+	m2 := result.(model)
+	if len(m2.errs) == 0 {
+		t.Error("expected error appended")
+	}
+	if m2.installing {
+		t.Error("installing must be false even on error")
+	}
+}
+
+// ─── StopLogStreamMsg with active stream ─────────────────────────────────
+
+func TestUpdate_StopLogStreamMsg_WithActiveStream(t *testing.T) {
+	m := newTestModel()
+	stopCalled := false
+	m.logStream = &device.LogStream{
+		Lines: make(chan string),
+		Done:  make(chan error),
+		Stop:  func() { stopCalled = true },
+	}
+	m.logBundleID = "com.example"
+	m.logDeviceID = "device-1"
+
+	result, _ := m.Update(ui.StopLogStreamMsg{})
+	m2 := result.(model)
+
+	if !stopCalled {
+		t.Error("Stop must be called")
+	}
+	if m2.logStream != nil {
+		t.Error("logStream must be nil")
+	}
+	if m2.logBundleID != "" || m2.logDeviceID != "" {
+		t.Error("log bundle/device IDs must be cleared")
+	}
 }

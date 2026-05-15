@@ -9,6 +9,7 @@ import (
 	"simmer/internal/ui/dbviewer"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/bubbles/v2/spinner"
 )
 
 func (m model) Init() tea.Cmd {
@@ -59,12 +60,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// ctrl+d toggles the DB viewer regardless of focus or overlay state.
+		// [TODO] remove it. Used only for testing and debugging.
 		if msg.String() == "ctrl+d" {
 			if m.dbViewerModal != nil {
 				m.dbViewerModal = nil
 				return m, nil
 			}
-			if m.platformPicker == nil && m.createIOSModal == nil && m.createAndModal == nil && m.deleteAlert == nil && m.sqliteModal == nil {
+			if m.platformPicker == nil && m.createIOSModal == nil && m.createAndModal == nil && m.deleteAlert == nil && m.deleteAppAlert == nil && m.installAppModal == nil && m.sqliteModal == nil {
 				modal := dbviewer.New(func() tea.Msg { return ui.CancelOverlayMsg{} })
 				modal.SetSize(m.width, m.height)
 				m.dbViewerModal = &modal
@@ -91,6 +93,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.deleteAlert != nil {
 			updated, cmd := m.deleteAlert.Update(msg)
 			m.deleteAlert = &updated
+			return m, cmd
+		}
+		if m.deleteAppAlert != nil {
+			updated, cmd := m.deleteAppAlert.Update(msg)
+			m.deleteAppAlert = &updated
+			return m, cmd
+		}
+		if m.installAppModal != nil {
+			updated, cmd := m.installAppModal.Update(msg)
+			m.installAppModal = &updated
 			return m, cmd
 		}
 		if m.sqliteModal != nil {
@@ -132,7 +144,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if sel == nil || sel.Status == device.StatusRunning {
 				return m, nil
 			}
-			return m, m.bootDeviceCmd(*sel)
+			m.booting = true
+			return m, tea.Batch(
+				m.bootDeviceCmd(*sel),
+				m.setStatus("Booting "+sel.Name+"…", ui.StatusInfo),
+				tea.Cmd(m.installSpinner.Tick),
+			)
 		case "s":
 			sel := m.sidebar.SelectedDevice()
 			if sel == nil || sel.Status != device.StatusRunning {
@@ -143,6 +160,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			sel := m.sidebar.SelectedDevice()
 			if sel == nil || sel.Status != device.StatusRunning {
 				return m, nil
+			}
+
+			if m.logStream != nil {
+				m.logStream.Stop()
+				m.logStream = nil
+				m.logBundleID = ""
+				m.logDeviceID = ""
+				m.mainPane.SetLogBundle("")
 			}
 
 			m.focus = focusMain
@@ -168,6 +193,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			updated, cmd := m.sqliteModal.Update(msg)
 			m.sqliteModal = &updated
 			return m, cmd
+		}
+		return m, nil
+
+	case spinner.TickMsg:
+		if m.installing || m.booting {
+			var spinCmd tea.Cmd
+			m.installSpinner, spinCmd = m.installSpinner.Update(msg)
+			return m, spinCmd
 		}
 		return m, nil
 
@@ -197,35 +230,43 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.androidCount = android
 		m.sidebar.SetDevices(msg.Devices)
 		m.mainPane.SyncActiveDevice(msg.Devices)
+		if !m.mainPane.HasDevice() && m.logStream != nil {
+			m.logStream.Stop()
+			m.logStream = nil
+			m.logBundleID = ""
+			m.logDeviceID = ""
+		}
 		return m, nil
 
 	case bootResultMsg:
 		if msg.err != nil {
+			m.booting = false
 			m.errs = append(m.errs, msg.err)
-
 			return m, m.setStatus("boot failed: "+errPreview(msg.err), ui.StatusErr)
 		}
 
 		m.loading = true
 
-		cmds := []tea.Cmd{
-			m.fetchDevicesCmd(),
-			m.setStatus("booted "+msg.device.Name, ui.StatusOk),
-		}
-
 		if msg.device.Platform == device.PlatformAndroid {
-			// Emulator registers with adb asynchronously; poll until it appears.
-			cmds = append(cmds, scheduleBootPoll(msg.device, 15))
+			// Emulator registers with adb asynchronously; keep spinner and poll
+			// until adb confirms it's running before clearing booting state.
+			return m, tea.Batch(m.fetchDevicesCmd(), scheduleBootPoll(msg.device, 15))
 		}
 
-		return m, tea.Batch(cmds...)
+		m.booting = false
+		return m, tea.Batch(m.fetchDevicesCmd(), m.setStatus("booted "+msg.device.Name, ui.StatusOk))
 
 	case bootPollMsg:
 		// Check if the device now shows as running; if so, stop polling.
 		for _, dev := range m.sidebar.Devices() {
 			if dev.ID == msg.device.ID && dev.Status == device.StatusRunning {
-				return m, nil
+				m.booting = false
+				return m, m.setStatus("booted "+msg.device.Name, ui.StatusOk)
 			}
+		}
+
+		if msg.remaining-1 <= 0 {
+			m.booting = false
 		}
 
 		return m, tea.Batch(
@@ -293,7 +334,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.setStatus("app: "+msg.App.Label(), ui.StatusInfo)
 
 	case clearStatusMsg:
-		if int(msg) == m.statusSeq {
+		if int(msg) == m.statusSeq && !m.installing && !m.booting {
 			m.status = ""
 		}
 
@@ -358,22 +399,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.logDeviceID = sel.ID
 		m.mainPane.SetLogBundle(bundleID)
 		return m, tea.Batch(
-			nextLogLineCmd(stream, bundleID),
+			nextLogBatchCmd(stream, bundleID),
 			m.setStatus("streaming "+bundleID, ui.StatusOk),
 		)
 
-	case logLineMsg:
+	case logBatchMsg:
 		if msg.bundleID != m.logBundleID || m.logStream == nil {
 			return m, nil
 		}
-		m.mainPane.AppendLog(msg.line)
-		return m, nextLogLineCmd(m.logStream, m.logBundleID)
+		for _, line := range msg.lines {
+			m.mainPane.AppendLog(line)
+		}
+		return m, nextLogBatchCmd(m.logStream, m.logBundleID)
 
 	case logEndedMsg:
 		if msg.bundleID != m.logBundleID {
 			return m, nil
 		}
 		m.logStream = nil
+		m.logBundleID = ""
+		m.logDeviceID = ""
+		m.mainPane.SetLogBundle("")
 		if msg.err != nil {
 			m.errs = append(m.errs, msg.err)
 			return m, m.setStatus("stream ended: "+errPreview(msg.err), ui.StatusWarn)
@@ -399,6 +445,75 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ui.ShowDeleteSimulatorMsg:
 		alert := ui.NewDeleteSimulatorAlert(msg.Device)
 		m.deleteAlert = &alert
+		return m, nil
+
+	case ui.ShowInstallAppMsg:
+		modal, focusCmd := ui.NewInstallAppModal(msg.Device)
+		m.installAppModal = &modal
+		return m, focusCmd
+
+	case ui.RequestXcodeSchemesMsg:
+		return m, fetchXcodeSchemesCmd(msg.Path)
+
+	case xcodeSchemesMsg:
+		if m.installAppModal != nil {
+			if msg.err != nil {
+				m.installAppModal.SetSchemesError(msg.err.Error())
+			} else {
+				m.installAppModal.SetSchemes(msg.schemes)
+			}
+		}
+		return m, nil
+
+	case ui.ConfirmInstallAppMsg:
+		m.installAppModal = nil
+		if m.buildStream != nil {
+			m.buildStream.Stop()
+			m.buildStream = nil
+		}
+		m.installing = true
+		return m, tea.Batch(
+			m.startInstallCmd(msg.Device, msg.Path, msg.Scheme),
+			m.setStatus("Starting build…", ui.StatusInfo),
+			tea.Cmd(m.installSpinner.Tick),
+		)
+
+	case buildStartedMsg:
+		m.buildStream = msg.stream
+		m.buildDeviceID = msg.device.ID
+		return m, nextBuildEventCmd(msg.stream, msg.device.ID)
+
+	case buildEventMsg:
+		if m.buildStream == nil || msg.deviceID != m.buildDeviceID {
+			return m, nil
+		}
+		return m, tea.Batch(
+			m.setStatus(msg.text, ui.StatusInfo),
+			nextBuildEventCmd(m.buildStream, msg.deviceID),
+		)
+
+	case buildDoneMsg:
+		stream := m.buildStream
+		m.buildStream = nil
+		m.buildDeviceID = ""
+		m.installing = false
+		if stream != nil {
+			stream.Stop()
+		}
+		if msg.err != nil {
+			m.errs = append(m.errs, msg.err)
+			return m, m.setStatus("install failed: "+errPreview(msg.err), ui.StatusErr)
+		}
+		sel := m.sidebar.SelectedDevice()
+		var reloadCmd tea.Cmd
+		if sel != nil && sel.ID == msg.deviceID {
+			reloadCmd = m.loadAppsCmd(*sel)
+		}
+		return m, tea.Batch(reloadCmd, m.setStatus("Installed & launched", ui.StatusOk))
+
+	case ui.ShowDeleteAppMsg:
+		alert := ui.NewDeleteAppAlert(msg.Device, msg.App)
+		m.deleteAppAlert = &alert
 		return m, nil
 
 	case ui.ShowSQLiteViewerMsg:
@@ -447,6 +562,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.createIOSModal = nil
 		m.createAndModal = nil
 		m.deleteAlert = nil
+		m.deleteAppAlert = nil
+		m.installAppModal = nil
 		m.sqliteModal = nil
 		m.dbViewerModal = nil
 		return m, nil
@@ -462,6 +579,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ui.ConfirmDeleteSimulatorMsg:
 		m.deleteAlert = nil
 		return m, m.deleteDeviceCmd(msg.Device)
+
+	case ui.ConfirmDeleteAppMsg:
+		m.deleteAppAlert = nil
+		return m, m.deleteAppCmd(msg.Device, msg.App)
+
+	case deleteAppResultMsg:
+		if msg.err != nil {
+			m.errs = append(m.errs, msg.err)
+			return m, m.setStatus("delete app failed: "+errPreview(msg.err), ui.StatusErr)
+		}
+		sel := m.sidebar.SelectedDevice()
+		var reloadCmd tea.Cmd
+		if sel != nil && sel.ID == msg.deviceID {
+			reloadCmd = m.loadAppsCmd(*sel)
+		}
+		return m, tea.Batch(
+			reloadCmd,
+			m.setStatus("deleted "+msg.appLabel, ui.StatusOk),
+		)
 
 	case deviceTypesMsg:
 		if msg.err != nil {
@@ -551,6 +687,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	default:
 		// Forward unrecognised messages (e.g. private filepicker readDirMsg) to
 		// whichever overlay is active so embedded components can process them.
+		if m.installAppModal != nil {
+			updated, cmd := m.installAppModal.Update(msg)
+			m.installAppModal = &updated
+			return m, cmd
+		}
 		if m.dbViewerModal != nil {
 			updated, cmd := m.dbViewerModal.Update(msg)
 			m.dbViewerModal = &updated

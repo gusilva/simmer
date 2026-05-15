@@ -29,6 +29,28 @@ func TestDBConfig_EffectiveTablesQuery(t *testing.T) {
 	}
 }
 
+// ---------- Config.EffectiveTablesQuery ----------
+
+func TestConfig_EffectiveTablesQuery(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		want  string
+	}{
+		{"empty uses default", "", DefaultTablesQuery},
+		{"whitespace uses default", "  ", DefaultTablesQuery},
+		{"custom returned as-is", "SELECT name FROM x;", "SELECT name FROM x;"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := Config{TablesQuery: tc.query}
+			if got := c.EffectiveTablesQuery(); got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // ---------- Config.ForDB ----------
 
 func TestConfig_ForDB_NoEntry(t *testing.T) {
