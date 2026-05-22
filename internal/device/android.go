@@ -12,13 +12,17 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"simmer/internal/logging"
 )
 
-type androidManager struct{}
+type androidManager struct {
+	logger *logging.Logger
+}
 
 // NewAndroidManager returns a Manager implementation for Android emulators.
-func NewAndroidManager() Manager {
-	return &androidManager{}
+func NewAndroidManager(logger *logging.Logger) Manager {
+	return &androidManager{logger: logger}
 }
 
 // Platform reports the platform this manager handles.
@@ -29,8 +33,11 @@ func (m *androidManager) Platform() Platform { return PlatformAndroid }
 // closed; the context is intentionally not forwarded to the child process so
 // the 30-second boot timeout doesn't kill the emulator window.
 func (m *androidManager) Boot(_ context.Context, id string) error {
-	cmd := exec.Command("emulator", "-avd", id)
-	if err := cmd.Start(); err != nil {
+	args := []string{"-avd", id}
+	cmd := exec.Command("emulator", args...)
+	err := cmd.Start()
+	m.logger.LogStart("emulator", args, err)
+	if err != nil {
 		return fmt.Errorf("emulator -avd %s: %w", id, err)
 	}
 
@@ -49,6 +56,7 @@ func (m *androidManager) Shutdown(ctx context.Context, id string) error {
 
 	cmd := exec.CommandContext(ctx, "adb", "-s", serial, "emu", "kill")
 	out, err := cmd.CombinedOutput()
+	m.logger.LogExec("adb", []string{"-s", serial, "emu", "kill"}, string(out), err)
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
 		if msg == "" {
@@ -114,6 +122,7 @@ func (m *androidManager) Create(ctx context.Context, name, deviceProfileID, syst
 	// avdmanager may prompt "Do you wish to create a custom hardware profile?"
 	cmd.Stdin = strings.NewReader("no\n")
 	out, err := cmd.CombinedOutput()
+	m.logger.LogExec("avdmanager", args, string(out), err)
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
 		if msg == "" {
@@ -127,6 +136,7 @@ func (m *androidManager) Create(ctx context.Context, name, deviceProfileID, syst
 func (m *androidManager) Delete(ctx context.Context, id string) error {
 	cmd := exec.CommandContext(ctx, "avdmanager", "delete", "avd", "--name", id)
 	out, err := cmd.CombinedOutput()
+	m.logger.LogExec("avdmanager", []string{"delete", "avd", "--name", id}, string(out), err)
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
 		if msg == "" {
@@ -148,17 +158,18 @@ func (m *androidManager) InstallApp(ctx context.Context, deviceID, path, _ strin
 	}
 	apkPath := p
 	if !strings.HasSuffix(strings.ToLower(p), ".apk") {
-		apkPath, err = gradleBuild(ctx, p)
+		apkPath, err = gradleBuild(ctx, m.logger, p)
 		if err != nil {
 			return err
 		}
 	}
-	return adbInstall(ctx, serial, apkPath)
+	return adbInstall(ctx, m.logger, serial, apkPath)
 }
 
-func adbInstall(ctx context.Context, serial, apkPath string) error {
+func adbInstall(ctx context.Context, logger *logging.Logger, serial, apkPath string) error {
 	cmd := exec.CommandContext(ctx, "adb", "-s", serial, "install", "-r", apkPath)
 	out, err := cmd.CombinedOutput()
+	logger.LogExec("adb", []string{"-s", serial, "install", "-r", apkPath}, string(out), err)
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
 		if msg == "" {
@@ -169,7 +180,7 @@ func adbInstall(ctx context.Context, serial, apkPath string) error {
 	return nil
 }
 
-func gradleBuild(ctx context.Context, projectDir string) (string, error) {
+func gradleBuild(ctx context.Context, logger *logging.Logger, projectDir string) (string, error) {
 	info, err := os.Stat(projectDir)
 	if err != nil {
 		return "", fmt.Errorf("project path %q: %w", projectDir, err)
@@ -186,6 +197,7 @@ func gradleBuild(ctx context.Context, projectDir string) (string, error) {
 	cmd := exec.CommandContext(ctx, gradlew, "assembleDebug")
 	cmd.Dir = projectDir
 	out, err := cmd.CombinedOutput()
+	logger.LogExec(gradlew, []string{"assembleDebug"}, string(out), err)
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
 		return "", fmt.Errorf("gradle assembleDebug: %w: %s", err, msg)
@@ -227,6 +239,7 @@ func (m *androidManager) DeleteApp(ctx context.Context, deviceID, bundleID strin
 	}
 	cmd := exec.CommandContext(ctx, "adb", "-s", serial, "uninstall", bundleID)
 	out, err := cmd.CombinedOutput()
+	m.logger.LogExec("adb", []string{"-s", serial, "uninstall", bundleID}, string(out), err)
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
 		if msg == "" {
@@ -260,7 +273,7 @@ func (m *androidManager) StartInstall(dev Device, path, _ string) (*BuildStream,
 		apkPath := p
 		if !strings.HasSuffix(strings.ToLower(p), ".apk") {
 			sendEvent(ctx, events, "Building…")
-			apkPath, err = gradleBuildStream(ctx, events, p)
+			apkPath, err = gradleBuildStream(ctx, m.logger, events, p)
 			if err != nil {
 				done <- err
 				return
@@ -268,7 +281,7 @@ func (m *androidManager) StartInstall(dev Device, path, _ string) (*BuildStream,
 		}
 
 		sendEvent(ctx, events, "Installing…")
-		if err := adbInstall(ctx, serial, apkPath); err != nil {
+		if err := adbInstall(ctx, m.logger, serial, apkPath); err != nil {
 			done <- err
 			return
 		}
@@ -288,7 +301,7 @@ func (m *androidManager) StartInstall(dev Device, path, _ string) (*BuildStream,
 }
 
 // gradleBuildStream runs ./gradlew assembleDebug and forwards filtered lines to events.
-func gradleBuildStream(ctx context.Context, events chan<- string, projectDir string) (string, error) {
+func gradleBuildStream(ctx context.Context, logger *logging.Logger, events chan<- string, projectDir string) (string, error) {
 	info, err := os.Stat(projectDir)
 	if err != nil {
 		return "", fmt.Errorf("project path %q: %w", projectDir, err)
@@ -313,8 +326,10 @@ func gradleBuildStream(ctx context.Context, events chan<- string, projectDir str
 	cmd.Stderr = &stderrBuf
 
 	if err := cmd.Start(); err != nil {
+		logger.LogStart(gradlew, []string{"assembleDebug"}, err)
 		return "", fmt.Errorf("gradle start: %w", err)
 	}
+	logger.LogStart(gradlew, []string{"assembleDebug"}, nil)
 
 	scanner := bufio.NewScanner(stdout)
 	for scanner.Scan() {
@@ -324,6 +339,7 @@ func gradleBuildStream(ctx context.Context, events chan<- string, projectDir str
 	}
 
 	if err := cmd.Wait(); err != nil {
+		logger.LogExec(gradlew, []string{"assembleDebug"}, stderrBuf.String(), err)
 		msg := strings.TrimSpace(stderrBuf.String())
 		if msg == "" {
 			return "", fmt.Errorf("gradle assembleDebug: %w", err)
@@ -391,6 +407,7 @@ func adbLaunch(ctx context.Context, serial, packageName string) error {
 // ListDeviceTypes returns Android device profiles via `avdmanager list device`.
 func (m *androidManager) ListDeviceTypes(ctx context.Context) ([]DeviceType, error) {
 	out, err := exec.CommandContext(ctx, "avdmanager", "list", "device").Output()
+	m.logger.LogExec("avdmanager", []string{"list", "device"}, string(out), err)
 	if err != nil {
 		return nil, fmt.Errorf("avdmanager list device: %w", err)
 	}
@@ -555,6 +572,7 @@ func (m *androidManager) ListDevices(ctx context.Context) ([]Device, error) {
 func (m *androidManager) getAVDs(ctx context.Context) ([]string, error) {
 	cmd := exec.CommandContext(ctx, "emulator", "-list-avds")
 	output, err := cmd.Output()
+	m.logger.LogExec("emulator", []string{"-list-avds"}, string(output), err)
 	if err != nil {
 		return nil, fmt.Errorf("failed to run emulator -list-avds: %w", err)
 	}
@@ -576,6 +594,7 @@ func parseAVDs(output []byte) []string {
 func (m *androidManager) getRunningDevices(ctx context.Context) (map[string]bool, error) {
 	cmd := exec.CommandContext(ctx, "adb", "devices")
 	output, err := cmd.Output()
+	m.logger.LogExec("adb", []string{"devices"}, string(output), err)
 	if err != nil {
 		return nil, fmt.Errorf("failed to run adb devices: %w", err)
 	}

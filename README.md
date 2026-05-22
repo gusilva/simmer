@@ -96,6 +96,43 @@ Local builds default to `dev` unless you set the linker variable manually.
 go test ./... -v
 ```
 
+## 📝 Logging
+
+Simmer can write a structured JSON log of every command it runs against the iOS and Android toolchains.
+
+Logging is **off by default**. Pass `--log` to enable it:
+
+```bash
+go run ./cmd/simmer --log
+```
+
+Logs are appended to `$HOME/.config/simmer/log.json`. Each entry is a single JSON line:
+
+```json
+{"time":"2026-05-22T10:00:00Z","level":"INFO","cmd":"xcrun simctl boot ABC-123"}
+{"time":"2026-05-22T10:00:01Z","level":"ERROR","cmd":"adb devices","msg":"exit status 1"}
+{"time":"2026-05-22T10:00:02Z","level":"TRACE","cmd":"emulator -list-avds","output":"Pixel_7\nPixel_8"}
+```
+
+### Log levels
+
+Control verbosity with `--log-level` (default: `INFO`):
+
+| Level | What is recorded |
+|-------|-----------------|
+| `ERROR` | Commands that returned an error |
+| `WARN` | Commands that produced output (potential warnings) + errors |
+| `INFO` | Every command executed (default) |
+| `TRACE` | Every command with its full combined output |
+
+```bash
+# Capture everything — command + full output
+go run ./cmd/simmer --log --log-level TRACE
+
+# Only see what failed
+go run ./cmd/simmer --log --log-level ERROR
+```
+
 ## 🔬 Profiling & Heap Analysis
 
 > **Dev only.** Profiling is compiled out of release binaries (`-tags release`). Run a dev build to use these flags.

@@ -15,13 +15,17 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"simmer/internal/logging"
 )
 
-type iosManager struct{}
+type iosManager struct {
+	logger *logging.Logger
+}
 
 // NewIOSManager returns a Manager implementation for Apple iOS simulators.
-func NewIOSManager() Manager {
-	return &iosManager{}
+func NewIOSManager(logger *logging.Logger) Manager {
+	return &iosManager{logger: logger}
 }
 
 type simctlList struct {
@@ -62,6 +66,7 @@ func (m *iosManager) Platform() Platform { return PlatformIOS }
 func (m *iosManager) Boot(ctx context.Context, id string) error {
 	cmd := exec.CommandContext(ctx, "xcrun", "simctl", "boot", id)
 	out, err := cmd.CombinedOutput()
+	m.logger.LogExec("xcrun", []string{"simctl", "boot", id}, string(out), err)
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
 		if msg == "" {
@@ -76,6 +81,7 @@ func (m *iosManager) Boot(ctx context.Context, id string) error {
 func (m *iosManager) Shutdown(ctx context.Context, id string) error {
 	cmd := exec.CommandContext(ctx, "xcrun", "simctl", "shutdown", id)
 	out, err := cmd.CombinedOutput()
+	m.logger.LogExec("xcrun", []string{"simctl", "shutdown", id}, string(out), err)
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
 		if msg == "" {
@@ -379,6 +385,7 @@ type simctlRuntimesList struct {
 func (m *iosManager) Create(ctx context.Context, name, deviceTypeID, runtimeID string) (string, error) {
 	cmd := exec.CommandContext(ctx, "xcrun", "simctl", "create", name, deviceTypeID, runtimeID)
 	out, err := cmd.CombinedOutput()
+	m.logger.LogExec("xcrun", []string{"simctl", "create", name, deviceTypeID, runtimeID}, string(out), err)
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
 		if msg == "" {
@@ -396,7 +403,7 @@ func (m *iosManager) InstallApp(ctx context.Context, deviceID, path, scheme stri
 	lower := strings.ToLower(p)
 
 	if strings.HasSuffix(lower, ".app") || strings.HasSuffix(lower, ".ipa") {
-		return simctlInstall(ctx, deviceID, p)
+		return simctlInstall(ctx, m.logger, deviceID, p)
 	}
 
 	derivedData, err := os.MkdirTemp("", "simmer-build-*")
@@ -405,16 +412,17 @@ func (m *iosManager) InstallApp(ctx context.Context, deviceID, path, scheme stri
 	}
 	defer os.RemoveAll(derivedData)
 
-	appPath, err := xcodeBuild(ctx, p, scheme, derivedData)
+	appPath, err := xcodeBuild(ctx, m.logger, p, scheme, derivedData)
 	if err != nil {
 		return err
 	}
-	return simctlInstall(ctx, deviceID, appPath)
+	return simctlInstall(ctx, m.logger, deviceID, appPath)
 }
 
-func simctlInstall(ctx context.Context, deviceID, appPath string) error {
+func simctlInstall(ctx context.Context, logger *logging.Logger, deviceID, appPath string) error {
 	cmd := exec.CommandContext(ctx, "xcrun", "simctl", "install", deviceID, appPath)
 	out, err := cmd.CombinedOutput()
+	logger.LogExec("xcrun", []string{"simctl", "install", deviceID, appPath}, string(out), err)
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
 		if msg == "" {
@@ -425,7 +433,7 @@ func simctlInstall(ctx context.Context, deviceID, appPath string) error {
 	return nil
 }
 
-func xcodeBuild(ctx context.Context, projectPath, scheme, derivedData string) (string, error) {
+func xcodeBuild(ctx context.Context, logger *logging.Logger, projectPath, scheme, derivedData string) (string, error) {
 	lower := strings.ToLower(projectPath)
 	projectFlag := "-project"
 	if strings.HasSuffix(lower, ".xcworkspace") {
@@ -441,6 +449,7 @@ func xcodeBuild(ctx context.Context, projectPath, scheme, derivedData string) (s
 	}
 	cmd := exec.CommandContext(ctx, "xcodebuild", args...)
 	out, err := cmd.CombinedOutput()
+	logger.LogExec("xcodebuild", args, string(out), err)
 	if err != nil {
 		return "", fmt.Errorf("xcodebuild: %w: %s", err, trimBuildOutput(string(out)))
 	}
@@ -603,8 +612,12 @@ func listSchemesViaXcodebuild(ctx context.Context, projectPath string) ([]string
 
 func parseXcodeSchemes(data []byte) ([]string, error) {
 	var v struct {
-		Workspace struct{ Schemes []string `json:"schemes"` } `json:"workspace"`
-		Project   struct{ Schemes []string `json:"schemes"` } `json:"project"`
+		Workspace struct {
+			Schemes []string `json:"schemes"`
+		} `json:"workspace"`
+		Project struct {
+			Schemes []string `json:"schemes"`
+		} `json:"project"`
 	}
 	if err := json.Unmarshal(data, &v); err != nil {
 		return nil, fmt.Errorf("parse schemes: %w", err)
@@ -623,6 +636,7 @@ func parseXcodeSchemes(data []byte) ([]string, error) {
 func (m *iosManager) DeleteApp(ctx context.Context, deviceID, bundleID string) error {
 	cmd := exec.CommandContext(ctx, "xcrun", "simctl", "uninstall", deviceID, bundleID)
 	out, err := cmd.CombinedOutput()
+	m.logger.LogExec("xcrun", []string{"simctl", "uninstall", deviceID, bundleID}, string(out), err)
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
 		if msg == "" {
@@ -661,7 +675,7 @@ func (m *iosManager) StartInstall(dev Device, path, scheme string) (*BuildStream
 			defer os.RemoveAll(derivedData)
 
 			sendEvent(ctx, events, "Building "+scheme+"…")
-			built, err := xcodeBuildStream(ctx, events, p, scheme, derivedData)
+			built, err := xcodeBuildStream(ctx, m.logger, events, p, scheme, derivedData)
 			if err != nil {
 				done <- err
 				return
@@ -670,7 +684,7 @@ func (m *iosManager) StartInstall(dev Device, path, scheme string) (*BuildStream
 		}
 
 		sendEvent(ctx, events, "Installing…")
-		if err := simctlInstall(ctx, dev.ID, appPath); err != nil {
+		if err := simctlInstall(ctx, m.logger, dev.ID, appPath); err != nil {
 			done <- err
 			return
 		}
@@ -691,7 +705,7 @@ func (m *iosManager) StartInstall(dev Device, path, scheme string) (*BuildStream
 }
 
 // xcodeBuildStream runs xcodebuild and forwards filtered output to events.
-func xcodeBuildStream(ctx context.Context, events chan<- string, projectPath, scheme, derivedData string) (string, error) {
+func xcodeBuildStream(ctx context.Context, logger *logging.Logger, events chan<- string, projectPath, scheme, derivedData string) (string, error) {
 	lower := strings.ToLower(projectPath)
 	projectFlag := "-project"
 	if strings.HasSuffix(lower, ".xcworkspace") {
@@ -715,8 +729,10 @@ func xcodeBuildStream(ctx context.Context, events chan<- string, projectPath, sc
 	cmd.Stderr = &stderrBuf
 
 	if err := cmd.Start(); err != nil {
+		logger.LogStart("xcodebuild", args, err)
 		return "", fmt.Errorf("xcodebuild start: %w", err)
 	}
+	logger.LogStart("xcodebuild", args, nil)
 
 	scanner := bufio.NewScanner(stdout)
 	for scanner.Scan() {
@@ -726,6 +742,7 @@ func xcodeBuildStream(ctx context.Context, events chan<- string, projectPath, sc
 	}
 
 	if err := cmd.Wait(); err != nil {
+		logger.LogExec("xcodebuild", args, stderrBuf.String(), err)
 		msg := trimBuildOutput(stderrBuf.String())
 		if msg == "" {
 			return "", fmt.Errorf("xcodebuild: %w", err)
@@ -796,6 +813,7 @@ func simctlLaunch(ctx context.Context, deviceID, bundleID string) error {
 func (m *iosManager) Delete(ctx context.Context, id string) error {
 	cmd := exec.CommandContext(ctx, "xcrun", "simctl", "delete", id)
 	out, err := cmd.CombinedOutput()
+	m.logger.LogExec("xcrun", []string{"simctl", "delete", id}, string(out), err)
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
 		if msg == "" {
@@ -808,6 +826,7 @@ func (m *iosManager) Delete(ctx context.Context, id string) error {
 
 func (m *iosManager) ListDeviceTypes(ctx context.Context) ([]DeviceType, error) {
 	out, err := exec.CommandContext(ctx, "xcrun", "simctl", "list", "devicetypes", "--json").Output()
+	m.logger.LogExec("xcrun", []string{"simctl", "list", "devicetypes", "--json"}, string(out), err)
 	if err != nil {
 		return nil, fmt.Errorf("xcrun simctl list devicetypes: %w", err)
 	}
@@ -824,6 +843,7 @@ func (m *iosManager) ListDeviceTypes(ctx context.Context) ([]DeviceType, error) 
 
 func (m *iosManager) ListRuntimes(ctx context.Context) ([]Runtime, error) {
 	out, err := exec.CommandContext(ctx, "xcrun", "simctl", "list", "runtimes", "--json").Output()
+	m.logger.LogExec("xcrun", []string{"simctl", "list", "runtimes", "--json"}, string(out), err)
 	if err != nil {
 		return nil, fmt.Errorf("xcrun simctl list runtimes: %w", err)
 	}
@@ -846,6 +866,7 @@ func (m *iosManager) ListRuntimes(ctx context.Context) ([]Runtime, error) {
 func (m *iosManager) ListDevices(ctx context.Context) ([]Device, error) {
 	cmd := exec.CommandContext(ctx, "xcrun", "simctl", "list", "devices", "available", "--json")
 	output, err := cmd.Output()
+	m.logger.LogExec("xcrun", []string{"simctl", "list", "devices", "available", "--json"}, string(output), err)
 	if err != nil {
 		return nil, fmt.Errorf("failed to run xcrun simctl: %w", err)
 	}
