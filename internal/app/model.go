@@ -6,11 +6,12 @@ import (
 	"time"
 
 	"simmer/internal/device"
+	"simmer/internal/logging"
 	"simmer/internal/ui"
 	"simmer/internal/ui/dbviewer"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
 
@@ -65,10 +66,10 @@ type model struct {
 	dbViewerModal   *dbviewer.Modal
 }
 
-func initialModel(version string) model {
+func initialModel(version string, logger *logging.Logger) model {
 	coord := device.NewCoordinator(
-		device.NewIOSManager(),
-		device.NewAndroidManager(),
+		device.NewIOSManager(logger),
+		device.NewAndroidManager(logger),
 	)
 
 	m := model{
@@ -137,8 +138,8 @@ func (m model) bodyHeight() int {
 	return max(m.height-lipgloss.Height(topBar)-lipgloss.Height(footer), 0)
 }
 
-func Run(version string) error {
-	m := initialModel(version)
+func Run(version string, logger *logging.Logger) error {
+	m := initialModel(version, logger)
 	p := tea.NewProgram(m)
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("run program: %w", err)
