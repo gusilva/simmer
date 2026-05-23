@@ -29,6 +29,7 @@ type model struct {
 	mainPane     ui.MainPane
 	focus        appFocus
 	coordinator  *device.Coordinator
+	logger       *logging.Logger
 	loading      bool
 	errs         []error
 	quitting     bool
@@ -70,6 +71,7 @@ func initialModel(version string, logger *logging.Logger) model {
 	coord := device.NewCoordinator(
 		device.NewIOSManager(logger),
 		device.NewAndroidManager(logger),
+		device.NewPhysicalAndroidManager(logger),
 	)
 
 	m := model{
@@ -77,6 +79,7 @@ func initialModel(version string, logger *logging.Logger) model {
 		mainPane:     ui.NewMainPane(),
 		focus:        focusSidebar,
 		coordinator:  coord,
+		logger:       logger,
 		loading:      true,
 		toolVersions: make(map[device.Platform]string),
 		appVersion:   version,

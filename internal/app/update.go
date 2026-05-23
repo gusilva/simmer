@@ -152,7 +152,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			)
 		case "s":
 			sel := m.sidebar.SelectedDevice()
-			if sel == nil || sel.Status != device.StatusRunning {
+			if sel == nil || sel.Status != device.StatusRunning || sel.Kind == device.KindPhysical {
 				return m, nil
 			}
 			return m, m.shutdownDeviceCmd(*sel)
@@ -351,6 +351,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case device.PlatformIOS:
 				return m, m.loadIOSRootFileTreeCmd(*sel)
 			case device.PlatformAndroid:
+				if sel.Kind == device.KindPhysical {
+					return m, m.loadAndroidPhysicalFileTreeCmd(*sel)
+				}
 				return m, m.loadAndroidRootFileTreeCmd(*sel)
 			}
 			return m, nil
@@ -360,6 +363,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case device.PlatformIOS:
 			return m, m.loadIOSAppFileTreeCmd(*sel, *msg.App)
 		case device.PlatformAndroid:
+			if sel.Kind == device.KindPhysical {
+				// Physical Android: show external storage (no run-as access without root)
+				return m, m.loadAndroidPhysicalFileTreeCmd(*sel)
+			}
 			return m, m.loadAndroidFileTreeCmd(*sel, *msg.App)
 		}
 

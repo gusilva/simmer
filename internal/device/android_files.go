@@ -9,14 +9,20 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"simmer/internal/logging"
 )
 
 // AndroidRootFileSystem lists the root "/" directory of a running Android
 // emulator via `adb shell ls -la /`. The result is a single-level tree.
-type AndroidRootFileSystem struct{}
+type AndroidRootFileSystem struct {
+	logger *logging.Logger
+}
 
 // NewAndroidRootFileSystem returns a FileSystem rooted at "/" on the device.
-func NewAndroidRootFileSystem() FileSystem { return &AndroidRootFileSystem{} }
+func NewAndroidRootFileSystem(logger *logging.Logger) FileSystem {
+	return &AndroidRootFileSystem{logger: logger}
+}
 
 // Tree escalates to root, polls until uid=0 is confirmed, then builds a
 // three-level tree. /storage/emulated/N is FUSE-restricted even for root;
@@ -60,9 +66,11 @@ func (f *AndroidRootFileSystem) Tree(ctx context.Context, dev Device) (FileNode,
 		`done`
 
 	var stderr strings.Builder
-	cmd := exec.CommandContext(ctx, "adb", "-s", serial, "shell", shellCmd)
+	shellArgs := []string{"-s", serial, "shell", shellCmd}
+	cmd := exec.CommandContext(ctx, "adb", shellArgs...)
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
+	f.logger.LogExec("adb", []string{"-s", serial, "shell", "<ls tree>"}, string(out), err)
 	if err != nil {
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
 			return FileNode{}, fmt.Errorf("ls root: %s", msg)
@@ -200,11 +208,12 @@ func parseAbsLsTree(data string) FileNode {
 type AndroidFileSystem struct {
 	PackageID string
 	MaxDepth  int
+	logger    *logging.Logger
 }
 
 // NewAndroidFileSystem returns a FileSystem scoped to the given app's sandbox.
-func NewAndroidFileSystem(packageID string) FileSystem {
-	return &AndroidFileSystem{PackageID: packageID, MaxDepth: 4}
+func NewAndroidFileSystem(packageID string, logger *logging.Logger) FileSystem {
+	return &AndroidFileSystem{PackageID: packageID, MaxDepth: 4, logger: logger}
 }
 
 // Tree runs `run-as <pkg> ls -laR` inside the app sandbox and returns a depth-
@@ -222,16 +231,13 @@ func (f *AndroidFileSystem) Tree(ctx context.Context, dev Device) (FileNode, err
 		maxD = 4
 	}
 
-	var stderr strings.Builder
-	cmd := exec.CommandContext(ctx, "adb", "-s", serial, "shell",
-		"run-as", f.PackageID, "ls", "-laR")
-	cmd.Stderr = &stderr
-
-	out, err := cmd.Output()
+	d, err := gadbDevice(serial)
 	if err != nil {
-		if msg := strings.TrimSpace(stderr.String()); msg != "" {
-			return FileNode{}, fmt.Errorf("run-as %s: %s", f.PackageID, msg)
-		}
+		return FileNode{}, err
+	}
+	out, err := d.RunShellCommand("run-as", f.PackageID, "ls", "-laR")
+	f.logger.LogExec("adb shell", []string{"run-as", f.PackageID, "ls", "-laR"}, out, err)
+	if err != nil {
 		return FileNode{}, fmt.Errorf("run-as %s ls -laR: %w", f.PackageID, err)
 	}
 
