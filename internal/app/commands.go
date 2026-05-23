@@ -148,6 +148,28 @@ func (m model) loadAndroidRootFileTreeCmd(dev device.Device) tea.Cmd {
 	}
 }
 
+func (m model) loadIOSPhysicalFileTreeCmd(dev device.Device) tea.Cmd {
+	logger := m.logger
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		fs := device.NewIOSPhysicalFileSystem(logger)
+		root, err := fs.Tree(ctx, dev)
+		return fileTreeMsg{device: dev, root: root, err: err}
+	}
+}
+
+func (m model) loadIOSPhysicalAppFileTreeCmd(dev device.Device, app device.App) tea.Cmd {
+	logger := m.logger
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		fs := device.NewIOSPhysicalAppFileSystem(app.BundleID, logger)
+		root, err := fs.Tree(ctx, dev)
+		return fileTreeMsg{device: dev, root: root, err: err}
+	}
+}
+
 func (m model) loadAndroidPhysicalFileTreeCmd(dev device.Device) tea.Cmd {
 	logger := m.logger
 	return func() tea.Msg {
@@ -196,7 +218,7 @@ func (m model) deleteAppCmd(dev device.Device, app device.App) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		err := coord.DeleteApp(ctx, dev, app.BundleID)
-		return deleteAppResultMsg{deviceID: dev.ID, appLabel: app.Label(), err: err}
+		return deleteAppResultMsg{deviceID: dev.ID, bundleID: app.BundleID, appLabel: app.Label(), err: err}
 	}
 }
 

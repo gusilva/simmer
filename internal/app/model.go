@@ -70,6 +70,7 @@ type model struct {
 func initialModel(version string, logger *logging.Logger) model {
 	coord := device.NewCoordinator(
 		device.NewIOSManager(logger),
+		device.NewPhysicalIOSManager(logger),
 		device.NewAndroidManager(logger),
 		device.NewPhysicalAndroidManager(logger),
 	)

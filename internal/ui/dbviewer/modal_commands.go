@@ -13,43 +13,46 @@ import (
 
 func (m Modal) fetchTablesCmd() tea.Cmd {
 	var (
-		dev   = m.device
-		pkg   = m.packageID
-		path  = m.dbPath
-		query = m.tablesQuery
+		dev    = m.device
+		pkg    = m.packageID
+		path   = m.dbPath
+		query  = m.tablesQuery
+		logger = m.logger
 	)
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		objs, err := device.ListSQLiteObjects(ctx, dev, pkg, path, query)
+		objs, err := device.ListSQLiteObjects(ctx, logger, dev, pkg, path, query)
 		return TablesLoadedMsg{Objects: objs, Err: err}
 	}
 }
 
 func (m Modal) fetchSQLiteVersionCmd() tea.Cmd {
 	var (
-		dev = m.device
-		pkg = m.packageID
+		dev    = m.device
+		pkg    = m.packageID
+		logger = m.logger
 	)
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		ver, err := device.SQLiteVersion(ctx, dev, pkg)
+		ver, err := device.SQLiteVersion(ctx, logger, dev, pkg)
 		return SQLiteVersionMsg{Version: ver, Err: err}
 	}
 }
 
 func (m Modal) fetchColumnsCmd(node *explorerNode) tea.Cmd {
 	var (
-		dev   = m.device
-		pkg   = m.packageID
-		path  = m.dbPath
-		table = node.realNameOrLabel()
+		dev    = m.device
+		pkg    = m.packageID
+		path   = m.dbPath
+		table  = node.realNameOrLabel()
+		logger = m.logger
 	)
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		cols, err := device.QueryTableColumns(ctx, dev, pkg, path, table)
+		cols, err := device.QueryTableColumns(ctx, logger, dev, pkg, path, table)
 		return ColumnsLoadedMsg{node: node, cols: cols, err: err}
 	}
 }
@@ -143,14 +146,15 @@ func (m Modal) runQuery(query string) tea.Cmd {
 		return nil
 	}
 	var (
-		dev  = m.device
-		pkg  = m.packageID
-		path = m.dbPath
+		dev    = m.device
+		pkg    = m.packageID
+		path   = m.dbPath
+		logger = m.logger
 	)
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		rows, err := device.QuerySQLite(ctx, dev, pkg, path, query)
+		rows, err := device.QuerySQLite(ctx, logger, dev, pkg, path, query)
 		return QueryResultMsg{Rows: rows, Err: err}
 	}
 }

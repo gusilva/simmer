@@ -3,10 +3,13 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"simmer/internal/app"
 	"simmer/internal/logging"
+
+	"github.com/sirupsen/logrus"
 )
 
 var version = "dev"
@@ -32,6 +35,15 @@ func main() {
 			os.Exit(1)
 		}
 		defer logger.Close()
+	}
+
+	// go-ios uses logrus for internal progress logs. Route them into our log
+	// file when --log is active, otherwise discard so they don't bleed into
+	// the TUI's terminal output.
+	if w := logger.Writer(); w != nil {
+		logrus.SetOutput(w)
+	} else {
+		logrus.SetOutput(io.Discard)
 	}
 
 	if err := app.Run(version, logger); err != nil {

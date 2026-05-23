@@ -46,6 +46,7 @@ type deleteSimulatorResultMsg struct {
 
 type deleteAppResultMsg struct {
 	deviceID string
+	bundleID string
 	appLabel string
 	err      error
 }

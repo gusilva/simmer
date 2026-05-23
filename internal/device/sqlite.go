@@ -4,38 +4,44 @@ import (
 	"context"
 	"encoding/csv"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/danielpaulus/go-ios/ios/afc"
+	"github.com/danielpaulus/go-ios/ios/house_arrest"
+
+	"simmer/internal/logging"
 )
 
 // QuerySQLite executes a SQLite query against a database file in an app's
 // private sandbox. The first returned row is the column header row.
 //
-// [TODO] Implement a buildin SQLite client in Go to avoid the overhead of spawning a process and
-// parsing its output. This would also allow us to support more complex queries and
-// handle edge cases more robustly (e.g. embedded newlines in query results).
-//
-// - iOS: sqlite3 runs directly on the host against the simulator's local path.
+// - iOS simulator: sqlite3 runs directly on the host against the simulator's local path.
+// - iOS physical: the DB is pulled from the device via AFC/house_arrest, then queried locally.
 // - Android: sqlite3 runs on-device via `adb shell run-as <pkg> sqlite3 …`.
-// The command is passed as a single shell string so the '|' separator is
-// quoted and not interpreted as a pipe by the device shell.
-func QuerySQLite(ctx context.Context, dev Device, packageID, dbPath, query string) ([][]string, error) {
+func QuerySQLite(ctx context.Context, logger *logging.Logger, dev Device, packageID, dbPath, query string) ([][]string, error) {
 	switch dev.Platform {
 	case PlatformIOS:
-		return querySQLiteIOS(ctx, dbPath, query)
+		if dev.Kind == KindPhysical {
+			return querySQLiteIOSPhysical(ctx, logger, dev, packageID, dbPath, query)
+		}
+		return querySQLiteIOS(ctx, logger, dbPath, query)
 	case PlatformAndroid:
-		return querySQLiteAndroid(ctx, dev, packageID, dbPath, query)
+		return querySQLiteAndroid(ctx, logger, dev, packageID, dbPath, query)
 	default:
 		return nil, fmt.Errorf("sqlite: unsupported platform %s", dev.Platform)
 	}
 }
 
-func querySQLiteIOS(ctx context.Context, dbPath, query string) ([][]string, error) {
+func querySQLiteIOS(ctx context.Context, logger *logging.Logger, dbPath, query string) ([][]string, error) {
+	args := []string{"-csv", "-header", dbPath, query}
 	var stderr strings.Builder
-	cmd := exec.CommandContext(ctx, "sqlite3", "-csv", "-header", dbPath, query)
+	cmd := exec.CommandContext(ctx, "sqlite3", args...)
 	cmd.Stderr = &stderr
 
 	out, err := cmd.Output()
+	logger.LogExec("sqlite3", args, string(out), err)
 	if err != nil {
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
 			return nil, fmt.Errorf("%s", msg)
@@ -45,7 +51,44 @@ func querySQLiteIOS(ctx context.Context, dbPath, query string) ([][]string, erro
 	return parseSQLiteCSV(out)
 }
 
-func querySQLiteAndroid(ctx context.Context, dev Device, packageID, dbPath, query string) ([][]string, error) {
+// querySQLiteIOSPhysical pulls the SQLite file from a physical iOS device to a
+// temp file via AFC / house_arrest and then queries it using the local sqlite3.
+func querySQLiteIOSPhysical(ctx context.Context, logger *logging.Logger, dev Device, packageID, dbPath, query string) ([][]string, error) {
+	entry, err := goIOSDevice(dev.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	var client *afc.Client
+	if packageID != "" {
+		client, err = house_arrest.New(entry, packageID)
+		logger.LogExec("go-ios", []string{"house_arrest", packageID}, "", err)
+	} else {
+		client, err = afc.New(entry)
+		logger.LogExec("go-ios", []string{"afc", "connect"}, "", err)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("afc connect: %w", err)
+	}
+	defer client.Close()
+
+	tmp, err := os.CreateTemp("", "simmer-sqlite-*.db")
+	if err != nil {
+		return nil, fmt.Errorf("create temp file: %w", err)
+	}
+	tmp.Close()
+	defer os.Remove(tmp.Name())
+
+	pullErr := client.PullSingleFile(dbPath, tmp.Name())
+	logger.LogExec("go-ios", []string{"afc", "PullSingleFile", dbPath}, "", pullErr)
+	if pullErr != nil {
+		return nil, fmt.Errorf("pull %s: %w", dbPath, pullErr)
+	}
+
+	return querySQLiteIOS(ctx, logger, tmp.Name(), query)
+}
+
+func querySQLiteAndroid(ctx context.Context, logger *logging.Logger, dev Device, packageID, dbPath, query string) ([][]string, error) {
 	serial, err := findAndroidSerial(ctx, dev.ID)
 	if err != nil {
 		return nil, fmt.Errorf("find serial: %w", err)
@@ -62,11 +105,13 @@ func querySQLiteAndroid(ctx context.Context, dev Device, packageID, dbPath, quer
 			sqSingleQuote(dbPath) + " " + sqSingleQuote(query)
 	}
 
+	args := []string{"-s", serial, "shell", shellCmd}
 	var stderr strings.Builder
-	cmd := exec.CommandContext(ctx, "adb", "-s", serial, "shell", shellCmd)
+	cmd := exec.CommandContext(ctx, "adb", args...)
 	cmd.Stderr = &stderr
 
 	out, err := cmd.Output()
+	logger.LogExec("adb", args, string(out), err)
 	if err != nil {
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
 			return nil, fmt.Errorf("%s", msg)
@@ -128,8 +173,8 @@ type SQLiteObjects struct {
 //	                    When absent every row is treated as type "table".
 //	custom_table_name — optional; human-readable display label.
 //	                    When absent or empty the name column is shown instead.
-func ListSQLiteObjects(ctx context.Context, dev Device, packageID, dbPath, query string) (SQLiteObjects, error) {
-	rows, err := QuerySQLite(ctx, dev, packageID, dbPath, query)
+func ListSQLiteObjects(ctx context.Context, logger *logging.Logger, dev Device, packageID, dbPath, query string) (SQLiteObjects, error) {
+	rows, err := QuerySQLite(ctx, logger, dev, packageID, dbPath, query)
 	if err != nil {
 		return SQLiteObjects{}, err
 	}
@@ -186,19 +231,21 @@ func ListSQLiteObjects(ctx context.Context, dev Device, packageID, dbPath, query
 // SQLiteVersion returns the SQLite version string from the engine on the given
 // device. For iOS the local sqlite3 binary is queried; for Android the version
 // is obtained via adb shell (with run-as when packageID is non-empty).
-func SQLiteVersion(ctx context.Context, dev Device, packageID string) (string, error) {
+func SQLiteVersion(ctx context.Context, logger *logging.Logger, dev Device, packageID string) (string, error) {
 	switch dev.Platform {
 	case PlatformIOS:
-		return sqliteVersionIOS(ctx)
+		return sqliteVersionIOS(ctx, logger)
 	case PlatformAndroid:
-		return sqliteVersionAndroid(ctx, dev, packageID)
+		return sqliteVersionAndroid(ctx, logger, dev, packageID)
 	default:
 		return "", fmt.Errorf("sqlite: unsupported platform %s", dev.Platform)
 	}
 }
 
-func sqliteVersionIOS(ctx context.Context) (string, error) {
-	out, err := exec.CommandContext(ctx, "sqlite3", "--version").Output()
+func sqliteVersionIOS(ctx context.Context, logger *logging.Logger) (string, error) {
+	args := []string{"--version"}
+	out, err := exec.CommandContext(ctx, "sqlite3", args...).Output()
+	logger.LogExec("sqlite3", args, string(out), err)
 	if err != nil {
 		return "", fmt.Errorf("sqlite3 --version: %w", err)
 	}
@@ -211,7 +258,7 @@ func sqliteVersionIOS(ctx context.Context) (string, error) {
 	return parts[0], nil
 }
 
-func sqliteVersionAndroid(ctx context.Context, dev Device, packageID string) (string, error) {
+func sqliteVersionAndroid(ctx context.Context, logger *logging.Logger, dev Device, packageID string) (string, error) {
 	serial, err := findAndroidSerial(ctx, dev.ID)
 	if err != nil {
 		return "", fmt.Errorf("find serial: %w", err)
@@ -224,7 +271,9 @@ func sqliteVersionAndroid(ctx context.Context, dev Device, packageID string) (st
 		shellCmd = "run-as " + sqSingleQuote(packageID) + " sqlite3 --version"
 	}
 
-	out, err := exec.CommandContext(ctx, "adb", "-s", serial, "shell", shellCmd).Output()
+	args := []string{"-s", serial, "shell", shellCmd}
+	out, err := exec.CommandContext(ctx, "adb", args...).Output()
+	logger.LogExec("adb", args, string(out), err)
 	if err != nil {
 		return "", fmt.Errorf("adb sqlite3 --version: %w", err)
 	}
@@ -248,14 +297,14 @@ type ColumnInfo struct {
 // QueryTableColumns returns the columns of tableName including primary-key and
 // foreign-key flags. PK info comes from PRAGMA table_info; FK info from
 // PRAGMA foreign_key_list.
-func QueryTableColumns(ctx context.Context, dev Device, packageID, dbPath, tableName string) ([]ColumnInfo, error) {
-	infoRows, err := QuerySQLite(ctx, dev, packageID, dbPath,
+func QueryTableColumns(ctx context.Context, logger *logging.Logger, dev Device, packageID, dbPath, tableName string) ([]ColumnInfo, error) {
+	infoRows, err := QuerySQLite(ctx, logger, dev, packageID, dbPath,
 		"PRAGMA table_info("+sqIdentifier(tableName)+");")
 	if err != nil {
 		return nil, fmt.Errorf("table_info %s: %w", tableName, err)
 	}
 
-	fkRows, _ := QuerySQLite(ctx, dev, packageID, dbPath,
+	fkRows, _ := QuerySQLite(ctx, logger, dev, packageID, dbPath,
 		"PRAGMA foreign_key_list("+sqIdentifier(tableName)+");")
 
 	fkCols := make(map[string]bool)

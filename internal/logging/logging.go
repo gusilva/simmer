@@ -44,6 +44,15 @@ func New(level Level) (*Logger, error) {
 	return &Logger{level: level, f: f}, nil
 }
 
+// Writer returns the underlying log file so external loggers (e.g. logrus) can
+// be redirected into the same file. Returns nil when the logger is nil.
+func (l *Logger) Writer() *os.File {
+	if l == nil {
+		return nil
+	}
+	return l.f
+}
+
 func (l *Logger) Close() {
 	if l != nil && l.f != nil {
 		l.f.Close()

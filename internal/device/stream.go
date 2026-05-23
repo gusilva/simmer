@@ -26,10 +26,28 @@ type AppInstallStreamer interface {
 
 // StartInstall routes to the Manager that implements AppInstallStreamer for
 // the device's platform and starts the pipeline asynchronously.
+// Prefers a KindedManager whose Kind matches dev.Kind; falls back to any
+// AppInstallStreamer that does not implement KindedManager.
 func (c *Coordinator) StartInstall(dev Device, path, scheme string) (*BuildStream, error) {
+	// Pass 1: kinded match.
 	for _, m := range c.Managers {
 		s, ok := m.(AppInstallStreamer)
 		if !ok || s.Platform() != dev.Platform {
+			continue
+		}
+		k, isKinded := m.(KindedManager)
+		if !isKinded || k.Kind() != dev.Kind {
+			continue
+		}
+		return s.StartInstall(dev, path, scheme)
+	}
+	// Pass 2: unkinded fallback (skip managers that implement KindedManager).
+	for _, m := range c.Managers {
+		s, ok := m.(AppInstallStreamer)
+		if !ok || s.Platform() != dev.Platform {
+			continue
+		}
+		if _, isKinded := m.(KindedManager); isKinded {
 			continue
 		}
 		return s.StartInstall(dev, path, scheme)
@@ -39,6 +57,9 @@ func (c *Coordinator) StartInstall(dev Device, path, scheme string) (*BuildStrea
 	for _, m := range c.Managers {
 		i, ok := m.(AppInstaller)
 		if !ok || i.Platform() != dev.Platform {
+			continue
+		}
+		if _, isKinded := m.(KindedManager); isKinded {
 			continue
 		}
 		events := make(chan string, 64)

@@ -349,6 +349,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.App == nil {
 			switch sel.Platform {
 			case device.PlatformIOS:
+				if sel.Kind == device.KindPhysical {
+					return m, m.loadIOSPhysicalFileTreeCmd(*sel)
+				}
 				return m, m.loadIOSRootFileTreeCmd(*sel)
 			case device.PlatformAndroid:
 				if sel.Kind == device.KindPhysical {
@@ -361,6 +364,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch sel.Platform {
 		case device.PlatformIOS:
+			if sel.Kind == device.KindPhysical {
+				return m, m.loadIOSPhysicalAppFileTreeCmd(*sel, *msg.App)
+			}
 			return m, m.loadIOSAppFileTreeCmd(*sel, *msg.App)
 		case device.PlatformAndroid:
 			if sel.Kind == device.KindPhysical {
@@ -527,7 +533,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		modal := dbviewer.New(func() tea.Msg { return ui.CancelOverlayMsg{} })
 		modal.SetSize(m.width, m.height)
 
-		fileCmd := modal.SetFile(msg.Device, msg.PackageID, msg.DBPath, msg.DBName)
+		fileCmd := modal.SetFile(msg.Device, msg.PackageID, msg.DBPath, msg.DBName, m.logger)
 
 		m.dbViewerModal = &modal
 		m.sqliteModal = nil
@@ -595,6 +601,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.errs = append(m.errs, msg.err)
 			return m, m.setStatus("delete app failed: "+errPreview(msg.err), ui.StatusErr)
+		}
+		if m.logStream != nil && m.logDeviceID == msg.deviceID && m.logBundleID == msg.bundleID {
+			m.logStream.Stop()
+			m.logStream = nil
+			m.logBundleID = ""
+			m.logDeviceID = ""
+			m.mainPane.SetLogBundle("")
 		}
 		sel := m.sidebar.SelectedDevice()
 		var reloadCmd tea.Cmd

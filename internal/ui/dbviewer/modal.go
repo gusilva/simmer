@@ -7,6 +7,7 @@ import (
 
 	"simmer/internal/config"
 	"simmer/internal/device"
+	"simmer/internal/logging"
 	"simmer/internal/theme"
 
 	tea "charm.land/bubbletea/v2"
@@ -44,6 +45,7 @@ type Modal struct {
 	sqliteVersion string
 	tablesQuery   string // from config; used by fetchTablesCmd
 	scriptDir     string // from config; used by fetchScriptsCmd
+	logger        *logging.Logger
 
 	lastStats      queryStats
 	queryStartedAt time.Time
@@ -72,7 +74,8 @@ func New(onClose func() tea.Msg) Modal {
 
 // SetFile attaches a database file and its owning device to the viewer and
 // returns a Cmd that asynchronously fetches the SQLite version and table list.
-func (m *Modal) SetFile(dev device.Device, packageID, dbPath, dbName string) tea.Cmd {
+func (m *Modal) SetFile(dev device.Device, packageID, dbPath, dbName string, logger *logging.Logger) tea.Cmd {
+	m.logger = logger
 	m.device = dev
 	m.packageID = packageID
 	m.dbPath = dbPath

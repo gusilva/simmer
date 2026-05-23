@@ -554,7 +554,7 @@ func (m SQLiteModal) buildQueryCmd() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		rows, err := device.QuerySQLite(ctx, dev, pkg, path, query)
+		rows, err := device.QuerySQLite(ctx, nil, dev, pkg, path, query)
 		return SQLiteResultMsg{Rows: rows, Err: err}
 	}
 }
