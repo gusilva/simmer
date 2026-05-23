@@ -6,6 +6,16 @@ import (
 	"fmt"
 )
 
+// DeviceKind distinguishes physical hardware from virtual devices.
+type DeviceKind int
+
+const (
+	// KindVirtual is a simulator or emulator.
+	KindVirtual DeviceKind = iota
+	// KindPhysical is a real device connected via USB or WiFi ADB.
+	KindPhysical
+)
+
 // Platform represents the operating system of the device (e.g., iOS, Android).
 type Platform string
 
@@ -28,11 +38,12 @@ const (
 
 // Device represents a specific simulator or emulator instance.
 type Device struct {
-	ID       string   // Unique identifier (UDID for iOS, Serial/Name for Android)
-	Name     string   // Human-readable name
-	Platform Platform // iOS or Android
-	Version  string   // OS Version
-	Status   Status   // Running or Shutdown
+	ID       string     // Unique identifier (UDID for iOS, Serial/Name for Android)
+	Name     string     // Human-readable name
+	Platform Platform   // iOS or Android
+	Version  string     // OS Version
+	Status   Status     // Running or Shutdown
+	Kind     DeviceKind // Physical or Virtual (zero value = KindVirtual)
 }
 
 // Manager defines the contract for discovering devices on a specific platform.
@@ -40,6 +51,12 @@ type Manager interface {
 	// ListDevices returns all available devices for the platform.
 	// It must respect context cancellation.
 	ListDevices(ctx context.Context) ([]Device, error)
+}
+
+// KindedManager is optionally implemented by managers that serve exactly one
+// DeviceKind. Coordinator uses this to route physical vs. virtual operations.
+type KindedManager interface {
+	Kind() DeviceKind
 }
 
 // ToolVersioner is an optional interface a Manager may implement to report

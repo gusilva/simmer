@@ -26,14 +26,26 @@ type InfoLister interface {
 }
 
 // Info routes to the Manager that implements InfoLister for the device's
-// platform. Returns an error if no InfoLister is registered.
+// platform, preferring a KindedManager whose Kind matches dev.Kind.
+// Returns an error if no InfoLister is registered.
 func (c *Coordinator) Info(ctx context.Context, dev Device) (DeviceInfo, error) {
 	for _, m := range c.Managers {
 		l, ok := m.(InfoLister)
-		if !ok {
+		if !ok || l.Platform() != dev.Platform {
 			continue
 		}
-		if l.Platform() != dev.Platform {
+		k, isKinded := m.(KindedManager)
+		if !isKinded || k.Kind() != dev.Kind {
+			continue
+		}
+		return l.Info(ctx, dev)
+	}
+	for _, m := range c.Managers {
+		l, ok := m.(InfoLister)
+		if !ok || l.Platform() != dev.Platform {
+			continue
+		}
+		if _, isKinded := m.(KindedManager); isKinded {
 			continue
 		}
 		return l.Info(ctx, dev)

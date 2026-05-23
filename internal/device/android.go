@@ -11,7 +11,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
+
+	"github.com/electricbubble/gadb"
 
 	"simmer/internal/logging"
 )
@@ -27,6 +28,9 @@ func NewAndroidManager(logger *logging.Logger) Manager {
 
 // Platform reports the platform this manager handles.
 func (m *androidManager) Platform() Platform { return PlatformAndroid }
+
+// Kind marks this manager as handling virtual devices (emulators only).
+func (m *androidManager) Kind() DeviceKind { return KindVirtual }
 
 // Boot launches the emulator for the given AVD name. The emulator process is
 // started detached (we don't wait for it) because it runs until explicitly
@@ -69,23 +73,44 @@ func (m *androidManager) Shutdown(ctx context.Context, id string) error {
 	return nil
 }
 
-// findAndroidSerial returns the adb serial (e.g. "emulator-5554") for the
-// running emulator whose AVD name matches avdName. Package-level so both
-// androidManager and AndroidFileSystem can use it.
-func findAndroidSerial(ctx context.Context, avdName string) (string, error) {
-	out, err := exec.CommandContext(ctx, "adb", "devices").Output()
+// gadbDevice returns a gadb Device for the given adb serial.
+// It iterates DeviceList() since gadb.Device has unexported fields and cannot
+// be constructed directly.
+func gadbDevice(serial string) (gadb.Device, error) {
+	client, err := gadb.NewClient()
 	if err != nil {
-		return "", fmt.Errorf("adb devices: %w", err)
+		return gadb.Device{}, fmt.Errorf("adb server unavailable: %w", err)
 	}
-	for line := range strings.SplitSeq(string(out), "\n") {
-		if !strings.Contains(line, "\tdevice") {
+	devices, err := client.DeviceList()
+	if err != nil {
+		return gadb.Device{}, fmt.Errorf("list devices: %w", err)
+	}
+	for _, d := range devices {
+		if d.Serial() == serial {
+			return d, nil
+		}
+	}
+	return gadb.Device{}, fmt.Errorf("device %s not found or offline", serial)
+}
+
+// findAndroidSerial returns the adb serial (e.g. "emulator-5554") for the
+// running emulator whose AVD name matches avdName. Uses gadb to list devices
+// so no `adb devices` subprocess is spawned; the emu console command still
+// needs a subprocess since gadb does not implement the emulator protocol.
+// Package-level so both androidManager and AndroidFileSystem can use it.
+func findAndroidSerial(ctx context.Context, avdName string) (string, error) {
+	client, err := gadb.NewClient()
+	if err != nil {
+		return "", fmt.Errorf("adb server unavailable: %w", err)
+	}
+	serials, err := client.DeviceSerialList()
+	if err != nil {
+		return "", fmt.Errorf("adb list devices: %w", err)
+	}
+	for _, serial := range serials {
+		if !strings.HasPrefix(serial, "emulator-") {
 			continue
 		}
-		parts := strings.Fields(line)
-		if len(parts) == 0 {
-			continue
-		}
-		serial := parts[0]
 		nameOut, err := exec.CommandContext(ctx, "adb", "-s", serial, "emu", "avd", "name").Output()
 		if err != nil {
 			continue
@@ -231,21 +256,23 @@ func findAPKInOutputs(projectDir string) (string, error) {
 	return found, nil
 }
 
-// DeleteApp uninstalls an app from an Android emulator via `adb uninstall`.
+// DeleteApp uninstalls an app from an Android emulator via pm uninstall.
 func (m *androidManager) DeleteApp(ctx context.Context, deviceID, bundleID string) error {
 	serial, err := findAndroidSerial(ctx, deviceID)
 	if err != nil {
 		return fmt.Errorf("find android serial: %w", err)
 	}
-	cmd := exec.CommandContext(ctx, "adb", "-s", serial, "uninstall", bundleID)
-	out, err := cmd.CombinedOutput()
-	m.logger.LogExec("adb", []string{"-s", serial, "uninstall", bundleID}, string(out), err)
+	d, err := gadbDevice(serial)
 	if err != nil {
-		msg := strings.TrimSpace(string(out))
-		if msg == "" {
-			return fmt.Errorf("adb uninstall %s: %w", bundleID, err)
-		}
-		return fmt.Errorf("adb uninstall %s: %w: %s", bundleID, err, msg)
+		return err
+	}
+	out, err := d.RunShellCommand("pm", "uninstall", bundleID)
+	m.logger.LogExec("adb shell", []string{"pm", "uninstall", bundleID}, out, err)
+	if err != nil {
+		return fmt.Errorf("pm uninstall %s: %w", bundleID, err)
+	}
+	if strings.Contains(out, "Failure") {
+		return fmt.Errorf("pm uninstall %s: %s", bundleID, strings.TrimSpace(out))
 	}
 	return nil
 }
@@ -293,7 +320,9 @@ func (m *androidManager) StartInstall(dev Device, path, _ string) (*BuildStream,
 		}
 
 		sendEvent(ctx, events, "Launching…")
-		_ = adbLaunch(ctx, serial, pkg)
+		if d, err := gadbDevice(serial); err == nil {
+			_, _ = d.RunShellCommand("monkey", "-p", pkg, "-c", "android.intent.category.LAUNCHER", "1")
+		}
 		done <- nil
 	}()
 
@@ -389,20 +418,6 @@ func apkPackageName(ctx context.Context, apkPath string) (string, error) {
 	return "", fmt.Errorf("package name not found in aapt output")
 }
 
-// adbLaunch launches an app on an Android device via `adb shell monkey`.
-func adbLaunch(ctx context.Context, serial, packageName string) error {
-	cmd := exec.CommandContext(ctx, "adb", "-s", serial, "shell",
-		"monkey", "-p", packageName, "-c", "android.intent.category.LAUNCHER", "1")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		msg := strings.TrimSpace(string(out))
-		if msg == "" {
-			return fmt.Errorf("adb shell monkey: %w", err)
-		}
-		return fmt.Errorf("adb shell monkey: %w: %s", err, msg)
-	}
-	return nil
-}
 
 // ListDeviceTypes returns Android device profiles via `avdmanager list device`.
 func (m *androidManager) ListDeviceTypes(ctx context.Context) ([]DeviceType, error) {
@@ -592,38 +607,30 @@ func parseAVDs(output []byte) []string {
 }
 
 func (m *androidManager) getRunningDevices(ctx context.Context) (map[string]bool, error) {
-	cmd := exec.CommandContext(ctx, "adb", "devices")
-	output, err := cmd.Output()
-	m.logger.LogExec("adb", []string{"devices"}, string(output), err)
+	client, err := gadb.NewClient()
 	if err != nil {
-		return nil, fmt.Errorf("failed to run adb devices: %w", err)
+		return nil, fmt.Errorf("adb server unavailable: %w", err)
+	}
+	serials, err := client.DeviceSerialList()
+	if err != nil {
+		return nil, fmt.Errorf("adb list devices: %w", err)
 	}
 
 	running := make(map[string]bool)
-	lines := strings.SplitSeq(string(output), "\n")
-	for line := range lines {
-		if strings.Contains(line, "\tdevice") {
-			parts := strings.Fields(line)
-			if len(parts) > 0 {
-				// This is the serial, e.g., emulator-5554
-				// Mapping this back to AVD name requires 'adb -s <serial> emu avd name'
-				// For now, we'll just mark it as potentially running if we find it
-				serial := parts[0]
-
-				// Try to get the actual AVD name for this serial.
-				// Output is "<name>\nOK\n" — take first line only.
-				nameCmd := exec.CommandContext(ctx, "adb", "-s", serial, "emu", "avd", "name")
-				nameOut, err := nameCmd.Output()
-				if err == nil {
-					firstLine := strings.TrimSpace(strings.SplitN(string(nameOut), "\n", 2)[0])
-					if firstLine != "" {
-						running[firstLine] = true
-						continue
-					}
-				}
-				running[serial] = true
+	for _, serial := range serials {
+		if !strings.HasPrefix(serial, "emulator-") {
+			continue
+		}
+		nameOut, err := exec.CommandContext(ctx, "adb", "-s", serial, "emu", "avd", "name").Output()
+		if err == nil {
+			// Output is "<name>\nOK\n" — take first line only.
+			firstLine := strings.TrimSpace(strings.SplitN(string(nameOut), "\n", 2)[0])
+			if firstLine != "" {
+				running[firstLine] = true
+				continue
 			}
 		}
+		running[serial] = true
 	}
 	return running, nil
 }
@@ -637,8 +644,12 @@ func (m *androidManager) ListApps(ctx context.Context, id string) ([]App, error)
 		return nil, fmt.Errorf("find serial for %s: %w", id, err)
 	}
 
-	pkgOut, err := exec.CommandContext(ctx, "adb", "-s", serial,
-		"shell", "pm", "list", "packages", "-3", "-f").Output()
+	d, err := gadbDevice(serial)
+	if err != nil {
+		return nil, err
+	}
+	pkgOut, err := d.RunShellCommand("pm", "list", "packages", "-3", "-f")
+	m.logger.LogExec("adb shell", []string{"pm", "list", "packages", "-3", "-f"}, pkgOut, err)
 	if err != nil {
 		return nil, fmt.Errorf("pm list packages -3 -f: %w", err)
 	}
@@ -670,7 +681,7 @@ func (m *androidManager) ListApps(ctx context.Context, id string) ([]App, error)
 		return nil, nil
 	}
 
-	versions := androidFetchVersions(ctx, serial, byID)
+	versions := androidFetchVersions(m.logger, d, byID)
 
 	apps := make([]App, 0, len(byID))
 	for bundleID, e := range byID {
@@ -694,9 +705,9 @@ func (m *androidManager) ListApps(ctx context.Context, id string) ([]App, error)
 
 // androidFetchVersions returns a bundleID→versionName map by parsing a single
 // `dumpsys package packages` call, skipping lines for packages not in byID.
-func androidFetchVersions[E any](ctx context.Context, serial string, byID map[string]E) map[string]string {
-	out, err := exec.CommandContext(ctx, "adb", "-s", serial,
-		"shell", "dumpsys", "package", "packages").Output()
+func androidFetchVersions[E any](logger *logging.Logger, d gadb.Device, byID map[string]E) map[string]string {
+	out, err := d.RunShellCommand("dumpsys", "package", "packages")
+	logger.LogExec("adb shell", []string{"dumpsys", "package", "packages"}, out, err)
 	if err != nil {
 		return map[string]string{}
 	}
@@ -740,18 +751,19 @@ func (m *androidManager) StreamLogs(parent context.Context, dev Device, app App)
 		return nil, fmt.Errorf("find serial for %s: %w", dev.ID, err)
 	}
 
+	d, err := gadbDevice(serial)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+
 	// Best-effort launch so the process exists before we ask for its PID.
-	launchCtx, launchCancel := context.WithTimeout(ctx, 5*time.Second)
-	_ = exec.CommandContext(launchCtx, "adb", "-s", serial, "shell",
-		"monkey", "-p", app.BundleID,
-		"-c", "android.intent.category.LAUNCHER", "1").Run()
-	launchCancel()
+	_, _ = d.RunShellCommand("monkey", "-p", app.BundleID, "-c", "android.intent.category.LAUNCHER", "1")
 
 	// Build logcat args; add --pid filter when we can resolve it.
 	logcatArgs := []string{"-s", serial, "logcat", "-v", "time"}
-	if pidOut, err := exec.CommandContext(ctx, "adb", "-s", serial,
-		"shell", "pidof", "-s", app.BundleID).Output(); err == nil {
-		if pid := strings.TrimSpace(string(pidOut)); pid != "" {
+	if pidOut, err := d.RunShellCommand("pidof", "-s", app.BundleID); err == nil {
+		if pid := strings.TrimSpace(pidOut); pid != "" {
 			logcatArgs = append(logcatArgs, "--pid="+pid)
 		}
 	}
@@ -855,25 +867,27 @@ func (m *androidManager) Info(ctx context.Context, dev Device) (DeviceInfo, erro
 	// Live properties — only when the emulator is running.
 	if dev.Status == StatusRunning {
 		if serial, err := findAndroidSerial(ctx, dev.ID); err == nil {
-			props := adbProps(ctx, serial, []string{
-				"ro.build.version.release",
-				"ro.build.version.sdk",
-				"ro.build.display.id",
-				"ro.product.model",
-			})
-			if v := props["ro.build.version.release"]; v != "" {
-				add("Android", v)
+			if d, err := gadbDevice(serial); err == nil {
+				props := adbProps(m.logger, d, []string{
+					"ro.build.version.release",
+					"ro.build.version.sdk",
+					"ro.build.display.id",
+					"ro.product.model",
+				})
+				if v := props["ro.build.version.release"]; v != "" {
+					add("Android", v)
+				}
+				if v := props["ro.build.version.sdk"]; v != "" {
+					add("SDK", v)
+				}
+				if v := props["ro.build.display.id"]; v != "" {
+					add("Build", v)
+				}
+				if v := props["ro.product.model"]; v != "" {
+					add("Model", v)
+				}
+				add("ADB Serial", serial)
 			}
-			if v := props["ro.build.version.sdk"]; v != "" {
-				add("SDK", v)
-			}
-			if v := props["ro.build.display.id"]; v != "" {
-				add("Build", v)
-			}
-			if v := props["ro.product.model"]; v != "" {
-				add("Model", v)
-			}
-			add("ADB Serial", serial)
 		}
 	}
 
@@ -919,19 +933,18 @@ func apiFromSysdir(sysdir string) string {
 
 // adbProps fetches the given getprop keys from a running emulator in a single
 // shell invocation and returns a key→value map.
-func adbProps(ctx context.Context, serial string, keys []string) map[string]string {
-	// Build a one-liner: getprop k1; getprop k2; ...
+func adbProps(logger *logging.Logger, d gadb.Device, keys []string) map[string]string {
 	cmds := make([]string, len(keys))
 	for i, k := range keys {
 		cmds[i] = "getprop " + k
 	}
-	out, err := exec.CommandContext(ctx, "adb", "-s", serial, "shell",
-		strings.Join(cmds, "; ")).Output()
+	out, err := d.RunShellCommand("sh", "-c", strings.Join(cmds, "; "))
+	logger.LogExec("adb shell", append([]string{"getprop"}, keys...), out, err)
 	if err != nil {
 		return map[string]string{}
 	}
 	result := make(map[string]string, len(keys))
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	lines := strings.Split(strings.TrimSpace(out), "\n")
 	for i, k := range keys {
 		if i < len(lines) {
 			result[k] = strings.TrimSpace(lines[i])

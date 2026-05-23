@@ -127,20 +127,33 @@ func (m model) loadIOSRootFileTreeCmd(dev device.Device) tea.Cmd {
 }
 
 func (m model) loadAndroidFileTreeCmd(dev device.Device, app device.App) tea.Cmd {
+	logger := m.logger
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		fs := device.NewAndroidFileSystem(app.BundleID)
+		fs := device.NewAndroidFileSystem(app.BundleID, logger)
 		root, err := fs.Tree(ctx, dev)
 		return fileTreeMsg{device: dev, root: root, err: err}
 	}
 }
 
 func (m model) loadAndroidRootFileTreeCmd(dev device.Device) tea.Cmd {
+	logger := m.logger
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		fs := device.NewAndroidRootFileSystem()
+		fs := device.NewAndroidRootFileSystem(logger)
+		root, err := fs.Tree(ctx, dev)
+		return fileTreeMsg{device: dev, root: root, err: err}
+	}
+}
+
+func (m model) loadAndroidPhysicalFileTreeCmd(dev device.Device) tea.Cmd {
+	logger := m.logger
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		fs := device.NewAndroidPhysicalFileSystem(logger)
 		root, err := fs.Tree(ctx, dev)
 		return fileTreeMsg{device: dev, root: root, err: err}
 	}

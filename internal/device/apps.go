@@ -52,14 +52,26 @@ type AppInstaller interface {
 }
 
 // ListApps routes to the Manager that implements AppLister for the device's
-// Platform. Returns an error if no AppLister is registered for the platform.
+// Platform. Prefers a KindedManager whose Kind matches dev.Kind; falls back to
+// any AppLister that does not implement KindedManager.
 func (c *Coordinator) ListApps(ctx context.Context, dev Device) ([]App, error) {
 	for _, m := range c.Managers {
 		a, ok := m.(AppLister)
-		if !ok {
+		if !ok || a.Platform() != dev.Platform {
 			continue
 		}
-		if a.Platform() != dev.Platform {
+		k, isKinded := m.(KindedManager)
+		if !isKinded || k.Kind() != dev.Kind {
+			continue
+		}
+		return a.ListApps(ctx, dev.ID)
+	}
+	for _, m := range c.Managers {
+		a, ok := m.(AppLister)
+		if !ok || a.Platform() != dev.Platform {
+			continue
+		}
+		if _, isKinded := m.(KindedManager); isKinded {
 			continue
 		}
 		return a.ListApps(ctx, dev.ID)
@@ -81,11 +93,25 @@ func (c *Coordinator) InstallApp(ctx context.Context, dev Device, path, scheme s
 }
 
 // DeleteApp uninstalls the given app from a device, routing to the Manager that
-// implements AppDeleter for the device's Platform.
+// implements AppDeleter for the device's Platform, preferring a KindedManager match.
 func (c *Coordinator) DeleteApp(ctx context.Context, dev Device, bundleID string) error {
 	for _, m := range c.Managers {
 		d, ok := m.(AppDeleter)
 		if !ok || d.Platform() != dev.Platform {
+			continue
+		}
+		k, isKinded := m.(KindedManager)
+		if !isKinded || k.Kind() != dev.Kind {
+			continue
+		}
+		return d.DeleteApp(ctx, dev.ID, bundleID)
+	}
+	for _, m := range c.Managers {
+		d, ok := m.(AppDeleter)
+		if !ok || d.Platform() != dev.Platform {
+			continue
+		}
+		if _, isKinded := m.(KindedManager); isKinded {
 			continue
 		}
 		return d.DeleteApp(ctx, dev.ID, bundleID)

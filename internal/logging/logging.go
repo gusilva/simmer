@@ -66,7 +66,11 @@ func (l *Logger) LogExec(cmd string, args []string, output string, err error) {
 		label = "ERROR"
 	}
 	ts := time.Now().Format(time.RFC3339)
-	fmt.Fprintf(l.f, "%s %s exec %s %v output=%q err=%v\n", ts, label, cmd, args, output, err)
+	if l.level >= LevelTrace {
+		fmt.Fprintf(l.f, "%s %s exec %s %v output=%q err=%v\n", ts, label, cmd, args, output, err)
+	} else {
+		fmt.Fprintf(l.f, "%s %s exec %s %v err=%v\n", ts, label, cmd, args, err)
+	}
 }
 
 func (l *Logger) LogStart(cmd string, args []string, err error) {
