@@ -31,12 +31,12 @@ func RenderTopBar(p TopBarParams) string {
 		StyleFaint.Render(" "+p.AppVersion) +
 		sep +
 		lipgloss.NewStyle().Foreground(ColorOk).Background(ColorBg).Render("●") +
-		StyleDim.Render(fmt.Sprintf(" %d booted", p.BootedCount)) +
+		StyleDim.Render(fmt.Sprintf(" %d online", p.BootedCount)) +
 		StyleFaint.Render("  ") +
-		lipgloss.NewStyle().Foreground(ColorIOS).Background(ColorBg).Render("") +
+		lipgloss.NewStyle().Foreground(ColorIOS).Background(ColorBg).Render("⌘") +
 		StyleDim.Render(fmt.Sprintf(" %d iOS", p.IOSCount)) +
 		StyleFaint.Render("  ") +
-		lipgloss.NewStyle().Foreground(ColorAndroid).Background(ColorBg).Render("▲") +
+		lipgloss.NewStyle().Foreground(ColorAndroid).Background(ColorBg).Render("⛯") +
 		StyleDim.Render(fmt.Sprintf(" %d Android", p.AndroidCount))
 
 	var metaParts []string

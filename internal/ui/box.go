@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"image/color"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -12,7 +13,9 @@ import (
 // truncated and shorter content is bottom-padded with bg-colored blank lines.
 // If height <= 0 the box grows to fit its content.
 // If footer is non-empty it is always rendered as the last content line (sticky).
-func RenderBox(title, badge, content, footer string, width, height int, focused bool) string {
+// keyHint, if non-empty, renders as ╭─[KEY]─ title before the title text.
+// bottomBadge, if non-empty, is right-aligned in the bottom border.
+func RenderBox(title, badge, content, footer string, width, height int, focused bool, keyHint, bottomBadge string) string {
 	if width < 6 {
 		return ""
 	}
@@ -24,14 +27,13 @@ func RenderBox(title, badge, content, footer string, width, height int, focused 
 		titleC = ColorBorderHi
 	}
 
-	border := lipgloss.NewStyle().Foreground(borderC).Background(ColorBg)
 	titleStyle := lipgloss.NewStyle().Foreground(titleC).Background(ColorBg)
 	badgeStyle := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg)
-	bg := lipgloss.NewStyle().Background(ColorBg)
 
-	// Truncate title if it's too long for the box width.
-	// Reserve at least 6 cells for borders and spacers: ╭──(3) + ──╮(3)
-	maxTitleW := max(width-6, 0)
+	leftPartW := leftBorderWidth(keyHint)
+	const rightOverhead = 2 // space after title + ╮
+	maxTitleW := max(width-leftPartW-rightOverhead, 0)
+
 	displayTitle := truncateName(title, maxTitleW)
 	titleText := titleStyle.Render(displayTitle)
 
@@ -39,35 +41,69 @@ func RenderBox(title, badge, content, footer string, width, height int, focused 
 		displayBadge := truncateName(badge, maxTitleW-lipgloss.Width(displayTitle)-1)
 		titleText += " " + badgeStyle.Render(displayBadge)
 	}
-	titleW := lipgloss.Width(titleText)
 
-	leftDash := 2
-	// spaces: 1 before title, 1 after title
-	// borders: 1 left, 1 right
-	rightDash := max(width-2-leftDash-2-titleW, 0)
+	return renderBoxCore(titleText, content, footer, width, height, borderC, keyHint, bottomBadge)
+}
 
-	top := border.Render("╭"+strings.Repeat("─", leftDash)+" ") +
-		titleText +
-		border.Render(" "+strings.Repeat("─", rightDash)+"╮")
+// renderBoxRaw is like RenderBox but accepts a pre-styled title and does not
+// apply any additional colour to it. The border colour still reflects focused.
+func renderBoxRaw(title, content, footer string, width, height int, focused bool, keyHint, bottomBadge string) string {
+	if width < 6 {
+		return ""
+	}
+	borderC := ColorBorder
+	if focused {
+		borderC = ColorBorderHi
+	}
+	return renderBoxCore(title, content, footer, width, height, borderC, keyHint, bottomBadge)
+}
 
-	// Adjust for any rounding or min-width constraints to ensure exact width match
-	actualW := lipgloss.Width(top)
-	if actualW > width {
-		// If overflowed, we need to reduce the title even further or remove dashes
-		// For a 1-cell overflow, we can just remove the space after title if rightDash is 0
-		if actualW == width+1 && rightDash == 0 {
-			top = border.Render("╭"+strings.Repeat("─", leftDash)+" ") +
-				titleText +
-				border.Render("╮")
-		}
-	} else if actualW < width {
-		// If underflowed, pad the right dashes
-		top = border.Render("╭"+strings.Repeat("─", leftDash)+" ") +
-			titleText +
-			border.Render(" "+strings.Repeat("─", rightDash+(width-actualW))+"╮")
+// renderBoxCore is the shared implementation. styledTitle is used verbatim.
+func renderBoxCore(styledTitle, content, footer string, width, height int, borderC color.Color, keyHint, bottomBadge string) string {
+	border := lipgloss.NewStyle().Foreground(borderC).Background(ColorBg)
+	bg := lipgloss.NewStyle().Background(ColorBg)
+
+	titleW := lipgloss.Width(styledTitle)
+	leftPartW := leftBorderWidth(keyHint)
+	const rightOverhead = 2
+	rightDash := max(width-leftPartW-titleW-rightOverhead, 0)
+
+	var leftPart string
+	if keyHint != "" {
+		leftPart = border.Render("╭─[" + keyHint + "]─ ")
+	} else {
+		leftPart = border.Render("╭── ")
 	}
 
-	bottom := border.Render("╰" + strings.Repeat("─", width-2) + "╯")
+	top := leftPart + styledTitle + border.Render(" "+strings.Repeat("─", rightDash)+"╮")
+
+	actualW := lipgloss.Width(top)
+	if actualW > width {
+		if actualW == width+1 && rightDash == 0 {
+			top = leftPart + styledTitle + border.Render("╮")
+		}
+	} else if actualW < width {
+		top = leftPart + styledTitle + border.Render(" "+strings.Repeat("─", rightDash+(width-actualW))+"╮")
+	}
+
+	// Bottom border with optional right-aligned badge.
+	inner := width - 2
+	var bottom string
+	if bottomBadge != "" {
+		badgeW := lipgloss.Width(bottomBadge)
+		const rightTrail = 2
+		leftDashes := inner - badgeW - rightTrail
+		if leftDashes >= 0 {
+			badgeSt := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg)
+			bottom = border.Render("╰"+strings.Repeat("─", leftDashes)) +
+				badgeSt.Render(bottomBadge) +
+				border.Render(strings.Repeat("─", rightTrail)+"╯")
+		} else {
+			bottom = border.Render("╰" + strings.Repeat("─", inner) + "╯")
+		}
+	} else {
+		bottom = border.Render("╰" + strings.Repeat("─", inner) + "╯")
+	}
 
 	innerW := width - 2
 	var lines []string
@@ -81,7 +117,6 @@ func RenderBox(title, badge, content, footer string, width, height int, focused 
 		lines = append(lines, border.Render("│")+padded+border.Render("│"))
 	}
 
-	// Render the sticky footer line (always last inside the box).
 	var footerLine string
 	if footer != "" {
 		fw := lipgloss.Width(footer)
@@ -94,7 +129,6 @@ func RenderBox(title, badge, content, footer string, width, height int, focused 
 
 	if height > 0 {
 		innerH := max(height-2, 0)
-		// Reserve one row for the footer when present.
 		contentH := innerH
 		if footer != "" {
 			contentH = max(innerH-1, 0)
@@ -115,4 +149,14 @@ func RenderBox(title, badge, content, footer string, width, height int, focused 
 	}
 
 	return strings.Join(append(append([]string{top}, lines...), bottom), "\n")
+}
+
+// leftBorderWidth returns the visible cell width of the left border segment
+// (from ╭ up to and including the space before the title).
+func leftBorderWidth(keyHint string) int {
+	if keyHint == "" {
+		return 4 // ╭──<space>
+	}
+	// ╭─[KEY]─<space>
+	return 1 + 1 + 1 + len(keyHint) + 1 + 1 + 1
 }

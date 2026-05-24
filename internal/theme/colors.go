@@ -28,5 +28,5 @@ var (
 	ColorTableSelBg  = lipgloss.Color("#282336")
 
 	ColorIOS     = lipgloss.Color("#89dceb")
-	ColorAndroid = lipgloss.Color("#a6e3a1")
+	ColorAndroid = lipgloss.Color("#89dceb")
 )

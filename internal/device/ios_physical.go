@@ -31,9 +31,6 @@ func NewPhysicalIOSManager(logger *logging.Logger) Manager {
 func (m *physicalIOSManager) Platform() Platform { return PlatformIOS }
 func (m *physicalIOSManager) Kind() DeviceKind   { return KindPhysical }
 
-func (m *physicalIOSManager) ToolVersion(_ context.Context) (Platform, string) {
-	return PlatformIOS, "go-ios"
-}
 
 // ListDevices returns all physical iOS devices visible to usbmuxd.
 // Returns nil, nil when usbmuxd is unavailable so the coordinator skips

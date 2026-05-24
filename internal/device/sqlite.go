@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/danielpaulus/go-ios/ios/afc"
@@ -72,20 +73,36 @@ func querySQLiteIOSPhysical(ctx context.Context, logger *logging.Logger, dev Dev
 	}
 	defer client.Close()
 
-	tmp, err := os.CreateTemp("", "simmer-sqlite-*.db")
+	// Use a temp directory so WAL/SHM sidecar files land beside the main DB.
+	// sqlite3 requires all three files to be co-located when the database is in
+	// WAL mode; pulling only the main file causes "exit status" failures.
+	tmpDir, err := os.MkdirTemp("", "simmer-sqlite-*")
 	if err != nil {
-		return nil, fmt.Errorf("create temp file: %w", err)
+		return nil, fmt.Errorf("create temp dir: %w", err)
 	}
-	tmp.Close()
-	defer os.Remove(tmp.Name())
+	defer os.RemoveAll(tmpDir)
 
-	pullErr := client.PullSingleFile(dbPath, tmp.Name())
+	tmpDB := filepath.Join(tmpDir, filepath.Base(dbPath))
+
+	pullErr := client.PullSingleFile(dbPath, tmpDB)
 	logger.LogExec("go-ios", []string{"afc", "PullSingleFile", dbPath}, "", pullErr)
 	if pullErr != nil {
 		return nil, fmt.Errorf("pull %s: %w", dbPath, pullErr)
 	}
 
-	return querySQLiteIOS(ctx, logger, tmp.Name(), query)
+	// Pull WAL and SHM sidecar files if they exist; ignore errors (they may not).
+	for _, suffix := range []string{"-wal", "-shm"} {
+		src := dbPath + suffix
+		dst := tmpDB + suffix
+		if err := client.PullSingleFile(src, dst); err != nil {
+			logger.LogExec("go-ios", []string{"afc", "PullSingleFile", src}, "", err)
+			os.Remove(dst)
+		} else {
+			logger.LogExec("go-ios", []string{"afc", "PullSingleFile", src}, "", nil)
+		}
+	}
+
+	return querySQLiteIOS(ctx, logger, tmpDB, query)
 }
 
 func querySQLiteAndroid(ctx context.Context, logger *logging.Logger, dev Device, packageID, dbPath, query string) ([][]string, error) {

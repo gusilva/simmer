@@ -27,7 +27,7 @@ func TestRenderTopBar(t *testing.T) {
 			contains: []string{
 				"simmer",
 				"v0.1.2",
-				"2 booted",
+				"2 online",
 				"3 iOS",
 				"1 Android",
 			},

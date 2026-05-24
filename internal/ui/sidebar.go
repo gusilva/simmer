@@ -15,10 +15,18 @@ import (
 type SidebarPane int
 
 const (
-	// PaneBooted is the top "Booted" panel.
+	// PaneBooted is the top "Online" panel (running devices).
 	PaneBooted SidebarPane = iota
-	// PaneAvailable is the bottom "Available" panel.
+	// PaneAvailable is the bottom "Offline" panel (stopped virtual devices).
 	PaneAvailable
+)
+
+// offlineTab selects the platform tab shown in the Offline box.
+type offlineTab int
+
+const (
+	tabIOS     offlineTab = 0
+	tabAndroid offlineTab = 1
 )
 
 // DefaultSidebarWidth is the column width used when none is set.
@@ -28,17 +36,23 @@ const DefaultSidebarWidth = 36
 // callers feed it a flat []device.Device via SetDevices and the sidebar
 // handles grouping, selection, and rendering.
 type Sidebar struct {
-	booted   []device.Device
-	iosAvail []device.Device
-	andAvail []device.Device
+	// Online box: all StatusRunning devices (any Kind, any Platform).
+	booted []device.Device
+	// Offline box: stopped virtual devices, split by platform.
+	virtIOS []device.Device
+	virtAnd []device.Device
 
 	focused      SidebarPane
 	outerFocused bool
-	bootedIdx    int
-	availIdx     int
 
+	// Online box cursor and group collapse state.
+	bootedIdx        int
 	iosCollapsed     bool
 	androidCollapsed bool
+
+	// Offline box cursor and active platform tab.
+	availIdx        int
+	offlinePlatform offlineTab
 
 	filterMode  bool
 	filterQuery string
@@ -47,14 +61,12 @@ type Sidebar struct {
 	height int
 }
 
-// NewSidebar returns a sidebar with focus on the booted panel.
+// NewSidebar returns a sidebar with focus on the online panel.
 func NewSidebar() Sidebar {
 	return Sidebar{focused: PaneBooted, outerFocused: true, width: DefaultSidebarWidth}
 }
 
-// SetFocused marks whether the sidebar holds the app's outer focus. When
-// unfocused, both panels render with the dim border color and inner pane
-// highlights are suppressed.
+// SetFocused marks whether the sidebar holds the app's outer focus.
 func (s *Sidebar) SetFocused(f bool) { s.outerFocused = f }
 
 // SetSize sets the sidebar's outer width and total height.
@@ -68,47 +80,55 @@ func (s *Sidebar) SetSize(w, h int) {
 // Width returns the sidebar's outer width in columns.
 func (s Sidebar) Width() int { return s.width }
 
-// SetDevices replaces the device list, splitting devices into booted and
-// available groups by platform. Selection indices are clamped to remain valid.
+// SetDevices replaces the device list using the routing rules:
+//   - StatusRunning (any Kind, Platform) → booted (Online box)
+//   - StatusOff + KindPhysical           → skip
+//   - StatusOff + PlatformIOS            → virtIOS (Offline box, iOS tab)
+//   - StatusOff + PlatformAndroid        → virtAnd (Offline box, Android tab)
 func (s *Sidebar) SetDevices(devs []device.Device) {
 	s.booted = s.booted[:0]
-	s.iosAvail = s.iosAvail[:0]
-	s.andAvail = s.andAvail[:0]
+	s.virtIOS = s.virtIOS[:0]
+	s.virtAnd = s.virtAnd[:0]
 	for _, d := range devs {
 		if d.Status == device.StatusRunning {
 			s.booted = append(s.booted, d)
 			continue
 		}
+		if d.Kind == device.KindPhysical {
+			continue
+		}
 		switch d.Platform {
 		case device.PlatformIOS:
-			s.iosAvail = append(s.iosAvail, d)
+			s.virtIOS = append(s.virtIOS, d)
 		case device.PlatformAndroid:
-			s.andAvail = append(s.andAvail, d)
+			s.virtAnd = append(s.virtAnd, d)
 		}
 	}
-	s.bootedIdx = clampIdx(s.bootedIdx, len(s.booted))
-	s.availIdx = clampIdx(s.availIdx, s.availableLen())
+	s.bootedIdx = clampIdx(s.bootedIdx, len(s.onlinePositions()))
+	s.availIdx = clampIdx(s.availIdx, len(s.offlineDevices()))
 }
 
-// SelectedDevice returns the device under the cursor in the focused pane,
-// or nil if the focused pane is empty.
-// Devices returns all devices currently loaded in the sidebar (booted + available).
+// Devices returns all devices currently loaded in the sidebar.
 func (s Sidebar) Devices() []device.Device {
-	out := make([]device.Device, 0, len(s.booted)+len(s.iosAvail)+len(s.andAvail))
+	out := make([]device.Device, 0, len(s.booted)+len(s.virtIOS)+len(s.virtAnd))
 	out = append(out, s.booted...)
-	out = append(out, s.iosAvail...)
-	out = append(out, s.andAvail...)
+	out = append(out, s.virtIOS...)
+	out = append(out, s.virtAnd...)
 	return out
 }
 
+// SelectedDevice returns the device under the cursor in the focused pane,
+// or nil if the position is a group header or the pane is empty.
 func (s Sidebar) SelectedDevice() *device.Device {
 	switch s.focused {
 	case PaneBooted:
-		if s.bootedIdx < len(s.booted) {
-			return &s.booted[s.bootedIdx]
-		}
+		return s.onlineDeviceAt(s.bootedIdx)
 	case PaneAvailable:
-		return s.availDeviceAt(s.availIdx)
+		devs := s.offlineDevices()
+		if s.availIdx < len(devs) {
+			d := devs[s.availIdx]
+			return &d
+		}
 	}
 	return nil
 }
@@ -148,19 +168,33 @@ func (s Sidebar) Update(msg tea.Msg) (Sidebar, tea.Cmd) {
 	}
 
 	switch k.String() {
-	case "up", "k":
-		s.moveCursor(-1)
-	case "down", "j":
-		s.moveCursor(1)
+	case "1":
+		s.focused = PaneBooted
+	case "2":
+		s.focused = PaneAvailable
 	case "tab", "right", "l", "left", "h", "shift+tab":
 		if s.focused == PaneBooted {
 			s.focused = PaneAvailable
 		} else {
 			s.focused = PaneBooted
 		}
+	case "up", "k":
+		s.moveCursor(-1)
+	case "down", "j":
+		s.moveCursor(1)
 	case "enter":
+		if s.focused == PaneBooted {
+			s.toggleOnlineGroup()
+		}
+	case "[":
 		if s.focused == PaneAvailable {
-			s.toggleCurrentGroup()
+			s.offlinePlatform = tabIOS
+			s.availIdx = 0
+		}
+	case "]":
+		if s.focused == PaneAvailable {
+			s.offlinePlatform = tabAndroid
+			s.availIdx = 0
 		}
 	case "esc":
 		if s.focused == PaneAvailable && s.filterQuery != "" {
@@ -177,9 +211,9 @@ func (s Sidebar) Update(msg tea.Msg) (Sidebar, tea.Cmd) {
 		}
 	case "d":
 		if s.focused == PaneAvailable {
-			dev := s.availDeviceAt(s.availIdx)
-			if dev != nil {
-				d := *dev
+			devs := s.offlineDevices()
+			if s.availIdx < len(devs) {
+				d := devs[s.availIdx]
 				return s, func() tea.Msg { return ShowDeleteSimulatorMsg{Device: d} }
 			}
 		}
@@ -187,106 +221,96 @@ func (s Sidebar) Update(msg tea.Msg) (Sidebar, tea.Cmd) {
 	return s, nil
 }
 
-// View renders the sidebar as a multi-line string. The Booted panel is sized
-// to fit its content; the Available panel grows to fill the remaining height
-// when SetSize was called with a positive height.
+// View renders the sidebar. The Online box auto-fits its content; the Offline
+// box fills the remaining height when SetSize was called with a positive height.
 func (s Sidebar) View() string {
-	bootedBox := RenderBox(
-		"Booted",
-		fmt.Sprintf("%d", len(s.booted)),
-		s.renderBootedRows(),
+	// Pre-style the Online title based on focus.
+	titleC := ColorFgDim
+	if s.outerFocused && s.focused == PaneBooted {
+		titleC = ColorBorderHi
+	}
+	onlineTitle := lipgloss.NewStyle().Foreground(titleC).Background(ColorBg).Render("Online")
+
+	onlineBox := renderBoxRaw(
+		onlineTitle,
+		s.renderOnlineRows(),
 		"",
-		s.width,
-		0,
+		s.width, 0,
 		s.outerFocused && s.focused == PaneBooted,
+		"1",
+		s.onlinePaginationStr(),
 	)
 
-	availHeight := 0
+	offlineHeight := 0
 	if s.height > 0 {
 		const gapLines = 1
-		availHeight = max(s.height-lipgloss.Height(bootedBox)-gapLines, 3)
+		offlineHeight = max(s.height-lipgloss.Height(onlineBox)-gapLines, 3)
 	}
 
-	total := len(s.iosAvail) + len(s.andAvail)
-	availBadge := fmt.Sprintf("%d", total)
-	if s.filterQuery != "" {
-		fios := s.filteredIOSAvail()
-		fand := s.filteredAndAvail()
-		availBadge = fmt.Sprintf("%d/%d", len(fios)+len(fand), total)
-	}
-
-	var availFooter string
+	var offlineFooter string
 	if s.filterMode || s.filterQuery != "" {
-		availFooter = s.renderFilterRow(s.width - 2)
+		offlineFooter = s.renderFilterRow(s.width - 2)
 	}
 
-	availBox := RenderBox(
-		"Available",
-		availBadge,
-		s.renderAvailableRows(),
-		availFooter,
-		s.width,
-		availHeight,
+	offlineBox := renderBoxRaw(
+		s.renderOfflineTitle(),
+		s.renderOfflineRows(),
+		offlineFooter,
+		s.width, offlineHeight,
 		s.outerFocused && s.focused == PaneAvailable,
+		"2",
+		s.offlinePaginationStr(),
 	)
+
 	gap := lipgloss.NewStyle().Background(ColorBg).Width(s.width).Render("")
-	return lipgloss.JoinVertical(lipgloss.Left, bootedBox, gap, availBox)
+	return lipgloss.JoinVertical(lipgloss.Left, onlineBox, gap, offlineBox)
 }
 
-// ── internals ────────────────────────────────────────────────────────────
+// ── Online box internals ─────────────────────────────────────────────────────
 
-func (s *Sidebar) moveCursor(d int) {
-	switch s.focused {
-	case PaneBooted:
-		if n := len(s.booted); n > 0 {
-			s.bootedIdx = clampIdx(s.bootedIdx+d, n)
-		}
-	case PaneAvailable:
-		if n := s.availableLen(); n > 0 {
-			s.availIdx = clampIdx(s.availIdx+d, n)
+// onlinePos is one cursor stop in the Online pane.
+type onlinePos struct {
+	isHeader  bool
+	platform  device.Platform
+	bootedIdx int // index into s.booted (valid when !isHeader)
+}
+
+// onlinePositions returns the ordered cursor stops for the Online box,
+// accounting for collapsed groups. Returns nil when booted is empty.
+func (s Sidebar) onlinePositions() []onlinePos {
+	var iosIdx, andIdx []int
+	for i, d := range s.booted {
+		if d.Platform == device.PlatformIOS {
+			iosIdx = append(iosIdx, i)
+		} else {
+			andIdx = append(andIdx, i)
 		}
 	}
-}
 
-// availPos identifies one cursor stop in the Available pane: either a
-// group header or a device row. Group: 0 = iOS, 1 = Android.
-type availPos struct {
-	isHeader bool
-	group    int
-	devIdx   int
-}
-
-// availPositions returns the ordered list of cursor stops in the Available
-// pane, accounting for collapsed groups and the active filter query.
-func (s Sidebar) availPositions() []availPos {
-	ios := s.filteredIOSAvail()
-	and := s.filteredAndAvail()
-	var out []availPos
-	if len(ios) > 0 {
-		out = append(out, availPos{isHeader: true, group: 0})
+	var out []onlinePos
+	if len(iosIdx) > 0 {
+		out = append(out, onlinePos{isHeader: true, platform: device.PlatformIOS})
 		if !s.iosCollapsed {
-			for i := range ios {
-				out = append(out, availPos{group: 0, devIdx: i})
+			for _, i := range iosIdx {
+				out = append(out, onlinePos{platform: device.PlatformIOS, bootedIdx: i})
 			}
 		}
 	}
-	if len(and) > 0 {
-		out = append(out, availPos{isHeader: true, group: 1})
+	if len(andIdx) > 0 {
+		out = append(out, onlinePos{isHeader: true, platform: device.PlatformAndroid})
 		if !s.androidCollapsed {
-			for i := range and {
-				out = append(out, availPos{group: 1, devIdx: i})
+			for _, i := range andIdx {
+				out = append(out, onlinePos{platform: device.PlatformAndroid, bootedIdx: i})
 			}
 		}
 	}
 	return out
 }
 
-func (s Sidebar) availableLen() int { return len(s.availPositions()) }
-
-func (s Sidebar) availDeviceAt(idx int) *device.Device {
-	ios := s.filteredIOSAvail()
-	and := s.filteredAndAvail()
-	positions := s.availPositions()
+// onlineDeviceAt returns the device at the given Online cursor index,
+// or nil if the position is a header or out of range.
+func (s Sidebar) onlineDeviceAt(idx int) *device.Device {
+	positions := s.onlinePositions()
 	if idx < 0 || idx >= len(positions) {
 		return nil
 	}
@@ -294,138 +318,253 @@ func (s Sidebar) availDeviceAt(idx int) *device.Device {
 	if p.isHeader {
 		return nil
 	}
-	if p.group == 0 {
-		d := ios[p.devIdx]
-		return &d
-	}
-	d := and[p.devIdx]
-	return &d
+	return &s.booted[p.bootedIdx]
 }
 
-// toggleCurrentGroup flips the collapsed state of the group whose header the
-// cursor is on. No-op if the cursor is on a device row or no positions exist.
-// After toggling, the cursor is re-anchored onto the same header.
-func (s *Sidebar) toggleCurrentGroup() {
-	positions := s.availPositions()
-	if s.availIdx < 0 || s.availIdx >= len(positions) {
+// toggleOnlineGroup flips the collapsed state of the group whose header the
+// cursor is on. No-op if cursor is on a device row or positions is empty.
+func (s *Sidebar) toggleOnlineGroup() {
+	positions := s.onlinePositions()
+	if s.bootedIdx < 0 || s.bootedIdx >= len(positions) {
 		return
 	}
-	cur := positions[s.availIdx]
+	cur := positions[s.bootedIdx]
 	if !cur.isHeader {
 		return
 	}
-	switch cur.group {
-	case 0:
+	switch cur.platform {
+	case device.PlatformIOS:
 		s.iosCollapsed = !s.iosCollapsed
-	case 1:
+	case device.PlatformAndroid:
 		s.androidCollapsed = !s.androidCollapsed
 	}
-	for i, p := range s.availPositions() {
-		if p.isHeader && p.group == cur.group {
-			s.availIdx = i
+	for i, p := range s.onlinePositions() {
+		if p.isHeader && p.platform == cur.platform {
+			s.bootedIdx = i
 			return
 		}
 	}
 }
 
-// fuzzyMatch reports whether all runes of query appear in target in order,
-// case-insensitive. An empty query matches everything.
-func fuzzyMatch(query, target string) bool {
-	if query == "" {
-		return true
-	}
-	target = strings.ToLower(target)
-	query = strings.ToLower(query)
-	qi := 0
-	for _, ch := range target {
-		if qi < len([]rune(query)) && ch == []rune(query)[qi] {
-			qi++
-		}
-	}
-	return qi == len([]rune(query))
-}
-
-func (s Sidebar) filteredIOSAvail() []device.Device {
-	if s.filterQuery == "" {
-		return s.iosAvail
-	}
-	out := make([]device.Device, 0, len(s.iosAvail))
-	for _, d := range s.iosAvail {
-		if fuzzyMatch(s.filterQuery, d.Name) {
-			out = append(out, d)
-		}
-	}
-	return out
-}
-
-func (s Sidebar) filteredAndAvail() []device.Device {
-	if s.filterQuery == "" {
-		return s.andAvail
-	}
-	out := make([]device.Device, 0, len(s.andAvail))
-	for _, d := range s.andAvail {
-		if fuzzyMatch(s.filterQuery, d.Name) {
-			out = append(out, d)
-		}
-	}
-	return out
-}
-
-func (s Sidebar) renderBootedRows() string {
-	innerW := s.width - 2
+// onlinePaginationStr returns "X of N" for the Online box bottom border,
+// where N = total booted devices and X = sequential ordinal at the cursor.
+func (s Sidebar) onlinePaginationStr() string {
 	if len(s.booted) == 0 {
+		return ""
+	}
+	n := len(s.booted)
+	positions := s.onlinePositions()
+	if len(positions) == 0 || s.bootedIdx >= len(positions) {
+		return fmt.Sprintf("1 of %d", n)
+	}
+
+	iosCount := 0
+	for _, d := range s.booted {
+		if d.Platform == device.PlatformIOS {
+			iosCount++
+		}
+	}
+
+	p := positions[s.bootedIdx]
+	var x int
+	if p.isHeader {
+		if p.platform == device.PlatformIOS {
+			x = 1
+		} else {
+			x = iosCount + 1
+		}
+	} else {
+		x = s.deviceOrdinal(p.bootedIdx)
+	}
+
+	return fmt.Sprintf("%d of %d", x, n)
+}
+
+// deviceOrdinal returns the 1-based ordinal of booted[idx] in iOS-first order.
+func (s Sidebar) deviceOrdinal(idx int) int {
+	iosCount := 0
+	for _, d := range s.booted {
+		if d.Platform == device.PlatformIOS {
+			iosCount++
+		}
+	}
+	d := s.booted[idx]
+	if d.Platform == device.PlatformIOS {
+		cnt := 0
+		for i, b := range s.booted {
+			if b.Platform == device.PlatformIOS {
+				cnt++
+				if i == idx {
+					return cnt
+				}
+			}
+		}
+	} else {
+		cnt := 0
+		for i, b := range s.booted {
+			if b.Platform == device.PlatformAndroid {
+				cnt++
+				if i == idx {
+					return iosCount + cnt
+				}
+			}
+		}
+	}
+	return 1
+}
+
+// renderOnlineRows builds the content string for the Online box.
+func (s Sidebar) renderOnlineRows() string {
+	innerW := s.width - 2
+	positions := s.onlinePositions()
+	if len(positions) == 0 {
 		return renderEmptyRow("(none)", innerW)
 	}
-	lines := make([]string, 0, len(s.booted))
-	for i, d := range s.booted {
+
+	iosCount, andCount := 0, 0
+	for _, d := range s.booted {
+		if d.Platform == device.PlatformIOS {
+			iosCount++
+		} else {
+			andCount++
+		}
+	}
+
+	var lines []string
+	prevPlatform := device.Platform("")
+	for i, p := range positions {
 		sel := s.focused == PaneBooted && i == s.bootedIdx
+		if p.isHeader {
+			if prevPlatform != "" && prevPlatform != p.platform {
+				lines = append(lines, renderEmptyRow("", innerW))
+			}
+			var glyph, label string
+			var clr color.Color
+			var count int
+			var collapsed bool
+			if p.platform == device.PlatformIOS {
+				glyph, label, count, collapsed = "⌘", "iOS", iosCount, s.iosCollapsed
+				clr = ColorIOS
+			} else {
+				glyph, label, count, collapsed = "⛯", "Android", andCount, s.androidCollapsed
+				clr = ColorAndroid
+			}
+			lines = append(lines, renderGroupHeader(glyph, label, count, clr, innerW, collapsed, sel))
+			prevPlatform = p.platform
+		} else {
+			lines = append(lines, renderDeviceRow(s.booted[p.bootedIdx], sel, innerW, true))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// ── Offline box internals ────────────────────────────────────────────────────
+
+// offlineDevices returns the filtered device list for the current offline tab.
+func (s Sidebar) offlineDevices() []device.Device {
+	if s.offlinePlatform == tabIOS {
+		return s.filteredVirtIOS()
+	}
+	return s.filteredVirtAnd()
+}
+
+// offlinePaginationStr returns "X of N" for the Offline box bottom border.
+func (s Sidebar) offlinePaginationStr() string {
+	devs := s.offlineDevices()
+	if len(devs) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d of %d", s.availIdx+1, len(devs))
+}
+
+// renderOfflineTitle returns the pre-styled "iOS ─ Android" tab title.
+func (s Sidebar) renderOfflineTitle() string {
+	isFocused := s.outerFocused && s.focused == PaneAvailable
+	sep := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg).Render(" ─ ")
+
+	var iosStyle, andStyle lipgloss.Style
+	if isFocused {
+		active := lipgloss.NewStyle().Foreground(ColorBorderHi).Background(ColorBg).Bold(true)
+		inactive := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg)
+		if s.offlinePlatform == tabIOS {
+			iosStyle, andStyle = active, inactive
+		} else {
+			iosStyle, andStyle = inactive, active
+		}
+	} else {
+		dim := lipgloss.NewStyle().Foreground(ColorFgDim).Background(ColorBg)
+		iosStyle, andStyle = dim, dim
+	}
+
+	return iosStyle.Render("iOS") + sep + andStyle.Render("Android")
+}
+
+// renderOfflineRows builds the content string for the Offline box.
+func (s Sidebar) renderOfflineRows() string {
+	innerW := s.width - 2
+	devs := s.offlineDevices()
+
+	var allVirt []device.Device
+	if s.offlinePlatform == tabIOS {
+		allVirt = s.virtIOS
+	} else {
+		allVirt = s.virtAnd
+	}
+
+	if len(allVirt) == 0 {
+		return renderEmptyRow("(none)", innerW)
+	}
+	if len(devs) == 0 {
+		return renderEmptyRow("no match", innerW)
+	}
+
+	lines := make([]string, 0, len(devs))
+	for i, d := range devs {
+		sel := s.focused == PaneAvailable && i == s.availIdx
 		lines = append(lines, renderDeviceRow(d, sel, innerW, false))
 	}
 	return strings.Join(lines, "\n")
 }
 
-func (s Sidebar) renderAvailableRows() string {
-	innerW := s.width - 2
-	ios := s.filteredIOSAvail()
-	and := s.filteredAndAvail()
+// ── Shared helpers ───────────────────────────────────────────────────────────
 
-	var lines []string
-
-	if len(s.iosAvail) == 0 && len(s.andAvail) == 0 {
-		lines = append(lines, renderEmptyRow("(none)", innerW))
-	} else if len(ios) == 0 && len(and) == 0 {
-		lines = append(lines, renderEmptyRow("no match", innerW))
-	} else {
-		positions := s.availPositions()
-		prevGroup := -1
-		for i, p := range positions {
-			sel := s.focused == PaneAvailable && i == s.availIdx
-			if p.isHeader {
-				if prevGroup != -1 && prevGroup != p.group {
-					lines = append(lines, renderEmptyRow("", innerW))
-				}
-				glyph, label, clr, _, collapsed := groupHeaderArgs(s, p.group)
-				var count int
-				if p.group == 0 {
-					count = len(ios)
-				} else {
-					count = len(and)
-				}
-				lines = append(lines, renderGroupHeader(glyph, label, count, clr, innerW, collapsed, sel))
-				prevGroup = p.group
-				continue
-			}
-			var dev device.Device
-			if p.group == 0 {
-				dev = ios[p.devIdx]
-			} else {
-				dev = and[p.devIdx]
-			}
-			lines = append(lines, renderDeviceRow(dev, sel, innerW, true))
+func (s *Sidebar) moveCursor(d int) {
+	switch s.focused {
+	case PaneBooted:
+		if n := len(s.onlinePositions()); n > 0 {
+			s.bootedIdx = clampIdx(s.bootedIdx+d, n)
+		}
+	case PaneAvailable:
+		if n := len(s.offlineDevices()); n > 0 {
+			s.availIdx = clampIdx(s.availIdx+d, n)
 		}
 	}
+}
 
-	return strings.Join(lines, "\n")
+func (s Sidebar) filteredVirtIOS() []device.Device {
+	if s.filterQuery == "" {
+		return s.virtIOS
+	}
+	out := make([]device.Device, 0, len(s.virtIOS))
+	for _, d := range s.virtIOS {
+		if fuzzyMatch(s.filterQuery, d.Name) {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+func (s Sidebar) filteredVirtAnd() []device.Device {
+	if s.filterQuery == "" {
+		return s.virtAnd
+	}
+	out := make([]device.Device, 0, len(s.virtAnd))
+	for _, d := range s.virtAnd {
+		if fuzzyMatch(s.filterQuery, d.Name) {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 func (s Sidebar) renderFilterRow(innerW int) string {
@@ -446,11 +585,21 @@ func (s Sidebar) renderFilterRow(innerW int) string {
 	return rendered
 }
 
-func groupHeaderArgs(s Sidebar, group int) (glyph, label string, c color.Color, count int, collapsed bool) {
-	if group == 0 {
-		return "", "iOS", ColorIOS, len(s.iosAvail), s.iosCollapsed
+// fuzzyMatch reports whether all runes of query appear in target in order,
+// case-insensitive. An empty query matches everything.
+func fuzzyMatch(query, target string) bool {
+	if query == "" {
+		return true
 	}
-	return "▲", "Android", ColorAndroid, len(s.andAvail), s.androidCollapsed
+	target = strings.ToLower(target)
+	query = strings.ToLower(query)
+	qi := 0
+	for _, ch := range target {
+		if qi < len([]rune(query)) && ch == []rune(query)[qi] {
+			qi++
+		}
+	}
+	return qi == len([]rune(query))
 }
 
 // rowInnerPad is the cell padding applied to both the left and right inner
@@ -484,23 +633,13 @@ func truncateName(name string, max int) string {
 	return "…"
 }
 
-// renderDeviceRow returns a single line of visible width == innerW. The device
-// name hugs the left edge (after pad/indent) and the runtime version hugs the
-// right edge — like CSS flex justify-between. Long names are truncated with
-// an ellipsis so at least minNameVerGap cells separate name from version.
+// renderDeviceRow returns a single line of visible width == innerW.
 func renderDeviceRow(dev device.Device, selected bool, innerW int, indent bool) string {
 	leftPad := strings.Repeat(" ", rowInnerPad)
 	if indent {
 		leftPad = strings.Repeat(" ", rowInnerPad+groupIndent)
 	}
 	rightPad := strings.Repeat(" ", rowInnerPad)
-
-	pglyph := ""
-	pgC := ColorIOS
-	if dev.Platform == device.PlatformAndroid {
-		pglyph = "▲"
-		pgC = ColorAndroid
-	}
 
 	dotC := ColorFgFaint
 	if dev.Status == device.StatusRunning {
@@ -510,27 +649,25 @@ func renderDeviceRow(dev device.Device, selected bool, innerW int, indent bool) 
 	ver := dev.Version
 	verW := lipgloss.Width(ver)
 
+	// selected: full-row highlight, dot + name
 	if selected {
-		// prefix: leftPad + pglyph + " "
-		prefixW := len(leftPad) + lipgloss.Width(pglyph) + 1
+		// prefix: leftPad + dot(1) + space(1)
+		prefixW := len(leftPad) + 2
 		nameMax := innerW - prefixW - minNameVerGap - verW - len(rightPad)
 		nameStr := truncateName(dev.Name, nameMax)
 		gap := max(innerW-prefixW-lipgloss.Width(nameStr)-verW-len(rightPad), minNameVerGap)
-		bg := lipgloss.NewStyle().
-			Foreground(ColorBg).
-			Background(ColorAccent).
-			Bold(true)
-		return bg.Render(leftPad + pglyph + " " + nameStr + strings.Repeat(" ", gap) + ver + rightPad)
+		sel := lipgloss.NewStyle().Foreground(ColorBg).Background(ColorAccent).Bold(true)
+		dotSel := lipgloss.NewStyle().Foreground(dotC).Background(ColorAccent).Bold(true).Render("●")
+		return sel.Render(leftPad) + dotSel + sel.Render(" "+nameStr+strings.Repeat(" ", gap)+ver+rightPad)
 	}
 
-	// non-selected prefix: leftPad + dot(1) + " "(1) + glyph(1) + " "(1)
-	prefixW := len(leftPad) + 1 + 1 + lipgloss.Width(pglyph) + 1
+	// non-selected: leftPad + dot + space + name + gap + version + rightPad
+	prefixW := len(leftPad) + 2 // dot + space
 	nameMax := innerW - prefixW - minNameVerGap - verW - len(rightPad)
 	nameStr := truncateName(dev.Name, nameMax)
 	gap := max(innerW-prefixW-lipgloss.Width(nameStr)-verW-len(rightPad), minNameVerGap)
 
 	dot := lipgloss.NewStyle().Foreground(dotC).Background(ColorBg).Render("●")
-	glyph := lipgloss.NewStyle().Foreground(pgC).Background(ColorBg).Render(pglyph)
 	nameC := ColorFg
 	if dev.Status != device.StatusRunning {
 		nameC = ColorFgDim
@@ -539,7 +676,7 @@ func renderDeviceRow(dev device.Device, selected bool, innerW int, indent bool) 
 	meta := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg).Render(ver)
 	bg := lipgloss.NewStyle().Background(ColorBg)
 
-	return leftPad + dot + " " + glyph + " " + name + bg.Render(strings.Repeat(" ", gap)) + meta + bg.Render(rightPad)
+	return leftPad + dot + " " + name + bg.Render(strings.Repeat(" ", gap)) + meta + bg.Render(rightPad)
 }
 
 func renderGroupHeader(glyph, label string, count int, c color.Color, innerW int, collapsed, selected bool) string {
@@ -564,9 +701,9 @@ func renderGroupHeader(glyph, label string, count int, c color.Color, innerW int
 
 	bg := lipgloss.NewStyle().Background(ColorBg)
 	caret := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg).Render(caretCh)
-	name := lipgloss.NewStyle().Foreground(c).Background(ColorBg).Bold(true).Render(labelText)
+	nameStyle := lipgloss.NewStyle().Foreground(c).Background(ColorBg).Bold(true).Render(labelText)
 	cnt := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg).Render(fmt.Sprintf("(%d)", count))
-	row := leftPad + caret + " " + name + " " + cnt
+	row := leftPad + caret + " " + nameStyle + " " + cnt
 	w := lipgloss.Width(row)
 	if w >= innerW {
 		return row

@@ -28,17 +28,6 @@ func NewPhysicalAndroidManager(logger *logging.Logger) Manager {
 func (m *physicalAndroidManager) Platform() Platform { return PlatformAndroid }
 func (m *physicalAndroidManager) Kind() DeviceKind   { return KindPhysical }
 
-func (m *physicalAndroidManager) ToolVersion(_ context.Context) (Platform, string) {
-	client, err := gadb.NewClient()
-	if err != nil {
-		return PlatformAndroid, "gadb (adb unavailable)"
-	}
-	v, err := client.ServerVersion()
-	if err != nil {
-		return PlatformAndroid, "gadb"
-	}
-	return PlatformAndroid, fmt.Sprintf("adb-server %d (gadb)", v)
-}
 
 // ListDevices returns all physical Android devices seen by the ADB server.
 // Emulator serials (emulator-NNNN) are excluded — those belong to androidManager.
