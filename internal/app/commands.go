@@ -207,15 +207,18 @@ func nextBuildEventCmd(stream *device.BuildStream, deviceID string) tea.Cmd {
 // resolveIOSRebuildCmd finds the Xcode project for a locally-built app by
 // matching its display name against DerivedData, then loads its schemes.
 func (m model) resolveIOSRebuildCmd(dev device.Device, app device.App) tea.Cmd {
+	logger := m.logger
 	return func() tea.Msg {
 		path, err := device.ResolveIOSProjectPath(app.Label())
 		if err != nil {
+			logger.LogError("resolve ios project for "+app.Label(), err)
 			return rebuildIOSResolvedMsg{device: dev, app: app, err: err}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		schemes, err := device.ListXcodeSchemes(ctx, path)
 		if err != nil {
+			logger.LogError("list xcode schemes for "+path, err)
 			return rebuildIOSResolvedMsg{device: dev, app: app, err: err}
 		}
 		return rebuildIOSResolvedMsg{device: dev, app: app, path: path, schemes: schemes}
@@ -255,11 +258,15 @@ func (m model) terminateThenInstallCmd(dev device.Device, bundleID, path, scheme
 	}
 }
 
-func fetchXcodeSchemesCmd(path string) tea.Cmd {
+func (m model) fetchXcodeSchemesCmd(path string) tea.Cmd {
+	logger := m.logger
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		schemes, err := device.ListXcodeSchemes(ctx, path)
+		if err != nil {
+			logger.LogError("list xcode schemes for "+path, err)
+		}
 		return xcodeSchemesMsg{schemes: schemes, err: err}
 	}
 }

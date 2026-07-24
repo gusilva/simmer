@@ -100,3 +100,13 @@ func (l *Logger) LogStart(cmd string, args []string, err error) {
 	ts := time.Now().Format(time.RFC3339)
 	fmt.Fprintf(l.f, "%s %s start %s %v err=%v\n", ts, label, cmd, args, err)
 }
+
+// LogError logs a non-exec failure (e.g. a resolution or parsing error) with
+// a short op label for context. No-op when err is nil.
+func (l *Logger) LogError(op string, err error) {
+	if l == nil || err == nil || LevelError > l.level {
+		return
+	}
+	ts := time.Now().Format(time.RFC3339)
+	fmt.Fprintf(l.f, "%s ERROR %s err=%v\n", ts, op, err)
+}

@@ -466,11 +466,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, focusCmd
 
 	case ui.RequestXcodeSchemesMsg:
-		return m, fetchXcodeSchemesCmd(msg.Path)
+		return m, m.fetchXcodeSchemesCmd(msg.Path)
 
 	case xcodeSchemesMsg:
 		if m.installAppModal != nil {
 			if msg.err != nil {
+				m.errs = append(m.errs, msg.err)
 				m.installAppModal.SetSchemesError(msg.err.Error())
 			} else {
 				m.installAppModal.SetSchemes(msg.schemes)
@@ -549,6 +550,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case rebuildIOSResolvedMsg:
 		if msg.err != nil {
+			m.errs = append(m.errs, msg.err)
 			return m, m.setStatus("rebuild: "+errPreview(msg.err), ui.StatusErr)
 		}
 		if len(msg.schemes) == 1 {
