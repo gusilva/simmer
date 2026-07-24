@@ -677,23 +677,41 @@ func ResolveIOSProjectPath(appName string) (string, error) {
 		return "", fmt.Errorf("no DerivedData folder found for %q", appName)
 	}
 
-	out, err := exec.Command("plutil", "-convert", "json", "-o", "-", filepath.Join(best, "info.plist")).Output()
+	// info.plist contains a Date field (LastAccessedDate), which `plutil
+	// -convert json` rejects ("Invalid object in plist for JSON format").
+	// -p's human-readable dump handles it fine.
+	out, err := exec.Command("plutil", "-p", filepath.Join(best, "info.plist")).Output()
 	if err != nil {
 		return "", fmt.Errorf("read %s/info.plist: %w", filepath.Base(best), err)
 	}
-	var plist struct {
-		WorkspacePath string `json:"WorkspacePath"`
-	}
-	if err := json.Unmarshal(out, &plist); err != nil {
-		return "", fmt.Errorf("parse info.plist: %w", err)
-	}
-	if plist.WorkspacePath == "" {
+	workspacePath, ok := parsePlutilWorkspacePath(string(out))
+	if !ok {
 		return "", fmt.Errorf("WorkspacePath not found in %s/info.plist", filepath.Base(best))
 	}
-	if _, err := os.Stat(plist.WorkspacePath); err != nil {
-		return "", fmt.Errorf("project no longer exists at %s", plist.WorkspacePath)
+	if _, err := os.Stat(workspacePath); err != nil {
+		return "", fmt.Errorf("project no longer exists at %s", workspacePath)
 	}
-	return plist.WorkspacePath, nil
+	return workspacePath, nil
+}
+
+// parsePlutilWorkspacePath extracts the WorkspacePath value from `plutil -p`
+// output, e.g. `  "WorkspacePath" => "/path/to/Foo.xcodeproj"`.
+func parsePlutilWorkspacePath(output string) (string, bool) {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, `"WorkspacePath"`) {
+			continue
+		}
+		idx := strings.Index(line, "=>")
+		if idx < 0 {
+			continue
+		}
+		val := strings.Trim(strings.TrimSpace(line[idx+2:]), `"`)
+		if val != "" {
+			return val, true
+		}
+	}
+	return "", false
 }
 
 func (m *iosManager) DeleteApp(ctx context.Context, deviceID, bundleID string) error {
