@@ -155,6 +155,13 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 			dev := *m.active
 			a := app
 			return m, func() tea.Msg { return ShowDeleteAppMsg{Device: dev, App: a} }
+		case "r":
+			if len(filtered) == 0 || m.appsIdx >= len(filtered) || m.active == nil {
+				return m, nil
+			}
+			dev := *m.active
+			a := filtered[m.appsIdx]
+			return m, func() tea.Msg { return RequestRebuildMsg{Device: dev, App: a} }
 		case "space":
 			if len(filtered) == 0 || m.appsIdx >= len(filtered) {
 				return m, nil

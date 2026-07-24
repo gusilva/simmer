@@ -8,8 +8,8 @@ import (
 	"simmer/internal/ui"
 	"simmer/internal/ui/dbviewer"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
 )
 
 func (m model) Init() tea.Cmd {
@@ -528,6 +528,43 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		alert := ui.NewDeleteAppAlert(msg.Device, msg.App)
 		m.deleteAppAlert = &alert
 		return m, nil
+
+	case ui.RequestRebuildMsg:
+		dev, app := msg.Device, msg.App
+		if dev.Kind != device.KindVirtual || !app.IsLocal() {
+			return m, m.setStatus("Not a local build", ui.StatusWarn)
+		}
+
+		if dev.Platform == device.PlatformAndroid {
+			if path, ok := m.rebuildPaths[app.BundleID]; ok {
+				return m, m.startRebuildCmd(dev, app, path, "")
+			}
+			modal, focusCmd := ui.NewInstallAppModal(dev)
+			modal.SetRebuildApp(app)
+			m.installAppModal = &modal
+			return m, focusCmd
+		}
+
+		return m, tea.Batch(m.resolveIOSRebuildCmd(dev, app), m.setStatus("Resolving project…", ui.StatusInfo))
+
+	case rebuildIOSResolvedMsg:
+		if msg.err != nil {
+			return m, m.setStatus("rebuild: "+errPreview(msg.err), ui.StatusErr)
+		}
+		if len(msg.schemes) == 1 {
+			return m, m.startRebuildCmd(msg.device, msg.app, msg.path, msg.schemes[0])
+		}
+		modal := ui.NewInstallAppModalAtScheme(msg.device, msg.path, msg.schemes)
+		modal.SetRebuildApp(msg.app)
+		m.installAppModal = &modal
+		return m, nil
+
+	case ui.ConfirmRebuildMsg:
+		m.installAppModal = nil
+		if msg.Device.Platform == device.PlatformAndroid {
+			m.rebuildPaths[msg.App.BundleID] = msg.Path
+		}
+		return m, m.startRebuildCmd(msg.Device, msg.App, msg.Path, msg.Scheme)
 
 	case ui.ShowSQLiteViewerMsg:
 		modal := dbviewer.New(func() tea.Msg { return ui.CancelOverlayMsg{} })

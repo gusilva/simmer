@@ -29,6 +29,14 @@ func (a App) Label() string {
 	}
 }
 
+// IsLocal reports whether this app is a developer build rather than a
+// system app. On the simulator/emulator, ApplicationType "User" implies a
+// local build since there is no App Store to install from. See CONTEXT.md
+// "Local app".
+func (a App) IsLocal() bool {
+	return a.Type == "User"
+}
+
 // AppLister is an optional interface a Manager may implement to enumerate the
 // applications installed on a device.
 type AppLister interface {
@@ -90,6 +98,42 @@ func (c *Coordinator) InstallApp(ctx context.Context, dev Device, path, scheme s
 		return i.InstallApp(ctx, dev.ID, path, scheme)
 	}
 	return fmt.Errorf("no app installer registered for platform %s", dev.Platform)
+}
+
+// AppTerminator is an optional interface a Manager may implement to stop a
+// running application on a device without uninstalling it.
+type AppTerminator interface {
+	Platform() Platform
+	TerminateApp(ctx context.Context, deviceID, bundleID string) error
+}
+
+// TerminateApp stops a running app, routing to the Manager that implements
+// AppTerminator for the device's Platform, preferring a KindedManager match.
+// Callers that treat termination as best-effort (the app may simply not be
+// running) may ignore the returned error.
+func (c *Coordinator) TerminateApp(ctx context.Context, dev Device, bundleID string) error {
+	for _, m := range c.Managers {
+		t, ok := m.(AppTerminator)
+		if !ok || t.Platform() != dev.Platform {
+			continue
+		}
+		k, isKinded := m.(KindedManager)
+		if !isKinded || k.Kind() != dev.Kind {
+			continue
+		}
+		return t.TerminateApp(ctx, dev.ID, bundleID)
+	}
+	for _, m := range c.Managers {
+		t, ok := m.(AppTerminator)
+		if !ok || t.Platform() != dev.Platform {
+			continue
+		}
+		if _, isKinded := m.(KindedManager); isKinded {
+			continue
+		}
+		return t.TerminateApp(ctx, dev.ID, bundleID)
+	}
+	return fmt.Errorf("no app terminator registered for platform %s", dev.Platform)
 }
 
 // DeleteApp uninstalls the given app from a device, routing to the Manager that

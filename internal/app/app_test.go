@@ -89,6 +89,7 @@ func newTestModel() model {
 		sidebar:      ui.NewSidebar(),
 		mainPane:     ui.NewMainPane(),
 		toolVersions: make(map[device.Platform]string),
+		rebuildPaths: make(map[string]string),
 	}
 }
 
@@ -320,6 +321,83 @@ func TestUpdate_LogEndedMsg_NonMatchingBundleID(t *testing.T) {
 	result, _ := m.Update(logEndedMsg{bundleID: "com.example"})
 	m2 := result.(model)
 	_ = m2
+}
+
+func TestUpdate_RequestRebuildMsg_SystemApp_NoOp(t *testing.T) {
+	m := newTestModel()
+	dev := device.Device{ID: "1", Platform: device.PlatformIOS, Kind: device.KindVirtual}
+	app := device.App{BundleID: "com.apple.Foo", Type: "System"}
+	result, cmd := m.Update(ui.RequestRebuildMsg{Device: dev, App: app})
+	m2 := result.(model)
+	if m2.installAppModal != nil {
+		t.Error("expected no install modal for system app rebuild")
+	}
+	if cmd == nil {
+		t.Fatal("expected status cmd")
+	}
+	if m2.status != "Not a local build" {
+		t.Errorf("expected status message, got %q", m2.status)
+	}
+}
+
+func TestUpdate_RequestRebuildMsg_PhysicalDevice_NoOp(t *testing.T) {
+	m := newTestModel()
+	dev := device.Device{ID: "1", Platform: device.PlatformIOS, Kind: device.KindPhysical}
+	app := device.App{BundleID: "com.example.app", Type: "User"}
+	result, _ := m.Update(ui.RequestRebuildMsg{Device: dev, App: app})
+	m2 := result.(model)
+	if m2.status != "Not a local build" {
+		t.Errorf("expected status message, got %q", m2.status)
+	}
+}
+
+func TestUpdate_RequestRebuildMsg_Android_OpensModalOnFirstRebuild(t *testing.T) {
+	m := newTestModel()
+	dev := device.Device{ID: "1", Platform: device.PlatformAndroid, Kind: device.KindVirtual}
+	app := device.App{BundleID: "com.example.app", Type: "User"}
+	result, cmd := m.Update(ui.RequestRebuildMsg{Device: dev, App: app})
+	m2 := result.(model)
+	if m2.installAppModal == nil {
+		t.Error("expected install modal opened to pick Android project path")
+	}
+	if cmd == nil {
+		t.Error("expected focus cmd")
+	}
+}
+
+func TestUpdate_RequestRebuildMsg_Android_UsesCachedPath(t *testing.T) {
+	m := newTestModel()
+	m.rebuildPaths["com.example.app"] = "/some/project/dir"
+	dev := device.Device{ID: "1", Platform: device.PlatformAndroid, Kind: device.KindVirtual}
+	app := device.App{BundleID: "com.example.app", Type: "User"}
+	result, cmd := m.Update(ui.RequestRebuildMsg{Device: dev, App: app})
+	m2 := result.(model)
+	if m2.installAppModal != nil {
+		t.Error("expected no modal when project path already cached")
+	}
+	if cmd == nil {
+		t.Fatal("expected rebuild cmd batch")
+	}
+	if !m2.installing {
+		t.Error("expected installing flag set")
+	}
+}
+
+func TestUpdate_ConfirmRebuildMsg_CachesAndroidPath(t *testing.T) {
+	m := newTestModel()
+	dev := device.Device{ID: "1", Platform: device.PlatformAndroid, Kind: device.KindVirtual}
+	app := device.App{BundleID: "com.example.app", Type: "User"}
+	result, cmd := m.Update(ui.ConfirmRebuildMsg{Device: dev, App: app, Path: "/some/project/dir"})
+	m2 := result.(model)
+	if m2.rebuildPaths["com.example.app"] != "/some/project/dir" {
+		t.Errorf("expected path cached, got %q", m2.rebuildPaths["com.example.app"])
+	}
+	if m2.installAppModal != nil {
+		t.Error("expected install modal cleared")
+	}
+	if cmd == nil {
+		t.Error("expected rebuild cmd batch")
+	}
 }
 
 func TestUpdate_ShowPlatformPickerMsg(t *testing.T) {

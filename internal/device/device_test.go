@@ -50,3 +50,27 @@ func TestCoordinator_Boot(t *testing.T) {
 		t.Errorf("boot was not called correctly on mock")
 	}
 }
+
+func TestCoordinator_TerminateApp(t *testing.T) {
+	iosMock := &MockManager{PlatformVal: PlatformIOS}
+	coord := NewCoordinator(iosMock)
+
+	dev := Device{ID: "test-id", Platform: PlatformIOS, Kind: KindVirtual}
+	if err := coord.TerminateApp(context.Background(), dev, "com.example.app"); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	if !iosMock.TerminateCalled || iosMock.TerminateBundleID != "com.example.app" {
+		t.Errorf("terminate was not called correctly on mock")
+	}
+}
+
+func TestCoordinator_TerminateApp_NoTerminator(t *testing.T) {
+	androidMock := &MockManager{PlatformVal: PlatformAndroid}
+	coord := NewCoordinator(androidMock)
+
+	dev := Device{ID: "test-id", Platform: PlatformIOS, Kind: KindVirtual}
+	if err := coord.TerminateApp(context.Background(), dev, "com.example.app"); err == nil {
+		t.Error("expected error when no terminator registered for platform")
+	}
+}

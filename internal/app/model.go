@@ -65,6 +65,12 @@ type model struct {
 	installSpinner  spinner.Model
 	sqliteModal     *ui.SQLiteModal
 	dbViewerModal   *dbviewer.Modal
+
+	// rebuildPaths caches the resolved Android gradle project directory per
+	// bundle-id for the running session (no persistence — see
+	// docs/adr/0001-project-resolution-not-persisted.md). iOS resolves fresh
+	// each time via DerivedData, so it needs no cache.
+	rebuildPaths map[string]string
 }
 
 func initialModel(version string, logger *logging.Logger) model {
@@ -83,6 +89,7 @@ func initialModel(version string, logger *logging.Logger) model {
 		logger:       logger,
 		loading:      true,
 		toolVersions: make(map[device.Platform]string),
+		rebuildPaths: make(map[string]string),
 		appVersion:   version,
 		installSpinner: spinner.New(
 			spinner.WithSpinner(spinner.MiniDot),

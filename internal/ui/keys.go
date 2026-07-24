@@ -103,8 +103,9 @@ type MainPaneKeyMap struct {
 	Tab  key.Binding
 	Back key.Binding
 	// Apps tab
-	Filter key.Binding
-	Stream key.Binding
+	Filter  key.Binding
+	Stream  key.Binding
+	Rebuild key.Binding
 	// Info tab
 	Copy key.Binding
 	// Files tab
@@ -120,36 +121,37 @@ func (k MainPaneKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Home, k.End},
 		{k.Tab, k.Back},
-		{k.Filter, k.Stream, k.Copy},
+		{k.Filter, k.Stream, k.Rebuild, k.Copy},
 		{k.Expand, k.Help},
 	}
 }
 
 // MainPaneKeys is the main pane key map singleton.
 var MainPaneKeys = MainPaneKeyMap{
-	Up:     key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
-	Down:   key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
-	Home:   key.NewBinding(key.WithKeys("home", "g"), key.WithHelp("g/home", "top")),
-	End:    key.NewBinding(key.WithKeys("end", "G"), key.WithHelp("G/end", "bottom")),
-	Tab:    key.NewBinding(key.WithKeys("1", "2", "3", "4"), key.WithHelp("1-4", "switch tab")),
-	Back:   key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back to sidebar")),
-	Filter: key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter apps")),
-	Stream: key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "stream logs (apps)")),
-	Copy:   key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "copy value (info)")),
-	Expand: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "expand dir (files)")),
-	Help:   key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+	Up:      key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
+	Down:    key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+	Home:    key.NewBinding(key.WithKeys("home", "g"), key.WithHelp("g/home", "top")),
+	End:     key.NewBinding(key.WithKeys("end", "G"), key.WithHelp("G/end", "bottom")),
+	Tab:     key.NewBinding(key.WithKeys("1", "2", "3", "4"), key.WithHelp("1-4", "switch tab")),
+	Back:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back to sidebar")),
+	Filter:  key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter apps")),
+	Stream:  key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "stream logs (apps)")),
+	Rebuild: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "rebuild & reinstall")),
+	Copy:    key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "copy value (info)")),
+	Expand:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "expand dir (files)")),
+	Help:    key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 }
 
 // ── Install app file picker key map ─────────────────────────────────────────
 
 // InstallPickerKeyMap contains bindings for the install-app file picker modal.
 type InstallPickerKeyMap struct {
-	Select   key.Binding
-	Open     key.Binding
-	Up       key.Binding
-	Down     key.Binding
-	Back     key.Binding
-	Cancel   key.Binding
+	Select key.Binding
+	Open   key.Binding
+	Up     key.Binding
+	Down   key.Binding
+	Back   key.Binding
+	Cancel key.Binding
 }
 
 func (k InstallPickerKeyMap) ShortHelp() []key.Binding {
