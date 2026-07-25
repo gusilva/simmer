@@ -104,6 +104,8 @@ type MainPaneKeyMap struct {
 	Back key.Binding
 	// Apps tab
 	Filter  key.Binding
+	Install key.Binding
+	Delete  key.Binding
 	Stream  key.Binding
 	Rebuild key.Binding
 	// Info tab
@@ -121,7 +123,7 @@ func (k MainPaneKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Home, k.End},
 		{k.Tab, k.Back},
-		{k.Filter, k.Stream, k.Rebuild, k.Copy},
+		{k.Filter, k.Install, k.Delete, k.Stream, k.Rebuild, k.Copy},
 		{k.Expand, k.Help},
 	}
 }
@@ -135,6 +137,8 @@ var MainPaneKeys = MainPaneKeyMap{
 	Tab:     key.NewBinding(key.WithKeys("1", "2", "3", "4"), key.WithHelp("1-4", "switch tab")),
 	Back:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back to sidebar")),
 	Filter:  key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter apps")),
+	Install: key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "install app")),
+	Delete:  key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete app")),
 	Stream:  key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "stream logs (apps)")),
 	Rebuild: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "rebuild & reinstall")),
 	Copy:    key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "copy value (info)")),

@@ -2,6 +2,8 @@ package ui
 
 import (
 	"testing"
+
+	"charm.land/bubbles/v2/key"
 )
 
 // Verify that all key maps satisfy the help.KeyMap interface via ShortHelp and
@@ -43,6 +45,34 @@ func TestMainPaneKeyMap_Help(t *testing.T) {
 	full := MainPaneKeys.FullHelp()
 	if len(full) == 0 {
 		t.Error("MainPaneKeys.FullHelp() must not be empty")
+	}
+}
+
+func TestMainPaneKeyMap_FullHelp_IncludesAllAppsShortcuts(t *testing.T) {
+	full := MainPaneKeys.FullHelp()
+	var flat []key.Binding
+	for _, row := range full {
+		flat = append(flat, row...)
+	}
+
+	want := map[string]key.Binding{
+		"filter apps":         MainPaneKeys.Filter,
+		"install app":         MainPaneKeys.Install,
+		"delete app":          MainPaneKeys.Delete,
+		"stream logs (apps)":  MainPaneKeys.Stream,
+		"rebuild & reinstall": MainPaneKeys.Rebuild,
+	}
+	for desc, binding := range want {
+		found := false
+		for _, b := range flat {
+			if b.Help() == binding.Help() {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected Apps tab shortcut %q in FullHelp(), got %v", desc, full)
+		}
 	}
 }
 
