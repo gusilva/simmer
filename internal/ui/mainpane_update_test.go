@@ -130,6 +130,50 @@ func TestMainPaneUpdate_TabApps_InstallKey_NoDevice(t *testing.T) {
 	}
 }
 
+func TestMainPaneUpdate_TabApps_RebuildKey(t *testing.T) {
+	m := newTestPane()
+	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning, Kind: device.KindVirtual}
+	m.SetDevice(dev, nil)
+	m.tab = TabApps
+	m.SetApps([]device.App{{BundleID: "com.a", Name: "A", Type: "User"}})
+	m.appsIdx = 0
+
+	_, cmd := m.Update(tea.KeyPressMsg{Text: "r"})
+	if cmd == nil {
+		t.Fatal("expected command from r key")
+	}
+	msg := cmd()
+	req, ok := msg.(RequestRebuildMsg)
+	if !ok {
+		t.Fatalf("expected RequestRebuildMsg, got %T", msg)
+	}
+	if req.App.BundleID != "com.a" {
+		t.Errorf("expected app com.a, got %s", req.App.BundleID)
+	}
+}
+
+func TestMainPaneUpdate_TabApps_RebuildKey_NoDevice(t *testing.T) {
+	m := newTestPane()
+	m.tab = TabApps
+	_, cmd := m.Update(tea.KeyPressMsg{Text: "r"})
+	if cmd != nil {
+		t.Error("expected no command when no device")
+	}
+}
+
+func TestMainPaneUpdate_TabApps_RebuildKey_EmptyList(t *testing.T) {
+	m := newTestPane()
+	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
+	m.SetDevice(dev, nil)
+	m.tab = TabApps
+	m.SetApps(nil)
+
+	_, cmd := m.Update(tea.KeyPressMsg{Text: "r"})
+	if cmd != nil {
+		t.Error("expected no command for empty apps list")
+	}
+}
+
 func TestMainPaneUpdate_TabApps_DeleteKey_UserApp(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}

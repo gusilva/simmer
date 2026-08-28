@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"simmer/internal/device"
+	"simmer/internal/ui"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -203,11 +204,69 @@ func nextBuildEventCmd(stream *device.BuildStream, deviceID string) tea.Cmd {
 	}
 }
 
-func fetchXcodeSchemesCmd(path string) tea.Cmd {
+// resolveIOSRebuildCmd finds the Xcode project for a locally-built app by
+// matching its display name against DerivedData, then loads its schemes.
+func (m model) resolveIOSRebuildCmd(dev device.Device, app device.App) tea.Cmd {
+	logger := m.logger
+	return func() tea.Msg {
+		path, err := device.ResolveIOSProjectPath(app.Label())
+		if err != nil {
+			logger.LogError("resolve ios project for "+app.Label(), err)
+			return rebuildIOSResolvedMsg{device: dev, app: app, err: err}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		schemes, err := device.ListXcodeSchemes(ctx, path)
+		if err != nil {
+			logger.LogError("list xcode schemes for "+path, err)
+			return rebuildIOSResolvedMsg{device: dev, app: app, err: err}
+		}
+		return rebuildIOSResolvedMsg{device: dev, app: app, path: path, schemes: schemes}
+	}
+}
+
+// startRebuildCmd stops any in-flight build stream and starts a new
+// rebuild-and-reinstall pipeline for app, updating status/spinner state.
+func (m *model) startRebuildCmd(dev device.Device, app device.App, path, scheme string) tea.Cmd {
+	if m.buildStream != nil {
+		m.buildStream.Stop()
+		m.buildStream = nil
+	}
+	m.installing = true
+	return tea.Batch(
+		m.terminateThenInstallCmd(dev, app.BundleID, path, scheme),
+		m.setStatus("Rebuilding "+app.Label()+"…", ui.StatusInfo),
+		tea.Cmd(m.installSpinner.Tick),
+	)
+}
+
+// terminateThenInstallCmd stops the currently running instance of an app
+// (best-effort — it may not be running) and then starts the normal
+// build→install→launch pipeline, matching xcodebuild/simctl rebuild flow.
+func (m model) terminateThenInstallCmd(dev device.Device, bundleID, path, scheme string) tea.Cmd {
+	coord := m.coordinator
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = coord.TerminateApp(ctx, dev, bundleID)
+		cancel()
+
+		stream, err := coord.StartInstall(dev, path, scheme)
+		if err != nil {
+			return buildDoneMsg{deviceID: dev.ID, err: err}
+		}
+		return buildStartedMsg{device: dev, stream: stream}
+	}
+}
+
+func (m model) fetchXcodeSchemesCmd(path string) tea.Cmd {
+	logger := m.logger
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		schemes, err := device.ListXcodeSchemes(ctx, path)
+		if err != nil {
+			logger.LogError("list xcode schemes for "+path, err)
+		}
 		return xcodeSchemesMsg{schemes: schemes, err: err}
 	}
 }

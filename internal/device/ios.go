@@ -633,6 +633,87 @@ func parseXcodeSchemes(data []byte) ([]string, error) {
 }
 
 // DeleteApp uninstalls an app from an iOS simulator via `xcrun simctl uninstall`.
+// TerminateApp stops a running app via `xcrun simctl terminate`. Best-effort:
+// callers typically ignore the error since the app may not be running.
+func (m *iosManager) TerminateApp(ctx context.Context, deviceID, bundleID string) error {
+	cmd := exec.CommandContext(ctx, "xcrun", "simctl", "terminate", deviceID, bundleID)
+	out, err := cmd.CombinedOutput()
+	m.logger.LogExec("xcrun", []string{"simctl", "terminate", deviceID, bundleID}, string(out), err)
+	return err
+}
+
+// ResolveIOSProjectPath finds the Xcode project/workspace for a locally
+// built app by matching its display name against DerivedData folder names,
+// then reading WorkspacePath from that folder's info.plist. See
+// docs/adr/0001-project-resolution-not-persisted.md.
+func ResolveIOSProjectPath(appName string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("home dir: %w", err)
+	}
+	root := filepath.Join(home, "Library", "Developer", "Xcode", "DerivedData")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return "", fmt.Errorf("read DerivedData: %w", err)
+	}
+
+	prefix := appName + "-"
+	var best string
+	var bestMod time.Time
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), prefix) {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if best == "" || info.ModTime().After(bestMod) {
+			best = filepath.Join(root, e.Name())
+			bestMod = info.ModTime()
+		}
+	}
+	if best == "" {
+		return "", fmt.Errorf("no DerivedData folder found for %q", appName)
+	}
+
+	// info.plist contains a Date field (LastAccessedDate), which `plutil
+	// -convert json` rejects ("Invalid object in plist for JSON format").
+	// -p's human-readable dump handles it fine.
+	out, err := exec.Command("plutil", "-p", filepath.Join(best, "info.plist")).Output()
+	if err != nil {
+		return "", fmt.Errorf("read %s/info.plist: %w", filepath.Base(best), err)
+	}
+	workspacePath, ok := parsePlutilWorkspacePath(string(out))
+	if !ok {
+		return "", fmt.Errorf("WorkspacePath not found in %s/info.plist", filepath.Base(best))
+	}
+	if _, err := os.Stat(workspacePath); err != nil {
+		return "", fmt.Errorf("project no longer exists at %s", workspacePath)
+	}
+	return workspacePath, nil
+}
+
+// parsePlutilWorkspacePath extracts the WorkspacePath value from `plutil -p`
+// output, e.g. `  "WorkspacePath" => "/path/to/Foo.xcodeproj"`.
+func parsePlutilWorkspacePath(output string) (string, bool) {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, `"WorkspacePath"`) {
+			continue
+		}
+		idx := strings.Index(line, "=>")
+		if idx < 0 {
+			continue
+		}
+		val := strings.Trim(strings.TrimSpace(line[idx+2:]), `"`)
+		if val != "" {
+			return val, true
+		}
+	}
+	return "", false
+}
+
 func (m *iosManager) DeleteApp(ctx context.Context, deviceID, bundleID string) error {
 	cmd := exec.CommandContext(ctx, "xcrun", "simctl", "uninstall", deviceID, bundleID)
 	out, err := cmd.CombinedOutput()

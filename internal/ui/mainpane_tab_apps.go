@@ -49,9 +49,10 @@ func (m MainPane) renderApps(w, h int) string {
 		offset = m.appsIdx - listH + 1
 	}
 	end := min(offset+listH, len(filtered))
+	local := m.active != nil && m.active.Kind == device.KindVirtual
 	for i := offset; i < end; i++ {
 		streaming := m.selectedApp != nil && m.selectedApp.BundleID == filtered[i].BundleID
-		lines = append(lines, m.renderAppRow(filtered[i], w, i == m.appsIdx, streaming))
+		lines = append(lines, m.renderAppRow(filtered[i], w, i == m.appsIdx, streaming, local && filtered[i].IsLocal()))
 	}
 
 	for len(lines) < h {
@@ -86,7 +87,7 @@ func (m MainPane) renderAppsFilterBar(w int) string {
 	return row
 }
 
-func (m MainPane) renderAppRow(app device.App, w int, cursor bool, streaming bool) string {
+func (m MainPane) renderAppRow(app device.App, w int, cursor bool, streaming bool, local bool) string {
 	bg := lipgloss.NewStyle().Background(ColorBg)
 
 	label := app.Label()
@@ -98,13 +99,23 @@ func (m MainPane) renderAppRow(app device.App, w int, cursor bool, streaming boo
 	// ⊙ = broadcast/signal indicator; 2 cells: space + glyph
 	const streamIcon = " ⊙"
 	const streamIconW = 2
+	// [dev] = locally-built badge; 6 cells: space + [dev]
+	const devBadge = " [dev]"
+	const devBadgeW = 6
 
-	iconStr := ""
-	iconW := 0
-	if streaming {
-		iconStr = streamIcon
-		iconW = streamIconW
+	devStr := ""
+	devW := 0
+	if local {
+		devStr = devBadge
+		devW = devBadgeW
 	}
+	streamStr := ""
+	streamW := 0
+	if streaming {
+		streamStr = streamIcon
+		streamW = streamIconW
+	}
+	iconW := devW + streamW
 
 	const (
 		leadW  = 1
@@ -125,7 +136,7 @@ func (m MainPane) renderAppRow(app device.App, w int, cursor bool, streaming boo
 			selBg = ColorFgDim
 		}
 		sel := lipgloss.NewStyle().Foreground(ColorBg).Background(selBg).Bold(true)
-		return sel.Render(" " + nameStr + iconStr + strings.Repeat(" ", gap) + meta + " ")
+		return sel.Render(" " + nameStr + devStr + streamStr + strings.Repeat(" ", gap) + meta + " ")
 	}
 
 	nameFg := ColorFg
@@ -133,12 +144,13 @@ func (m MainPane) renderAppRow(app device.App, w int, cursor bool, streaming boo
 		nameFg = ColorFgDim
 	}
 	nameStyled := lipgloss.NewStyle().Foreground(nameFg).Background(ColorBg).Render(nameStr)
+	devStyled := lipgloss.NewStyle().Foreground(ColorOrange).Background(ColorBg).Render(devStr)
 	metaStyled := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg).Render(meta)
 
 	if streaming {
-		iconStyled := lipgloss.NewStyle().Foreground(ColorOk).Background(ColorBg).Render(iconStr)
-		return " " + nameStyled + iconStyled + bg.Render(strings.Repeat(" ", gap)) + metaStyled + bg.Render(" ")
+		streamStyled := lipgloss.NewStyle().Foreground(ColorOk).Background(ColorBg).Render(streamStr)
+		return " " + nameStyled + devStyled + streamStyled + bg.Render(strings.Repeat(" ", gap)) + metaStyled + bg.Render(" ")
 	}
 
-	return " " + nameStyled + bg.Render(strings.Repeat(" ", gap)) + metaStyled + bg.Render(" ")
+	return " " + nameStyled + devStyled + bg.Render(strings.Repeat(" ", gap)) + metaStyled + bg.Render(" ")
 }

@@ -25,9 +25,9 @@ type installStep int
 
 const (
 	stepPick    installStep = iota // browsing file picker
-	stepLoading                   // fetching schemes (iOS only)
-	stepScheme                    // picking scheme (iOS only)
-	stepErrLoad                   // scheme fetch failed
+	stepLoading                    // fetching schemes (iOS only)
+	stepScheme                     // picking scheme (iOS only)
+	stepErrLoad                    // scheme fetch failed
 )
 
 // InstallAppModal is a multi-step overlay:
@@ -42,6 +42,29 @@ type InstallAppModal struct {
 	schemeOff  int
 	loadErrMsg string
 	pickedPath string // path confirmed in step 1
+
+	// rebuildApp is set when this modal is picking a project for the
+	// rebuild-and-reinstall flow rather than a fresh install; when set,
+	// confirmation emits ConfirmRebuildMsg instead of ConfirmInstallAppMsg.
+	rebuildApp *device.App
+}
+
+// SetRebuildApp marks this modal as resolving a project for the
+// rebuild-and-reinstall flow for the given app.
+func (m *InstallAppModal) SetRebuildApp(app device.App) {
+	m.rebuildApp = &app
+}
+
+// NewInstallAppModalAtScheme returns a modal already past the file-picker
+// step, showing the scheme picker for a project path resolved automatically
+// (used by the iOS rebuild flow when the project has more than one scheme).
+func NewInstallAppModalAtScheme(dev device.Device, path string, schemes []string) InstallAppModal {
+	return InstallAppModal{
+		dev:        dev,
+		step:       stepScheme,
+		schemes:    schemes,
+		pickedPath: path,
+	}
 }
 
 // NewInstallAppModal returns a ready modal. The returned Cmd triggers the
@@ -190,10 +213,7 @@ func (m InstallAppModal) selectHighlighted() (InstallAppModal, tea.Cmd) {
 			m.step = stepLoading
 			return m, func() tea.Msg { return RequestXcodeSchemesMsg{Path: hi} }
 		case ".app", ".ipa":
-			dev := m.dev
-			return m, func() tea.Msg {
-				return ConfirmInstallAppMsg{Device: dev, Path: hi, Scheme: ""}
-			}
+			return m, m.confirmCmd(hi, "")
 		default:
 			return m, nil
 		}
@@ -205,12 +225,24 @@ func (m InstallAppModal) selectHighlighted() (InstallAppModal, tea.Cmd) {
 		return m, nil
 	}
 	if info.IsDir() || ext == ".apk" {
-		dev := m.dev
-		return m, func() tea.Msg {
-			return ConfirmInstallAppMsg{Device: dev, Path: hi, Scheme: ""}
-		}
+		return m, m.confirmCmd(hi, "")
 	}
 	return m, nil
+}
+
+// confirmCmd emits ConfirmRebuildMsg when this modal is resolving a project
+// for the rebuild flow, or ConfirmInstallAppMsg for a fresh install.
+func (m InstallAppModal) confirmCmd(path, scheme string) tea.Cmd {
+	dev := m.dev
+	if m.rebuildApp != nil {
+		app := *m.rebuildApp
+		return func() tea.Msg {
+			return ConfirmRebuildMsg{Device: dev, App: app, Path: path, Scheme: scheme}
+		}
+	}
+	return func() tea.Msg {
+		return ConfirmInstallAppMsg{Device: dev, Path: path, Scheme: scheme}
+	}
 }
 
 func (m InstallAppModal) updateScheme(k tea.KeyPressMsg) (InstallAppModal, tea.Cmd) {
@@ -238,10 +270,7 @@ func (m InstallAppModal) updateScheme(k tea.KeyPressMsg) (InstallAppModal, tea.C
 		if len(m.schemes) == 0 {
 			return m, nil
 		}
-		dev, path, scheme := m.dev, m.pickedPath, m.schemes[m.schemeIdx]
-		return m, func() tea.Msg {
-			return ConfirmInstallAppMsg{Device: dev, Path: path, Scheme: scheme}
-		}
+		return m, m.confirmCmd(m.pickedPath, m.schemes[m.schemeIdx])
 	}
 	return m, nil
 }
@@ -267,8 +296,12 @@ func (m InstallAppModal) View() string {
 
 	sep := faint.Render("  ")
 
+	title := "Install App"
+	if m.rebuildApp != nil {
+		title = "Rebuild " + m.rebuildApp.Label()
+	}
 	var b strings.Builder
-	b.WriteString(lipgloss.NewStyle().Foreground(ColorAccent).Background(ColorBg).Bold(true).Render("Install App"))
+	b.WriteString(lipgloss.NewStyle().Foreground(ColorAccent).Background(ColorBg).Bold(true).Render(title))
 	b.WriteString("\n\n")
 
 	switch m.step {

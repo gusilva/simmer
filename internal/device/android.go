@@ -256,6 +256,22 @@ func findAPKInOutputs(projectDir string) (string, error) {
 	return found, nil
 }
 
+// TerminateApp stops a running app via `adb shell am force-stop`. Best-effort:
+// callers typically ignore the error since the app may not be running.
+func (m *androidManager) TerminateApp(ctx context.Context, deviceID, bundleID string) error {
+	serial, err := findAndroidSerial(ctx, deviceID)
+	if err != nil {
+		return fmt.Errorf("find android serial: %w", err)
+	}
+	d, err := gadbDevice(serial)
+	if err != nil {
+		return err
+	}
+	out, err := d.RunShellCommand("am", "force-stop", bundleID)
+	m.logger.LogExec("adb shell", []string{"am", "force-stop", bundleID}, out, err)
+	return err
+}
+
 // DeleteApp uninstalls an app from an Android emulator via pm uninstall.
 func (m *androidManager) DeleteApp(ctx context.Context, deviceID, bundleID string) error {
 	serial, err := findAndroidSerial(ctx, deviceID)
@@ -417,7 +433,6 @@ func apkPackageName(ctx context.Context, apkPath string) (string, error) {
 	}
 	return "", fmt.Errorf("package name not found in aapt output")
 }
-
 
 // ListDeviceTypes returns Android device profiles via `avdmanager list device`.
 func (m *androidManager) ListDeviceTypes(ctx context.Context) ([]DeviceType, error) {

@@ -51,8 +51,15 @@ type deleteAppResultMsg struct {
 	err      error
 }
 
-
 type xcodeSchemesMsg struct {
+	schemes []string
+	err     error
+}
+
+type rebuildIOSResolvedMsg struct {
+	device  device.Device
+	app     device.App
+	path    string
 	schemes []string
 	err     error
 }

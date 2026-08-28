@@ -59,5 +59,20 @@ type ConfirmDeleteAppMsg struct {
 	App    device.App
 }
 
+// RequestRebuildMsg is emitted by MainPane when 'r' is pressed on an app row.
+type RequestRebuildMsg struct {
+	Device device.Device
+	App    device.App
+}
+
+// ConfirmRebuildMsg is emitted when a rebuild's project path (and, for iOS,
+// scheme) has been picked, either automatically or via the picker overlay.
+type ConfirmRebuildMsg struct {
+	Device device.Device
+	App    device.App
+	Path   string
+	Scheme string // Xcode scheme; empty for Android
+}
+
 // CancelOverlayMsg is emitted when the user dismisses any overlay.
 type CancelOverlayMsg struct{}

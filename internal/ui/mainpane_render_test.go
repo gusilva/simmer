@@ -239,7 +239,7 @@ func TestRenderApps_ScrollOffset(t *testing.T) {
 func TestRenderAppRow_NotSelected(t *testing.T) {
 	m := newPaneWithDevice()
 	app := device.App{BundleID: "com.example.app", Name: "Example", ShortVersion: "1.0"}
-	got := m.renderAppRow(app, 70, false, false)
+	got := m.renderAppRow(app, 70, false, false, false)
 	if !strings.Contains(got, "Example") {
 		t.Error("app name not in row")
 	}
@@ -251,7 +251,7 @@ func TestRenderAppRow_NotSelected(t *testing.T) {
 func TestRenderAppRow_Selected(t *testing.T) {
 	m := newPaneWithDevice()
 	app := device.App{BundleID: "com.example", Name: "Example", ShortVersion: "2.0"}
-	got := m.renderAppRow(app, 70, true, false)
+	got := m.renderAppRow(app, 70, true, false, false)
 	if !strings.Contains(got, "Example") {
 		t.Error("app name not in selected row")
 	}
@@ -261,7 +261,7 @@ func TestRenderAppRow_Streaming(t *testing.T) {
 	m := newPaneWithDevice()
 	app := device.App{BundleID: "com.example", Name: "Example", ShortVersion: "2.0"}
 	// streaming=true, not selected
-	got := m.renderAppRow(app, 70, false, true)
+	got := m.renderAppRow(app, 70, false, true, false)
 	// Stream icon ⊙ should appear.
 	if !strings.Contains(got, "⊙") {
 		t.Error("expected stream icon ⊙ in streaming row")
@@ -271,7 +271,7 @@ func TestRenderAppRow_Streaming(t *testing.T) {
 func TestRenderAppRow_StreamingSelected(t *testing.T) {
 	m := newPaneWithDevice()
 	app := device.App{BundleID: "com.example", Name: "Example"}
-	got := m.renderAppRow(app, 70, true, true)
+	got := m.renderAppRow(app, 70, true, true, false)
 	if !strings.Contains(got, "Example") {
 		t.Error("app name not in streaming+selected row")
 	}
@@ -281,7 +281,7 @@ func TestRenderAppRow_SystemApp(t *testing.T) {
 	m := newPaneWithDevice()
 	app := device.App{BundleID: "com.apple.Foo", Name: "Foo", Type: "System"}
 	// cursor=true triggers the dim background branch for system apps.
-	got := m.renderAppRow(app, 70, true, false)
+	got := m.renderAppRow(app, 70, true, false, false)
 	if !strings.Contains(got, "Foo") {
 		t.Error("system app name not in row")
 	}
@@ -291,9 +291,27 @@ func TestRenderAppRow_FallbackToVersion(t *testing.T) {
 	m := newPaneWithDevice()
 	// ShortVersion empty, Version set — meta falls back to Version.
 	app := device.App{BundleID: "com.ex", Name: "Ex", Version: "3.0"}
-	got := m.renderAppRow(app, 70, false, false)
+	got := m.renderAppRow(app, 70, false, false, false)
 	if !strings.Contains(got, "3.0") {
 		t.Error("fallback version not in row")
+	}
+}
+
+func TestRenderAppRow_LocalBadge(t *testing.T) {
+	m := newPaneWithDevice()
+	app := device.App{BundleID: "com.example.app", Name: "Example", Type: "User", ShortVersion: "1.0"}
+	got := m.renderAppRow(app, 70, false, false, true)
+	if !strings.Contains(got, "[dev]") {
+		t.Error("expected [dev] badge for local app")
+	}
+}
+
+func TestRenderAppRow_NoLocalBadgeWhenNotLocal(t *testing.T) {
+	m := newPaneWithDevice()
+	app := device.App{BundleID: "com.example.app", Name: "Example", Type: "System", ShortVersion: "1.0"}
+	got := m.renderAppRow(app, 70, false, false, false)
+	if strings.Contains(got, "[dev]") {
+		t.Error("did not expect [dev] badge for non-local app")
 	}
 }
 
@@ -698,7 +716,10 @@ func TestRenderTreeRow_EmptyDir(t *testing.T) {
 // ── formatSize ────────────────────────────────────────────────────────────
 
 func TestFormatSize(t *testing.T) {
-	tests := []struct{ b int64; want string }{
+	tests := []struct {
+		b    int64
+		want string
+	}{
 		{500, "500 B"},
 		{1500, "1 KB"},
 		{1_500_000, "1.5 MB"},
