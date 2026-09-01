@@ -1,12 +1,7 @@
 package ui
 
 import (
-	"strings"
-
 	"simmer/internal/device"
-
-	"charm.land/bubbles/v2/viewport"
-	"charm.land/lipgloss/v2"
 )
 
 // MainTab identifies one of the top-level tabs in the main pane.
@@ -18,8 +13,6 @@ const (
 	TabInfo MainTab = iota
 	// TabApps shows installed apps.
 	TabApps
-	// TabLogs shows device logs (not implemented).
-	TabLogs
 	// TabFiles shows the device filesystem tree + preview.
 	TabFiles
 )
@@ -27,60 +20,40 @@ const (
 var mainTabs = []Tab{
 	{Key: "1", Label: "Info"},
 	{Key: "2", Label: "Apps"},
-	{Key: "3", Label: "Logs"},
-	{Key: "4", Label: "Files"},
+	{Key: "3", Label: "Files"},
 }
 
 // MainPane is the right-hand panel showing details for the active device.
 // It is a pure UI component: callers pass in the active device and a loaded
 // filesystem tree via SetDevice.
 type MainPane struct {
-	active        *device.Device   // Which device is selected (nil = none)
-	tab           MainTab          // Which tab is active: Info, Apps, Logs, Files
-	tree          *device.FileNode // Filesystem tree for Files Tab
-	expanded      map[string]bool  // Which dirs are open in the tree
-	treeIdx       int              // Cursor row in the tree
-	apps          []device.App     // List of installed apps
-	appsIdx       int              // Cursor row in the filtered apps list
-	appsFilter    string           // Active fuzzy filter for apps
-	appsFiltering bool             // Whether filter input is active
-	selectedApp   *device.App      // The app with log streaming ON
+	active        *device.Device    // Which device is selected (nil = none)
+	tab           MainTab           // Which tab is active: Info, Apps, Files
+	tree          *device.FileNode  // Filesystem tree for Files Tab
+	expanded      map[string]bool   // Which dirs are open in the tree
+	treeIdx       int               // Cursor row in the tree
+	apps          []device.App      // List of installed apps
+	appsIdx       int               // Cursor row in the filtered apps list
+	appsFilter    string            // Active fuzzy filter for apps
+	appsFiltering bool              // Whether filter input is active
+	selectedApp   *device.App       // App pinned (via space) for Files-tab sandbox browsing
 	info          device.DeviceInfo // Device info fields for the Info tab
-	infoIdx       int              // Cursor row in the info list
-	logs          []string         // Buffered log lines
-	logBundle     string           // Which app's logs we're streaming
-	logsDirty     bool             // True when logs changed but logsVP not yet refreshed
-	logsVP        viewport.Model   // Scrollable viewport for logs
-	focused       bool             // Does this pane have keyboard focus?
-	width         int              // Outer width available to the pane (including borders)
-	height        int              // Outer height available to the pane (including borders)
+	infoIdx       int               // Cursor row in the info list
+	loggingBundle string            // Bundle id whose logs are currently written to file ("" = none)
+	focused       bool              // Does this pane have keyboard focus?
+	width         int               // Outer width available to the pane (including borders)
+	height        int               // Outer height available to the pane (including borders)
 }
 
 // NewMainPane returns an empty main pane.
 func NewMainPane() MainPane {
-	vp := viewport.New() // scrollable text area
-	vp.SoftWrap = true
-	vp.Style = lipgloss.NewStyle().Foreground(ColorFgDim).Background(ColorBg)
-
-	return MainPane{expanded: map[string]bool{}, logsVP: vp}
+	return MainPane{expanded: map[string]bool{}}
 }
 
-// SetSize sets the outer width/height available to the pane and rescales
-// child components (logs viewport) accordingly.
+// SetSize sets the outer width/height available to the pane.
 func (m *MainPane) SetSize(w, h int) {
 	m.width = w
 	m.height = h
-
-	// Logs viewport sits inside: outer frame (2) + tab header (4 lines:
-	// title, divider, tabs, divider) + log header (2 lines: header + rule).
-	innerW := max(w-2, 1)
-	innerH := max(h-2, 1)
-	contentH := max(innerH-4, 1)
-	vpH := max(contentH-2, 1)
-	vpW := max(innerW-2, 1)
-
-	m.logsVP.SetWidth(vpW)
-	m.logsVP.SetHeight(vpH)
 }
 
 // SetFocused marks whether the main pane holds the app's outer focus.
@@ -101,8 +74,7 @@ func (m *MainPane) SetDevice(d *device.Device, root *device.FileNode) {
 	m.selectedApp = nil
 	m.info = device.DeviceInfo{}
 	m.infoIdx = 0
-	m.logs = nil
-	m.logBundle = ""
+	m.loggingBundle = ""
 
 	if root != nil {
 		m.expanded[root.Path] = true
@@ -193,59 +165,23 @@ func (m MainPane) SelectedApp() *device.App {
 	return &a
 }
 
-// SetLogBundle marks which app's logs are now being streamed and clears any
-// previously buffered lines + viewport content.
-func (m *MainPane) SetLogBundle(bundleID string) {
-	m.logBundle = bundleID
-	m.logs = nil
-	m.logsDirty = false
-	m.logsVP.SetContent("")
-	m.logsVP.GotoTop()
-}
+// SetLoggingBundle records which app's logs are currently being written to a
+// file, so the Apps tab can badge that row. Pass "" to clear.
+func (m *MainPane) SetLoggingBundle(bundleID string) { m.loggingBundle = bundleID }
 
-// AppendLog adds a line to the rolling log buffer. The buffer is capped at
-// the most recent 1000 lines. The viewport is updated lazily on the next
-// View() call to avoid O(n) joins on every incoming log line.
-func (m *MainPane) AppendLog(line string) {
-	const maxLines = 1000
-	m.logs = append(m.logs, line)
-	if len(m.logs) > maxLines {
-		// Allocate a fresh slice so the old backing array — which may be
-		// 2× larger due to prior reslicing — becomes eligible for GC.
-		compacted := make([]string, maxLines)
-		copy(compacted, m.logs[len(m.logs)-maxLines:])
-		m.logs = compacted
-	}
-	m.logsDirty = true
-}
+// LoggingBundle returns the bundle id whose logs are currently written to
+// file, or "" if none.
+func (m MainPane) LoggingBundle() string { return m.loggingBundle }
 
-// flushLogs pushes buffered log lines into the viewport when logsDirty is set.
-// Called from View() so the O(n) join happens once per render, not per line.
-func (m *MainPane) flushLogs() {
-	if !m.logsDirty {
-		return
-	}
-	atBottom := m.logsVP.AtBottom()
-	m.logsVP.SetContent(strings.Join(m.logs, "\n"))
-	if atBottom {
-		m.logsVP.GotoBottom()
-	}
-	m.logsDirty = false
-}
-
-// LogBundle returns the bundle identifier whose logs are currently buffered,
-// or "" if none.
-func (m MainPane) LogBundle() string { return m.logBundle }
-
-// RequestLogStreamMsg is dispatched by MainPane when the user selects an app
-// for log streaming. The parent program is expected to start streaming logs
-// for the given app and feed them back via AppendLog.
-type RequestLogStreamMsg struct {
+// StartAppLoggingMsg is dispatched when the user presses "l" on an app row.
+// The parent program starts streaming that app's logs to a file.
+type StartAppLoggingMsg struct {
 	App device.App
 }
 
-// StopLogStreamMsg is dispatched when the user deselects the streaming app.
-type StopLogStreamMsg struct{}
+// StopAppLoggingMsg is dispatched when the user presses "l" again on the app
+// currently being logged.
+type StopAppLoggingMsg struct{}
 
 // RequestFileTreeMsg is dispatched when the Files tab is opened. App is nil
 // when no app is selected, in which case the parent should load the root tree.

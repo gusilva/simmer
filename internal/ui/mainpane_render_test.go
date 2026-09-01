@@ -257,23 +257,40 @@ func TestRenderAppRow_Selected(t *testing.T) {
 	}
 }
 
-func TestRenderAppRow_Streaming(t *testing.T) {
+func TestRenderAppRow_Logging(t *testing.T) {
 	m := newPaneWithDevice()
 	app := device.App{BundleID: "com.example", Name: "Example", ShortVersion: "2.0"}
-	// streaming=true, not selected
+	// logging=true, not selected
 	got := m.renderAppRow(app, 70, false, true, false)
-	// Stream icon ⊙ should appear.
-	if !strings.Contains(got, "⊙") {
-		t.Error("expected stream icon ⊙ in streaming row")
+	if !strings.Contains(got, "[logging]") {
+		t.Error("expected [logging] badge in logging row")
 	}
 }
 
-func TestRenderAppRow_StreamingSelected(t *testing.T) {
+func TestRenderAppRow_Pinned_ShowsIcon(t *testing.T) {
+	m := newPaneWithDevice()
+	app := device.App{BundleID: "com.example", Name: "Example", ShortVersion: "2.0"}
+	m.selectedApp = &app // pinned via space for Files browsing
+	got := m.renderAppRow(app, 70, false, false, false)
+	if !strings.Contains(got, "⊙") {
+		t.Error("expected pin icon ⊙ for the selected app")
+	}
+	// A different, non-pinned app must not show the icon.
+	other := device.App{BundleID: "com.other", Name: "Other"}
+	if strings.Contains(m.renderAppRow(other, 70, false, false, false), "⊙") {
+		t.Error("non-pinned app must not show the pin icon")
+	}
+}
+
+func TestRenderAppRow_LoggingSelected(t *testing.T) {
 	m := newPaneWithDevice()
 	app := device.App{BundleID: "com.example", Name: "Example"}
 	got := m.renderAppRow(app, 70, true, true, false)
 	if !strings.Contains(got, "Example") {
-		t.Error("app name not in streaming+selected row")
+		t.Error("app name not in logging+selected row")
+	}
+	if !strings.Contains(got, "[logging]") {
+		t.Error("expected [logging] badge in logging+selected row")
 	}
 }
 
@@ -417,37 +434,6 @@ func TestInfoKeyWidth_MinFour(t *testing.T) {
 	w := infoKeyWidth([]device.InfoField{{Key: "ab", Value: "v"}})
 	if w < 4 {
 		t.Errorf("expected min of 4, got %d", w)
-	}
-}
-
-// ── renderLogs ────────────────────────────────────────────────────────────
-
-func TestRenderLogs_NoBundle_ShowsHint(t *testing.T) {
-	m := newPaneWithDevice()
-	m.tab = TabLogs
-	// logBundle is empty by default after SetDevice.
-	got := m.renderLogs(70, 10)
-	if !strings.Contains(got, "no selected app") {
-		t.Errorf("expected no-bundle hint, got %q", got)
-	}
-	if lineCount(got) != 10 {
-		t.Errorf("expected %d lines, got %d", 10, lineCount(got))
-	}
-}
-
-func TestRenderLogs_WithBundle_ShowsHeader(t *testing.T) {
-	m := newPaneWithDevice()
-	m.tab = TabLogs
-	m.SetLogBundle("com.example.app")
-	m.AppendLog("first line")
-	m.AppendLog("second line")
-	// Use View() which correctly accounts for viewport height vs content height.
-	got := m.View()
-	if !strings.Contains(got, "com.example.app") {
-		t.Error("bundle name not in logs view")
-	}
-	if !strings.Contains(got, "streaming") {
-		t.Error("'streaming' header not in logs view")
 	}
 }
 

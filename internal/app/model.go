@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -41,10 +42,12 @@ type model struct {
 	androidCount int
 	lastRefresh  time.Time
 	appVersion   string
+	launchDir    string
 
 	logStream   *device.LogStream
 	logBundleID string
 	logDeviceID string
+	logFile     *os.File
 
 	status     string
 	statusKind ui.StatusKind
@@ -73,7 +76,7 @@ type model struct {
 	rebuildPaths map[string]string
 }
 
-func initialModel(version string, logger *logging.Logger) model {
+func initialModel(version string, logger *logging.Logger, launchDir string) model {
 	coord := device.NewCoordinator(
 		device.NewIOSManager(logger),
 		device.NewPhysicalIOSManager(logger),
@@ -91,6 +94,7 @@ func initialModel(version string, logger *logging.Logger) model {
 		toolVersions: make(map[device.Platform]string),
 		rebuildPaths: make(map[string]string),
 		appVersion:   version,
+		launchDir:    launchDir,
 		installSpinner: spinner.New(
 			spinner.WithSpinner(spinner.MiniDot),
 			spinner.WithStyle(lipgloss.NewStyle().Foreground(ui.ColorAccent)),
@@ -149,10 +153,23 @@ func (m model) bodyHeight() int {
 	return max(m.height-lipgloss.Height(topBar)-lipgloss.Height(footer), 0)
 }
 
-func Run(version string, logger *logging.Logger) error {
-	m := initialModel(version, logger)
+func Run(version string, logger *logging.Logger, launchDir string) error {
+	m := initialModel(version, logger, launchDir)
 	p := tea.NewProgram(m)
-	if _, err := p.Run(); err != nil {
+
+	final, err := p.Run()
+
+	// Catch-all flush + close of any in-flight app-log file for the paths that
+	// return a model: clean quit and a panic inside a Cmd. (A panic inside
+	// Update/View returns a nil model — there the per-batch fsync in the
+	// logBatchMsg handler is what guarantees the file is intact, and the OS
+	// closes the fd on exit.) closeLogFile is idempotent, so the deterministic
+	// close already done on the quit-key path is harmless here.
+	if fm, ok := final.(model); ok {
+		fm.closeLogFile()
+	}
+
+	if err != nil {
 		return fmt.Errorf("run program: %w", err)
 	}
 

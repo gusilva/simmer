@@ -147,8 +147,6 @@ func (m MainPane) renderTabContent(innerW, innerH int) string {
 		return m.renderApps(innerW, innerH)
 	case TabInfo:
 		return m.renderInfo(innerW, innerH)
-	case TabLogs:
-		return m.renderLogs(innerW, innerH)
 	default:
 		return m.renderPlaceholder(innerW, innerH)
 	}

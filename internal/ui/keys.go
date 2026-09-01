@@ -106,7 +106,8 @@ type MainPaneKeyMap struct {
 	Filter  key.Binding
 	Install key.Binding
 	Delete  key.Binding
-	Stream  key.Binding
+	PinApp  key.Binding
+	Log     key.Binding
 	Rebuild key.Binding
 	// Info tab
 	Copy key.Binding
@@ -123,7 +124,7 @@ func (k MainPaneKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Home, k.End},
 		{k.Tab, k.Back},
-		{k.Filter, k.Install, k.Delete, k.Stream, k.Rebuild, k.Copy},
+		{k.Filter, k.Install, k.Delete, k.PinApp, k.Log, k.Rebuild, k.Copy},
 		{k.Expand, k.Help},
 	}
 }
@@ -134,12 +135,13 @@ var MainPaneKeys = MainPaneKeyMap{
 	Down:    key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
 	Home:    key.NewBinding(key.WithKeys("home", "g"), key.WithHelp("g/home", "top")),
 	End:     key.NewBinding(key.WithKeys("end", "G"), key.WithHelp("G/end", "bottom")),
-	Tab:     key.NewBinding(key.WithKeys("1", "2", "3", "4"), key.WithHelp("1-4", "switch tab")),
+	Tab:     key.NewBinding(key.WithKeys("1", "2", "3"), key.WithHelp("1-3", "switch tab")),
 	Back:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back to sidebar")),
 	Filter:  key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter apps")),
 	Install: key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "install app")),
 	Delete:  key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete app")),
-	Stream:  key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "stream logs (apps)")),
+	PinApp:  key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "browse app files")),
+	Log:     key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "log app to file")),
 	Rebuild: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "rebuild & reinstall")),
 	Copy:    key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "copy value (info)")),
 	Expand:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "expand dir (files)")),

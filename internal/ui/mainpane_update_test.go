@@ -219,7 +219,7 @@ func TestMainPaneUpdate_TabApps_DeleteKey_EmptyList(t *testing.T) {
 	}
 }
 
-func TestMainPaneUpdate_TabApps_Space_StartsStream(t *testing.T) {
+func TestMainPaneUpdate_TabApps_Space_PinsApp(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
@@ -227,21 +227,13 @@ func TestMainPaneUpdate_TabApps_Space_StartsStream(t *testing.T) {
 	m.SetApps([]device.App{{BundleID: "com.a", Name: "A"}})
 	m.appsIdx = 0
 
-	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
-	if cmd == nil {
-		t.Fatal("expected command from space key")
-	}
-	msg := cmd()
-	req, ok := msg.(RequestLogStreamMsg)
-	if !ok {
-		t.Fatalf("expected RequestLogStreamMsg, got %T", msg)
-	}
-	if req.App.BundleID != "com.a" {
-		t.Errorf("wrong bundle ID: %q", req.App.BundleID)
+	m2, _ := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	if m2.selectedApp == nil || m2.selectedApp.BundleID != "com.a" {
+		t.Fatalf("expected com.a pinned, got %v", m2.selectedApp)
 	}
 }
 
-func TestMainPaneUpdate_TabApps_Space_StopsStream(t *testing.T) {
+func TestMainPaneUpdate_TabApps_Space_UnpinsApp(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
@@ -249,18 +241,50 @@ func TestMainPaneUpdate_TabApps_Space_StopsStream(t *testing.T) {
 	app := device.App{BundleID: "com.a", Name: "A"}
 	m.SetApps([]device.App{app})
 	m.appsIdx = 0
-	m.selectedApp = &app // already streaming this app
+	m.selectedApp = &app // already pinned
 
-	m2, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	m2, _ := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	if m2.selectedApp != nil {
+		t.Error("expected selectedApp cleared after unpin")
+	}
+}
+
+func TestMainPaneUpdate_TabApps_L_StartsLogging(t *testing.T) {
+	m := newTestPane()
+	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
+	m.SetDevice(dev, nil)
+	m.tab = TabApps
+	m.SetApps([]device.App{{BundleID: "com.a", Name: "A"}})
+	m.appsIdx = 0
+
+	_, cmd := m.Update(tea.KeyPressMsg{Text: "l"})
+	if cmd == nil {
+		t.Fatal("expected command from 'l' key")
+	}
+	req, ok := cmd().(StartAppLoggingMsg)
+	if !ok {
+		t.Fatalf("expected StartAppLoggingMsg, got %T", cmd())
+	}
+	if req.App.BundleID != "com.a" {
+		t.Errorf("wrong bundle ID: %q", req.App.BundleID)
+	}
+}
+
+func TestMainPaneUpdate_TabApps_L_StopsLogging(t *testing.T) {
+	m := newTestPane()
+	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
+	m.SetDevice(dev, nil)
+	m.tab = TabApps
+	m.SetApps([]device.App{{BundleID: "com.a", Name: "A"}})
+	m.appsIdx = 0
+	m.SetLoggingBundle("com.a") // already logging this app
+
+	_, cmd := m.Update(tea.KeyPressMsg{Text: "l"})
 	if cmd == nil {
 		t.Fatal("expected command")
 	}
-	msg := cmd()
-	if _, ok := msg.(StopLogStreamMsg); !ok {
-		t.Errorf("expected StopLogStreamMsg, got %T", msg)
-	}
-	if m2.selectedApp != nil {
-		t.Error("expected selectedApp cleared after stopping stream")
+	if _, ok := cmd().(StopAppLoggingMsg); !ok {
+		t.Errorf("expected StopAppLoggingMsg, got %T", cmd())
 	}
 }
 
@@ -445,13 +469,13 @@ func TestMainPaneUpdate_TabFiles_Enter_OutOfRange(t *testing.T) {
 
 // ── Tab 4 with no tree ─────────────────────────────────────────────────────
 
-func TestMainPaneUpdate_Tab4_NoTree_RequestsFileTree(t *testing.T) {
+func TestMainPaneUpdate_Tab3_NoTree_RequestsFileTree(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
 	// tree is nil after SetDevice(dev, nil)
 
-	_, cmd := m.Update(tea.KeyPressMsg{Text: "4"})
+	_, cmd := m.Update(tea.KeyPressMsg{Text: "3"})
 	if cmd == nil {
 		t.Fatal("expected RequestFileTreeMsg command")
 	}
@@ -461,13 +485,13 @@ func TestMainPaneUpdate_Tab4_NoTree_RequestsFileTree(t *testing.T) {
 	}
 }
 
-func TestMainPaneUpdate_Tab4_WithTree_NoRequest(t *testing.T) {
+func TestMainPaneUpdate_Tab3_WithTree_NoRequest(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	root := &device.FileNode{Path: "/", Name: "/", IsDir: true}
 	m.SetDevice(dev, root)
 
-	_, cmd := m.Update(tea.KeyPressMsg{Text: "4"})
+	_, cmd := m.Update(tea.KeyPressMsg{Text: "3"})
 	if cmd != nil {
 		t.Error("expected no command when tree already loaded")
 	}

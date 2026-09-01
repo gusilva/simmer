@@ -47,9 +47,6 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 		}
 		return m, nil
 	case "3":
-		m.tab = TabLogs
-		return m, nil
-	case "4":
 		m.tab = TabFiles
 		if m.active != nil && m.tree == nil {
 			app := m.selectedApp
@@ -163,6 +160,7 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 			a := filtered[m.appsIdx]
 			return m, func() tea.Msg { return RequestRebuildMsg{Device: dev, App: a} }
 		case "space":
+			// Pin / unpin the app whose sandbox the Files tab browses.
 			if len(filtered) == 0 || m.appsIdx >= len(filtered) {
 				return m, nil
 			}
@@ -170,12 +168,22 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 			if m.selectedApp != nil && m.selectedApp.BundleID == app.BundleID {
 				m.selectedApp = nil
 				m.tree = nil
-				return m, func() tea.Msg { return StopLogStreamMsg{} }
+				return m, nil
 			}
 			a := app
 			m.selectedApp = &a
 			m.tree = nil
-			return m, func() tea.Msg { return RequestLogStreamMsg{App: a} }
+			return m, nil
+		case "l":
+			// Toggle writing the highlighted app's logs to a file.
+			if len(filtered) == 0 || m.appsIdx >= len(filtered) {
+				return m, nil
+			}
+			a := filtered[m.appsIdx]
+			if m.loggingBundle == a.BundleID {
+				return m, func() tea.Msg { return StopAppLoggingMsg{} }
+			}
+			return m, func() tea.Msg { return StartAppLoggingMsg{App: a} }
 		}
 		if m.appsIdx != prev {
 			if app := m.SelectedApp(); app != nil {
@@ -183,10 +191,6 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 				return m, func() tea.Msg { return AppFocusedMsg{App: a} }
 			}
 		}
-	case TabLogs:
-		var cmd tea.Cmd
-		m.logsVP, cmd = m.logsVP.Update(msg)
-		return m, cmd
 	case TabInfo:
 		n := len(m.info.Fields)
 		switch k.String() {
