@@ -514,9 +514,9 @@ func TestUpdate_SQLiteVersionMsg_NoModal(t *testing.T) {
 	_ = m2
 }
 
-func TestUpdate_StopLogStreamMsg_NoStream(t *testing.T) {
+func TestUpdate_StopAppLoggingMsg_NoStream(t *testing.T) {
 	m := newTestModel()
-	result, _ := m.Update(ui.StopLogStreamMsg{})
+	result, _ := m.Update(ui.StopAppLoggingMsg{})
 	m2 := result.(model)
 	if m2.logBundleID != "" {
 		t.Error("expected logBundleID cleared")
@@ -699,7 +699,7 @@ func TestUpdate_LogEndedMsg_MatchingBundleID_ClearsState(t *testing.T) {
 	m.logDeviceID = "device-1"
 	dev := &device.Device{ID: "device-1", Status: device.StatusRunning}
 	m.mainPane.SetDevice(dev, nil)
-	m.mainPane.SetLogBundle("com.example")
+	m.mainPane.SetLoggingBundle("com.example")
 
 	result, _ := m.Update(logEndedMsg{bundleID: "com.example"})
 	m2 := result.(model)
@@ -713,8 +713,8 @@ func TestUpdate_LogEndedMsg_MatchingBundleID_ClearsState(t *testing.T) {
 	if m2.logDeviceID != "" {
 		t.Errorf("logDeviceID must be cleared, got %q", m2.logDeviceID)
 	}
-	if m2.mainPane.LogBundle() != "" {
-		t.Errorf("mainPane.LogBundle must be cleared, got %q", m2.mainPane.LogBundle())
+	if m2.mainPane.LoggingBundle() != "" {
+		t.Errorf("mainPane.LoggingBundle must be cleared, got %q", m2.mainPane.LoggingBundle())
 	}
 	_ = stopCalled // Stop not called by logEndedMsg; stream already ended
 }
@@ -833,9 +833,9 @@ func TestUpdate_BuildDoneMsg_Error_AppendsError(t *testing.T) {
 	}
 }
 
-// ─── StopLogStreamMsg with active stream ─────────────────────────────────
+// ─── StopAppLoggingMsg with active stream ─────────────────────────────────
 
-func TestUpdate_StopLogStreamMsg_WithActiveStream(t *testing.T) {
+func TestUpdate_StopAppLoggingMsg_WithActiveStream(t *testing.T) {
 	m := newTestModel()
 	stopCalled := false
 	m.logStream = &device.LogStream{
@@ -846,7 +846,7 @@ func TestUpdate_StopLogStreamMsg_WithActiveStream(t *testing.T) {
 	m.logBundleID = "com.example"
 	m.logDeviceID = "device-1"
 
-	result, _ := m.Update(ui.StopLogStreamMsg{})
+	result, _ := m.Update(ui.StopAppLoggingMsg{})
 	m2 := result.(model)
 
 	if !stopCalled {

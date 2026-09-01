@@ -70,11 +70,15 @@ func TestMainPane_SetFocused(t *testing.T) {
 	m.SetFocused(false)
 }
 
-func TestMainPane_LogBundle(t *testing.T) {
+func TestMainPane_LoggingBundle(t *testing.T) {
 	m := newTestPane()
-	m.SetLogBundle("com.example.app")
-	if m.LogBundle() != "com.example.app" {
-		t.Errorf("expected com.example.app, got %q", m.LogBundle())
+	m.SetLoggingBundle("com.example.app")
+	if m.LoggingBundle() != "com.example.app" {
+		t.Errorf("expected com.example.app, got %q", m.LoggingBundle())
+	}
+	m.SetLoggingBundle("")
+	if m.LoggingBundle() != "" {
+		t.Errorf("expected cleared, got %q", m.LoggingBundle())
 	}
 }
 
@@ -164,45 +168,12 @@ func TestMainPane_View_WithDevice_AllTabs(t *testing.T) {
 	root := &device.FileNode{Path: "/", Name: "/", IsDir: true}
 	m.SetTree(root)
 
-	for _, tab := range []MainTab{TabInfo, TabApps, TabFiles, TabLogs} {
+	for _, tab := range []MainTab{TabInfo, TabApps, TabFiles} {
 		m.tab = tab
 		got := m.View()
 		if got == "" {
 			t.Errorf("tab %d: expected non-empty view", tab)
 		}
-	}
-}
-
-func TestMainPane_AppendLog_Compaction(t *testing.T) {
-	m := newTestPane()
-	// Fill past the 1000-line cap to trigger compaction.
-	for i := 0; i < 1010; i++ {
-		m.AppendLog("line")
-	}
-	if len(m.logs) != 1000 {
-		t.Errorf("expected 1000 lines after compaction, got %d", len(m.logs))
-	}
-}
-
-func TestMainPane_AppendLog_BelowCap_NoCompaction(t *testing.T) {
-	m := newTestPane()
-	for i := 0; i < 500; i++ {
-		m.AppendLog("x")
-	}
-	if len(m.logs) != 500 {
-		t.Errorf("expected 500 lines, got %d", len(m.logs))
-	}
-}
-
-func TestMainPane_AppendLog_CompactionKeepsLatest(t *testing.T) {
-	m := newTestPane()
-	for i := 0; i < 1000; i++ {
-		m.AppendLog("old")
-	}
-	m.AppendLog("newest")
-	// After compaction the last line must be "newest".
-	if m.logs[len(m.logs)-1] != "newest" {
-		t.Errorf("expected last line to be 'newest', got %q", m.logs[len(m.logs)-1])
 	}
 }
 
@@ -232,17 +203,13 @@ func TestMainPane_SyncActiveDevice_UpdatesStatusInfoField(t *testing.T) {
 	}
 }
 
-func TestMainPane_SetLogBundle_ClearsLogs(t *testing.T) {
+func TestMainPane_SetDevice_ClearsLoggingBundle(t *testing.T) {
 	m := newTestPane()
+	m.SetLoggingBundle("com.old.app")
 	dev := &device.Device{ID: "d1", Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
-	m.AppendLog("some log line")
-	m.SetLogBundle("com.new.app")
-	if len(m.logs) != 0 {
-		t.Errorf("expected logs cleared after SetLogBundle, got %d lines", len(m.logs))
-	}
-	if m.LogBundle() != "com.new.app" {
-		t.Errorf("expected bundle com.new.app, got %q", m.LogBundle())
+	if m.LoggingBundle() != "" {
+		t.Errorf("expected loggingBundle cleared by SetDevice, got %q", m.LoggingBundle())
 	}
 }
 
@@ -295,11 +262,6 @@ func TestMainPane(t *testing.T) {
 	}
 
 	m, _ = m.Update(tea.KeyPressMsg{Text: "3"})
-	if m.tab != TabLogs {
-		t.Errorf("expected TabLogs, got %v", m.tab)
-	}
-
-	m, _ = m.Update(tea.KeyPressMsg{Text: "4"})
 	if m.tab != TabFiles {
 		t.Errorf("expected TabFiles, got %v", m.tab)
 	}
@@ -354,17 +316,19 @@ func TestMainPane(t *testing.T) {
 		t.Error("expected /data to be expanded")
 	}
 
-	// 6. Logs
-	m.tab = TabLogs
-	m.SetLogBundle("com.apple.Maps")
-	m.AppendLog("Log line 1")
-	m.AppendLog("Log line 2")
-
-	if len(m.logs) != 2 {
-		t.Errorf("expected 2 log lines, got %d", len(m.logs))
+	// 6. App logging toggle
+	m.tab = TabApps
+	m.SetApps([]device.App{{BundleID: "com.apple.Maps", Name: "Maps"}})
+	_, cmd := m.Update(tea.KeyPressMsg{Text: "l"})
+	if cmd == nil {
+		t.Fatal("expected a command from 'l' press")
 	}
-	m.flushLogs() // lazy flush: AppendLog no longer calls SetContent directly
-	if !strings.Contains(m.logsVP.View(), "Log line 1") {
-		t.Error("Log content not found in viewport")
+	if _, ok := cmd().(StartAppLoggingMsg); !ok {
+		t.Errorf("expected StartAppLoggingMsg, got %T", cmd())
+	}
+	m.SetLoggingBundle("com.apple.Maps")
+	_, cmd = m.Update(tea.KeyPressMsg{Text: "l"})
+	if _, ok := cmd().(StopAppLoggingMsg); !ok {
+		t.Errorf("expected StopAppLoggingMsg, got %T", cmd())
 	}
 }

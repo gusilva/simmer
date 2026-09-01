@@ -46,7 +46,15 @@ func main() {
 		logrus.SetOutput(io.Discard)
 	}
 
-	if err := app.Run(version, logger); err != nil {
+	// Capture the launch directory once: app-log files (Apps tab, "l") are
+	// written here regardless of any later working-directory changes.
+	launchDir, err := os.Getwd()
+	if err != nil {
+		fmt.Printf("Failed to determine working directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := app.Run(version, logger, launchDir); err != nil {
 		fmt.Printf("Fatal error: %v\n", err)
 		os.Exit(1)
 	}

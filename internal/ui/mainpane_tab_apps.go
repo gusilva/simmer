@@ -51,8 +51,8 @@ func (m MainPane) renderApps(w, h int) string {
 	end := min(offset+listH, len(filtered))
 	local := m.active != nil && m.active.Kind == device.KindVirtual
 	for i := offset; i < end; i++ {
-		streaming := m.selectedApp != nil && m.selectedApp.BundleID == filtered[i].BundleID
-		lines = append(lines, m.renderAppRow(filtered[i], w, i == m.appsIdx, streaming, local && filtered[i].IsLocal()))
+		logging := m.loggingBundle != "" && m.loggingBundle == filtered[i].BundleID
+		lines = append(lines, m.renderAppRow(filtered[i], w, i == m.appsIdx, logging, local && filtered[i].IsLocal()))
 	}
 
 	for len(lines) < h {
@@ -87,7 +87,7 @@ func (m MainPane) renderAppsFilterBar(w int) string {
 	return row
 }
 
-func (m MainPane) renderAppRow(app device.App, w int, cursor bool, streaming bool, local bool) string {
+func (m MainPane) renderAppRow(app device.App, w int, cursor bool, logging bool, local bool) string {
 	bg := lipgloss.NewStyle().Background(ColorBg)
 
 	label := app.Label()
@@ -96,12 +96,17 @@ func (m MainPane) renderAppRow(app device.App, w int, cursor bool, streaming boo
 		meta = app.Version
 	}
 
-	// ⊙ = broadcast/signal indicator; 2 cells: space + glyph
-	const streamIcon = " ⊙"
-	const streamIconW = 2
 	// [dev] = locally-built badge; 6 cells: space + [dev]
 	const devBadge = " [dev]"
 	const devBadgeW = 6
+	// [logging] = logs being written to file; 10 cells: space + [logging]
+	const logBadge = " [logging]"
+	const logBadgeW = 10
+	// ⊙ = app pinned (via space) for Files-tab browsing; 2 cells: space + glyph
+	const pinIcon = " ⊙"
+	const pinIconW = 2
+
+	pinned := m.selectedApp != nil && m.selectedApp.BundleID == app.BundleID
 
 	devStr := ""
 	devW := 0
@@ -109,13 +114,19 @@ func (m MainPane) renderAppRow(app device.App, w int, cursor bool, streaming boo
 		devStr = devBadge
 		devW = devBadgeW
 	}
-	streamStr := ""
-	streamW := 0
-	if streaming {
-		streamStr = streamIcon
-		streamW = streamIconW
+	logStr := ""
+	logW := 0
+	if logging {
+		logStr = logBadge
+		logW = logBadgeW
 	}
-	iconW := devW + streamW
+	pinStr := ""
+	pinW := 0
+	if pinned {
+		pinStr = pinIcon
+		pinW = pinIconW
+	}
+	iconW := devW + logW + pinW
 
 	const (
 		leadW  = 1
@@ -136,7 +147,7 @@ func (m MainPane) renderAppRow(app device.App, w int, cursor bool, streaming boo
 			selBg = ColorFgDim
 		}
 		sel := lipgloss.NewStyle().Foreground(ColorBg).Background(selBg).Bold(true)
-		return sel.Render(" " + nameStr + devStr + streamStr + strings.Repeat(" ", gap) + meta + " ")
+		return sel.Render(" " + nameStr + devStr + logStr + pinStr + strings.Repeat(" ", gap) + meta + " ")
 	}
 
 	nameFg := ColorFg
@@ -145,12 +156,9 @@ func (m MainPane) renderAppRow(app device.App, w int, cursor bool, streaming boo
 	}
 	nameStyled := lipgloss.NewStyle().Foreground(nameFg).Background(ColorBg).Render(nameStr)
 	devStyled := lipgloss.NewStyle().Foreground(ColorOrange).Background(ColorBg).Render(devStr)
+	logStyled := lipgloss.NewStyle().Foreground(ColorErr).Background(ColorBg).Bold(true).Render(logStr)
+	pinStyled := lipgloss.NewStyle().Foreground(ColorAccent2).Background(ColorBg).Render(pinStr)
 	metaStyled := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg).Render(meta)
 
-	if streaming {
-		streamStyled := lipgloss.NewStyle().Foreground(ColorOk).Background(ColorBg).Render(streamStr)
-		return " " + nameStyled + devStyled + streamStyled + bg.Render(strings.Repeat(" ", gap)) + metaStyled + bg.Render(" ")
-	}
-
-	return " " + nameStyled + devStyled + bg.Render(strings.Repeat(" ", gap)) + metaStyled + bg.Render(" ")
+	return " " + nameStyled + devStyled + logStyled + pinStyled + bg.Render(strings.Repeat(" ", gap)) + metaStyled + bg.Render(" ")
 }

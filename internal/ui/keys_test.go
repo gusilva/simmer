@@ -59,7 +59,8 @@ func TestMainPaneKeyMap_FullHelp_IncludesAllAppsShortcuts(t *testing.T) {
 		"filter apps":         MainPaneKeys.Filter,
 		"install app":         MainPaneKeys.Install,
 		"delete app":          MainPaneKeys.Delete,
-		"stream logs (apps)":  MainPaneKeys.Stream,
+		"browse app files":    MainPaneKeys.PinApp,
+		"log app to file":     MainPaneKeys.Log,
 		"rebuild & reinstall": MainPaneKeys.Rebuild,
 	}
 	for desc, binding := range want {

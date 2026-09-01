@@ -2,6 +2,9 @@ package app
 
 import (
 	"context"
+	"io"
+	"os"
+	"path/filepath"
 	"time"
 
 	"simmer/internal/device"
@@ -41,6 +44,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// ctrl+c always quits, even when an overlay is active.
 		if msg.String() == "ctrl+c" {
 			m.quitting = true
+			m.teardownAppLogging()
 			return m, tea.Quit
 		}
 
@@ -119,6 +123,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Global keys (no overlay active).
 		if msg.String() == "q" {
 			m.quitting = true
+			m.teardownAppLogging()
 			return m, tea.Quit
 		}
 
@@ -162,13 +167,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
-			if m.logStream != nil {
-				m.logStream.Stop()
-				m.logStream = nil
-				m.logBundleID = ""
-				m.logDeviceID = ""
-				m.mainPane.SetLogBundle("")
-			}
+			// Switching the active device stops any in-flight app logging.
+			m.teardownAppLogging()
 
 			m.focus = focusMain
 			m.applyFocus()
@@ -231,10 +231,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sidebar.SetDevices(msg.Devices)
 		m.mainPane.SyncActiveDevice(msg.Devices)
 		if !m.mainPane.HasDevice() && m.logStream != nil {
-			m.logStream.Stop()
-			m.logStream = nil
-			m.logBundleID = ""
-			m.logDeviceID = ""
+			m.teardownAppLogging()
+			return m, m.setStatus("app logging stopped: device gone", ui.StatusWarn)
 		}
 		return m, nil
 
@@ -378,18 +376,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, nil
 
-	case ui.StopLogStreamMsg:
-		if m.logStream != nil {
-			m.logStream.Stop()
-			m.logStream = nil
-		}
-		m.logBundleID = ""
-		m.logDeviceID = ""
-		m.mainPane.SetLogBundle("")
+	case ui.StopAppLoggingMsg:
+		m.teardownAppLogging()
+		return m, m.setStatus("app logging stopped", ui.StatusInfo)
 
-		return m, nil
-
-	case ui.RequestLogStreamMsg:
+	case ui.StartAppLoggingMsg:
 		sel := m.sidebar.SelectedDevice()
 		if sel == nil {
 			return m, nil
@@ -398,46 +389,55 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.logStream != nil && m.logBundleID == bundleID && m.logDeviceID == sel.ID {
 			return m, nil
 		}
-		if m.logStream != nil {
-			m.logStream.Stop()
-			m.logStream = nil
+		// Replace any previous session (different app or device).
+		m.teardownAppLogging()
+
+		f, err := m.startAppLogging(*sel, msg.App)
+		if err != nil {
+			m.errs = append(m.errs, err)
+			return m, m.setStatus("app logging failed: "+errPreview(err), ui.StatusErr)
 		}
 		stream, err := m.coordinator.StreamLogs(context.Background(), *sel, msg.App)
 		if err != nil {
+			f.Close()
+			_ = os.Remove(f.Name()) // header-only file is just noise
 			m.errs = append(m.errs, err)
-			return m, m.setStatus("stream failed: "+errPreview(err), ui.StatusErr)
+			return m, m.setStatus("app logging failed: "+errPreview(err), ui.StatusErr)
 		}
+		m.logFile = f
 		m.logStream = stream
 		m.logBundleID = bundleID
 		m.logDeviceID = sel.ID
-		m.mainPane.SetLogBundle(bundleID)
+		m.mainPane.SetLoggingBundle(bundleID)
 		return m, tea.Batch(
 			nextLogBatchCmd(stream, bundleID),
-			m.setStatus("streaming "+bundleID, ui.StatusOk),
+			m.setStatus("logging "+msg.App.Label()+" → "+filepath.Base(f.Name()), ui.StatusOk),
 		)
 
 	case logBatchMsg:
-		if msg.bundleID != m.logBundleID || m.logStream == nil {
+		if msg.bundleID != m.logBundleID || m.logStream == nil || m.logFile == nil {
 			return m, nil
 		}
 		for _, line := range msg.lines {
-			m.mainPane.AppendLog(line)
+			if _, err := io.WriteString(m.logFile, line+"\n"); err != nil {
+				m.errs = append(m.errs, err)
+				m.teardownAppLogging()
+				return m, m.setStatus("app logging stopped: "+errPreview(err), ui.StatusErr)
+			}
 		}
+		_ = m.logFile.Sync()
 		return m, nextLogBatchCmd(m.logStream, m.logBundleID)
 
 	case logEndedMsg:
 		if msg.bundleID != m.logBundleID {
 			return m, nil
 		}
-		m.logStream = nil
-		m.logBundleID = ""
-		m.logDeviceID = ""
-		m.mainPane.SetLogBundle("")
+		m.teardownAppLogging()
 		if msg.err != nil {
 			m.errs = append(m.errs, msg.err)
-			return m, m.setStatus("stream ended: "+errPreview(msg.err), ui.StatusWarn)
+			return m, m.setStatus("app logging ended: "+errPreview(msg.err), ui.StatusWarn)
 		}
-		return m, m.setStatus("stream ended", ui.StatusInfo)
+		return m, m.setStatus("app logging ended", ui.StatusInfo)
 
 	case ui.ShowPlatformPickerMsg:
 		p := ui.NewPlatformPickerModal()
@@ -642,11 +642,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.setStatus("delete app failed: "+errPreview(msg.err), ui.StatusErr)
 		}
 		if m.logStream != nil && m.logDeviceID == msg.deviceID && m.logBundleID == msg.bundleID {
-			m.logStream.Stop()
-			m.logStream = nil
-			m.logBundleID = ""
-			m.logDeviceID = ""
-			m.mainPane.SetLogBundle("")
+			m.teardownAppLogging()
 		}
 		sel := m.sidebar.SelectedDevice()
 		var reloadCmd tea.Cmd

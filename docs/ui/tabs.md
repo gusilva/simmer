@@ -4,7 +4,7 @@ Container for tab data:
 - `Label`: display name (e.g., "Info").
 
 ```
- [1] Info │[2] Apps │[3] Logs │[4] Files              
+ [1] Info │[2] Apps │[3] Files              
           ↑ active: cyan block, bold, padded
 ```
 
