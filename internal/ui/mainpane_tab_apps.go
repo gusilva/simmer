@@ -13,10 +13,11 @@ import (
 func (m MainPane) renderApps(w, h int) string {
 	lines := make([]string, 0, h)
 
-	// Filter bar — always rendered so layout height stays fixed.
-	lines = append(lines, m.renderAppsFilterBar(w))
-
-	listH := max(h-1, 1)
+	// The filter input rides on the "[2] Apps" label row (renderAppsLabel), so
+	// this is just the list, with one blank line above it (below the header)
+	// and one reserved below it (above the divider).
+	lines = append(lines, padBg(w))
+	listH := max(h-2, 1)
 
 	if len(m.apps) == 0 {
 		hint := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg).Render("  no apps installed")
@@ -61,30 +62,27 @@ func (m MainPane) renderApps(w, h int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m MainPane) renderAppsFilterBar(w int) string {
+// renderAppsFilterBar returns the compact filter segment ("/ filter apps…" or
+// "/ <query>▍"), unpadded, for placement on the Apps label row.
+func (m MainPane) renderAppsFilterBar() string {
 	searchActive := lipgloss.NewStyle().Foreground(ColorAccent).Background(ColorBg).Bold(true)
 	searchDim := lipgloss.NewStyle().Foreground(ColorFgDim).Background(ColorBg)
 	faint := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg)
 
-	prefix := faint.Render(" /") + " "
-	query := m.appsFilter
+	prefix := faint.Render("/") + " "
 	cursor := ""
 	if m.appsFiltering {
 		cursor = searchActive.Render("█")
 	}
 
 	var text string
-	if query == "" && !m.appsFiltering {
+	if m.appsFilter == "" && !m.appsFiltering {
 		text = faint.Render("filter apps…")
 	} else {
-		text = searchDim.Render(query) + cursor
+		text = searchDim.Render(m.appsFilter) + cursor
 	}
 
-	row := prefix + text
-	if pad := w - lipgloss.Width(row); pad > 0 {
-		row += lipgloss.NewStyle().Background(ColorBg).Render(strings.Repeat(" ", pad))
-	}
-	return row
+	return prefix + text
 }
 
 func (m MainPane) renderAppRow(app device.App, w int, cursor bool, logging bool, local bool) string {

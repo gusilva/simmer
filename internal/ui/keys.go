@@ -96,38 +96,80 @@ var SidebarKeys = SidebarKeyMap{
 
 // MainPaneKeyMap contains all bindings for the main detail pane.
 type MainPaneKeyMap struct {
-	Up   key.Binding
-	Down key.Binding
-	Home key.Binding
-	End  key.Binding
-	Tab  key.Binding
-	Back key.Binding
-	// Apps tab
+	Up    key.Binding
+	Down  key.Binding
+	Home  key.Binding
+	End   key.Binding
+	Panel key.Binding
+	Back  key.Binding
+	Info  key.Binding
+	// Apps panel
 	Filter  key.Binding
 	Install key.Binding
 	Delete  key.Binding
 	PinApp  key.Binding
 	Log     key.Binding
 	Rebuild key.Binding
-	// Info tab
-	Copy key.Binding
-	// Files tab
+	// Files panel
 	Expand key.Binding
 	Help   key.Binding
 }
 
 func (k MainPaneKeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Tab, k.Back, k.Help}
+	return []key.Binding{k.Up, k.Panel, k.Back, k.Help}
 }
 
 func (k MainPaneKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Home, k.End},
-		{k.Tab, k.Back},
-		{k.Filter, k.Install, k.Delete, k.PinApp, k.Log, k.Rebuild, k.Copy},
-		{k.Expand, k.Help},
+		{k.Panel, k.Back},
+		{k.Filter, k.Install, k.Delete, k.PinApp, k.Log, k.Rebuild},
+		{k.Info, k.Expand, k.Help},
 	}
 }
+
+// Panel-specific help views over MainPaneKeys: the "?" overlay shows only the
+// keys that do something in the panel that is currently expanded.
+
+type appsPaneHelp struct{}
+
+func (appsPaneHelp) ShortHelp() []key.Binding {
+	k := MainPaneKeys
+	return []key.Binding{k.Up, k.Panel, k.Filter, k.Info, k.Help}
+}
+
+func (appsPaneHelp) FullHelp() [][]key.Binding {
+	k := MainPaneKeys
+	return [][]key.Binding{
+		{k.Up, k.Down, k.Home, k.End},
+		{k.Panel, k.Back, k.Info},
+		{k.Filter, k.Install, k.Delete, k.PinApp, k.Log, k.Rebuild},
+		{k.Help},
+	}
+}
+
+type filesPaneHelp struct{}
+
+func (filesPaneHelp) ShortHelp() []key.Binding {
+	k := MainPaneKeys
+	return []key.Binding{k.Up, k.Panel, k.Expand, k.Info, k.Help}
+}
+
+func (filesPaneHelp) FullHelp() [][]key.Binding {
+	k := MainPaneKeys
+	return [][]key.Binding{
+		{k.Up, k.Down, k.Home, k.End},
+		{k.Panel, k.Back, k.Info},
+		{k.Expand},
+		{k.Help},
+	}
+}
+
+// MainPaneAppsKeys / MainPaneFilesKeys are the per-panel help key maps.
+var (
+	MainPaneAppsKeys  help.KeyMap = appsPaneHelp{}
+	MainPaneFilesKeys help.KeyMap = filesPaneHelp{}
+)
 
 // MainPaneKeys is the main pane key map singleton.
 var MainPaneKeys = MainPaneKeyMap{
@@ -135,17 +177,41 @@ var MainPaneKeys = MainPaneKeyMap{
 	Down:    key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
 	Home:    key.NewBinding(key.WithKeys("home", "g"), key.WithHelp("g/home", "top")),
 	End:     key.NewBinding(key.WithKeys("end", "G"), key.WithHelp("G/end", "bottom")),
-	Tab:     key.NewBinding(key.WithKeys("1", "2", "3"), key.WithHelp("1-3", "switch tab")),
-	Back:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back to sidebar")),
+	Panel:   key.NewBinding(key.WithKeys("2", "3"), key.WithHelp("2/3", "focus apps/files")),
+	Back:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+	Info:    key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "device info")),
 	Filter:  key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter apps")),
-	Install: key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "install app")),
+	Install: key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "install app")),
 	Delete:  key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete app")),
 	PinApp:  key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "browse app files")),
 	Log:     key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "log app to file")),
 	Rebuild: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "rebuild & reinstall")),
-	Copy:    key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "copy value (info)")),
-	Expand:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "expand dir (files)")),
+	Expand:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "expand dir / open db")),
 	Help:    key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+}
+
+// ── Device-info overlay key map ────────────────────────────────────────────
+
+// InfoOverlayKeyMap contains bindings for the device-info sheet.
+type InfoOverlayKeyMap struct {
+	Close  key.Binding
+	Copy   key.Binding
+	Reveal key.Binding
+}
+
+func (k InfoOverlayKeyMap) ShortHelp() []key.Binding {
+	return []key.Binding{k.Close, k.Copy, k.Reveal}
+}
+
+func (k InfoOverlayKeyMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{{k.Close, k.Copy, k.Reveal}}
+}
+
+// InfoOverlayKeys is the device-info sheet key map singleton.
+var InfoOverlayKeys = InfoOverlayKeyMap{
+	Close:  key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")),
+	Copy:   key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "copy udid")),
+	Reveal: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "reveal in Finder")),
 }
 
 // ── Install app file picker key map ─────────────────────────────────────────

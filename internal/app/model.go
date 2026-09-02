@@ -54,6 +54,7 @@ type model struct {
 	statusSeq  int
 
 	helpOverlay *ui.HelpOverlay
+	infoOverlay *ui.InfoOverlay
 
 	platformPicker  *ui.PlatformPickerModal
 	createIOSModal  *ui.CreateSimulatorModal
@@ -133,8 +134,12 @@ func (m *model) contextHelpOverlay() ui.HelpOverlay {
 	if m.dbViewerModal != nil {
 		return ui.NewHelpOverlay("DB Viewer", ui.DBViewerKeys)
 	}
+	if m.infoOverlay != nil {
+		return ui.NewHelpOverlay("Device Info", ui.InfoOverlayKeys)
+	}
 	if m.focus == focusMain {
-		return ui.NewHelpOverlay("Main Pane", ui.MainPaneKeys)
+		title, keys := m.mainPane.HelpKeyMap()
+		return ui.NewHelpOverlay(title, keys)
 	}
 	return ui.NewHelpOverlay("Sidebar", ui.SidebarKeys)
 }

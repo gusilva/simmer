@@ -119,6 +119,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.dbViewerModal = &updated
 			return m, cmd
 		}
+		// Device-info sheet is modal-ish: it owns the keyboard while open.
+		if m.infoOverlay != nil {
+			updated, cmd := m.infoOverlay.Update(msg)
+			m.infoOverlay = &updated
+			return m, cmd
+		}
 
 		// Global keys (no overlay active).
 		if msg.String() == "q" {
@@ -128,11 +134,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.focus == focusMain {
-			if msg.String() == "esc" {
-				m.focus = focusSidebar
-				m.applyFocus()
-				return m, nil
-			}
+			// esc unwinds inside the main pane; it hands focus back to the
+			// sidebar via ui.ReleaseFocusMsg only when nothing is left to undo.
 			var cmd tea.Cmd
 			m.mainPane, cmd = m.mainPane.Update(msg)
 			return m, cmd
@@ -172,6 +175,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			m.focus = focusMain
 			m.applyFocus()
+			m.infoOverlay = nil
 
 			dev := *sel
 			m.mainPane.SetDevice(&dev, nil)
@@ -316,6 +320,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.mainPane.SetInfo(msg.info)
+		if m.infoOverlay != nil {
+			ov := ui.NewInfoOverlay(msg.device, msg.info, m.width, m.height)
+			m.infoOverlay = &ov
+		}
 
 		return m, nil
 
@@ -618,7 +626,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.installAppModal = nil
 		m.sqliteModal = nil
 		m.dbViewerModal = nil
+		if m.infoOverlay != nil {
+			m.infoOverlay = nil
+			m.mainPane.SetInfoOpen(false)
+		}
 		return m, nil
+
+	case ui.ShowDeviceInfoMsg:
+		ov := ui.NewInfoOverlay(msg.Device, m.mainPane.DeviceInfo(), m.width, m.height)
+		m.infoOverlay = &ov
+		m.mainPane.SetInfoOpen(true)
+		return m, nil
+
+	case ui.ReleaseFocusMsg:
+		m.focus = focusSidebar
+		m.applyFocus()
+		return m, nil
+
+	case ui.RevealedMsg:
+		if msg.Err != nil {
+			m.errs = append(m.errs, msg.Err)
+			return m, m.setStatus("reveal failed: "+errPreview(msg.Err), ui.StatusErr)
+		}
+		return m, m.setStatus("revealed in Finder", ui.StatusOk)
 
 	case ui.ConfirmCreateSimulatorMsg:
 		m.createIOSModal = nil

@@ -9,8 +9,10 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// View renders the main pane with a manually composed frame so the inner
-// divider rules can tee (┬/┴) into the vertical Files separator.
+// View renders the main pane: a persistent device header, then two stacked
+// panels (Apps on top, Files below) of which one is expanded and the other is a
+// one-line strip. Frame is composed manually so the Files divider rules can tee
+// (┬/┴) into the vertical tree/preview separator.
 func (m MainPane) View() string {
 	if m.width < 12 || m.height < 5 {
 		return ""
@@ -27,22 +29,39 @@ func (m MainPane) View() string {
 	innerH := m.height - 2
 
 	treeW, _, _ := filesLayout(innerW)
+	filesExpanded := m.panel == panelFiles && m.tree != nil
 
 	rows := make([]string, 0, innerH)
 	if m.active == nil {
 		rows = append(rows, strings.Split(m.renderHint(innerW, innerH), "\n")...)
 	} else {
+		// Header: title, status/hint, rule.
 		rows = append(rows, m.renderTitleRow(innerW))
+		rows = append(rows, m.renderHeaderMeta(innerW))
 		rows = append(rows, hrule(innerW, -1, "", innerRule))
-		rows = append(rows, RenderTabs(mainTabs, int(m.tab), innerW))
-		junction := -1
-		if m.tab == TabFiles && m.tree != nil {
-			junction = treeW
-		}
-		rows = append(rows, hrule(innerW, junction, "┬", innerRule))
 
-		contentH := max(innerH-len(rows), 1)
-		rows = append(rows, strings.Split(m.renderTabContent(innerW, contentH), "\n")...)
+		// Both regions always show their "[N] Label" line. Fixed chrome is the
+		// 3 header rows + the two labels + the divider between the regions; the
+		// expanded region fills whatever height is left.
+		content := max(innerH-6, 1)
+
+		// Apps region: "[2] Apps" label — carrying the filter input on its right
+		// while expanded — then the list below.
+		rows = append(rows, m.renderAppsLabel(innerW))
+		if m.panel == panelApps {
+			rows = append(rows, strings.Split(m.renderApps(innerW, content), "\n")...)
+		}
+
+		// Plain divider — the "[3] Files" label spans the full width, so the
+		// tree/preview split only starts on the rows below it.
+		rows = append(rows, hrule(innerW, -1, "", innerRule))
+
+		// Files region: full-width label (path right-aligned), then tree +
+		// preview below when expanded.
+		rows = append(rows, m.renderPanelLabel(panelFiles, innerW, treeW, false))
+		if m.panel == panelFiles {
+			rows = append(rows, strings.Split(m.renderFiles(innerW, content), "\n")...)
+		}
 	}
 
 	if len(rows) > innerH {
@@ -60,7 +79,7 @@ func (m MainPane) View() string {
 	}
 
 	bottomDashes := strings.Repeat("─", innerW)
-	if m.active != nil && m.tab == TabFiles && m.tree != nil && treeW > 0 && treeW < innerW {
+	if filesExpanded && treeW > 0 && treeW < innerW {
 		bottomDashes = strings.Repeat("─", treeW) + "┴" + strings.Repeat("─", innerW-treeW-1)
 	}
 	wrapped = append(wrapped, frame.Render("╰"+bottomDashes+"╯"))
@@ -77,7 +96,7 @@ func hrule(width, at int, junction string, style lipgloss.Style) string {
 	return style.Render(strings.Repeat("─", at) + junction + strings.Repeat("─", width-at-1))
 }
 
-// filesLayout returns the column split used by the Files tab.
+// filesLayout returns the column split used by the expanded Files panel.
 func filesLayout(innerW int) (treeW, sepW, previewW int) {
 	sepW = 1
 	treeW = max(innerW*52/100, 24)
@@ -139,29 +158,119 @@ func (m MainPane) renderTitleRow(innerW int) string {
 	return left + bg.Render(strings.Repeat(" ", gap)) + udid + bg.Render(" ")
 }
 
-func (m MainPane) renderTabContent(innerW, innerH int) string {
-	switch m.tab {
-	case TabFiles:
-		return m.renderFiles(innerW, innerH)
-	case TabApps:
-		return m.renderApps(innerW, innerH)
-	case TabInfo:
-		return m.renderInfo(innerW, innerH)
-	default:
-		return m.renderPlaceholder(innerW, innerH)
+// renderHeaderMeta is the second header line: live device status plus the
+// "[i] more info" affordance (hidden while the info overlay is open).
+func (m MainPane) renderHeaderMeta(innerW int) string {
+	bg := lipgloss.NewStyle().Background(ColorBg)
+
+	statusC := ColorFgFaint
+	if m.active.Status == device.StatusRunning {
+		statusC = ColorOk
 	}
+	label := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg).Render("status ")
+	val := lipgloss.NewStyle().Foreground(statusC).Background(ColorBg).Render(string(m.active.Status))
+
+	row := " " + label + val
+	if !m.infoOpen {
+		hint := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg).Render("[i] more info")
+		row += bg.Render("   ") + hint
+	}
+	if pad := innerW - lipgloss.Width(row); pad > 0 {
+		row += bg.Render(strings.Repeat(" ", pad))
+	}
+	return row
 }
 
-func (m MainPane) renderPlaceholder(innerW, innerH int) string {
-	body := lipgloss.NewStyle().
-		Foreground(ColorFgFaint).
-		Background(ColorBg).
-		Render("  (not implemented yet)")
-	lines := []string{body}
-	for len(lines) < innerH {
-		lines = append(lines, padBg(innerW))
+// renderPanelLabel draws a region's "[N] Label" line. It is shown for both
+// regions at all times — alone for the collapsed region, as a heading above the
+// content for the expanded one. For the Files region the current tree path
+// rides on the right of the same line ("[3] Files        …/Documents"). When
+// withSep is true (expanded Files) the line carries the tree/preview separator
+// at column treeW so the ┬/┴ tees align with the rows below.
+func (m MainPane) renderPanelLabel(p mainPanel, innerW, treeW int, withSep bool) string {
+	bg := lipgloss.NewStyle().Background(ColorBg)
+	numStyle := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg)
+	nameStyle := lipgloss.NewStyle().Foreground(ColorFg).Background(ColorBg).Bold(true)
+	sepStyle := lipgloss.NewStyle().Foreground(ColorBorder).Background(ColorBg)
+	pathStyle := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg)
+
+	num, label := "[2] ", "Apps"
+	if p == panelFiles {
+		num, label = "[3] ", "Files"
 	}
-	return strings.Join(lines, "\n")
+	text := " " + numStyle.Render(num) + nameStyle.Render(label)
+	textW := 1 + lipgloss.Width(num) + lipgloss.Width(label)
+
+	// leftW is the width of the "[N] Label + path" block; for Files it fills the
+	// tree column (treeW) when expanded, else the whole line.
+	leftW := innerW
+	if withSep && treeW > 0 && treeW < innerW {
+		leftW = treeW
+	}
+
+	left := text
+	if p == panelFiles && m.tree != nil && m.tree.Path != "" {
+		avail := max(leftW-textW-2, 0)
+		path := truncPathLeft(m.tree.Path, avail)
+		if lipgloss.Width(path) > 0 {
+			gap := max(leftW-textW-lipgloss.Width(path)-1, 1)
+			left = text + bg.Render(strings.Repeat(" ", gap)) + pathStyle.Render(path) + bg.Render(" ")
+		}
+	}
+	leftFilled := left
+	if pad := leftW - lipgloss.Width(left); pad > 0 {
+		leftFilled = left + bg.Render(strings.Repeat(" ", pad))
+	}
+
+	if withSep && treeW > 0 && treeW < innerW {
+		right := innerW - treeW - 1
+		return leftFilled + sepStyle.Render("│") + bg.Render(strings.Repeat(" ", max(right, 0)))
+	}
+	return leftFilled
+}
+
+// truncPathLeft trims a path from the left, keeping the tail behind a leading …
+func truncPathLeft(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= max {
+		return s
+	}
+	if max == 1 {
+		return "…"
+	}
+	runes := []rune(s)
+	for i := 0; i < len(runes); i++ {
+		if lipgloss.Width(string(runes[i:])) <= max-1 {
+			return "…" + string(runes[i:])
+		}
+	}
+	return "…"
+}
+
+// renderAppsLabel draws the "[2] Apps" line. While the Apps panel is expanded
+// the filter input rides on the right of the same line:
+// "[2] Apps            / filter apps…".
+func (m MainPane) renderAppsLabel(innerW int) string {
+	bg := lipgloss.NewStyle().Background(ColorBg)
+	numStyle := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg)
+	nameStyle := lipgloss.NewStyle().Foreground(ColorFg).Background(ColorBg).Bold(true)
+
+	left := " " + numStyle.Render("[2] ") + nameStyle.Render("Apps")
+	leftW := 1 + 4 + 4
+
+	if m.panel != panelApps {
+		if pad := innerW - leftW; pad > 0 {
+			left += bg.Render(strings.Repeat(" ", pad))
+		}
+		return left
+	}
+
+	filter := m.renderAppsFilterBar()
+	fw := lipgloss.Width(filter)
+	gap := max(innerW-leftW-fw-1, 1)
+	return left + bg.Render(strings.Repeat(" ", gap)) + filter + bg.Render(" ")
 }
 
 // ── small utilities ────────────────────────────────────────────────────

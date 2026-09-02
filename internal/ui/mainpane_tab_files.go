@@ -69,7 +69,9 @@ func (m MainPane) flattenTree() []treeRow {
 }
 
 func (m MainPane) renderTreePane(w, h int) []string {
-	lines := []string{m.renderCrumb(w), padBg(w)}
+	// The path now rides on the "[3] Files" label row (renderPanelLabel); keep
+	// one blank line so the tree doesn't butt against the header.
+	lines := []string{padBg(w)}
 
 	if m.tree == nil && m.active != nil {
 		hint := "  loading files…"
@@ -102,56 +104,6 @@ func (m MainPane) renderTreePane(w, h int) []string {
 		lines = append(lines, padBg(w))
 	}
 	return lines
-}
-
-func (m MainPane) renderCrumb(w int) string {
-	bg := lipgloss.NewStyle().Background(ColorBg)
-
-	const lead = " "
-	const rootPrefix = "~/"
-	const sep = " · "
-
-	plainName := m.active.Name
-	plainPath := ""
-	if m.tree != nil {
-		plainPath = m.tree.Path
-	}
-
-	// Budget the plain text to fit `w` cells. Trim path first, then name.
-	avail := w - len(lead) - len(rootPrefix)
-	if avail < 1 {
-		return bg.Render(strings.Repeat(" ", w))
-	}
-	if plainPath != "" {
-		if budget := avail - lipgloss.Width(plainName) - len(sep); budget > 0 {
-			plainPath = truncateName(plainPath, budget)
-		} else {
-			plainPath = ""
-		}
-	}
-	if lipgloss.Width(plainName)+len(sep)+lipgloss.Width(plainPath) > avail {
-		nameBudget := avail - len(sep) - lipgloss.Width(plainPath)
-		if nameBudget < 1 {
-			nameBudget = avail
-			plainPath = ""
-		}
-		plainName = truncateName(plainName, nameBudget)
-	}
-
-	root := lipgloss.NewStyle().Foreground(ColorFgDim).Background(ColorBg).Render(rootPrefix)
-	name := lipgloss.NewStyle().Foreground(ColorFg).Background(ColorBg).Render(plainName)
-	rest := ""
-	if plainPath != "" {
-		rest = lipgloss.NewStyle().
-			Foreground(ColorFgFaint).
-			Background(ColorBg).
-			Render(sep + plainPath)
-	}
-	row := lead + root + name + rest
-	if pad := w - lipgloss.Width(row); pad > 0 {
-		row += bg.Render(strings.Repeat(" ", pad))
-	}
-	return row
 }
 
 func (m MainPane) renderTreeRow(r treeRow, w int, selected bool) string {
@@ -213,7 +165,10 @@ func (m MainPane) renderPreviewPane(w, h int) []string {
 	}
 
 	bg := lipgloss.NewStyle().Background(ColorBg)
-	var lines []string
+
+	// Leading blank so the "preview …" line sits level with the first tree row
+	// (the tree pane also opens with one blank line).
+	lines := []string{padBg(w)}
 
 	if sel == nil {
 		lines = append(lines, " "+lipgloss.NewStyle().

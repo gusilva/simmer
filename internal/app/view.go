@@ -99,6 +99,17 @@ func (m model) View() tea.View {
 		}
 	}
 
+	// Device-info sheet: full-height layer pinned to the right edge. Nothing
+	// beneath reflows.
+	if m.infoOverlay != nil {
+		overlayStr := m.infoOverlay.View()
+		oW := lipgloss.Width(overlayStr)
+		x := max(m.width-oW, 0)
+		bg := lipgloss.NewLayer(baseStr)
+		fg := lipgloss.NewLayer(overlayStr).X(x).Y(0).Z(1)
+		baseStr = lipgloss.NewCompositor(bg, fg).Render()
+	}
+
 	// Help overlay is always the topmost layer so it appears over the db viewer.
 	if m.helpOverlay != nil {
 		overlayStr := m.helpOverlay.View()
