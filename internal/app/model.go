@@ -29,6 +29,7 @@ type model struct {
 	sidebar      ui.Sidebar
 	mainPane     ui.MainPane
 	focus        appFocus
+	layout       *appLayout
 	coordinator  *device.Coordinator
 	logger       *logging.Logger
 	loading      bool
@@ -72,8 +73,7 @@ type model struct {
 	dbViewerModal   *dbviewer.Modal
 
 	// rebuildPaths caches the resolved Android gradle project directory per
-	// bundle-id for the running session (no persistence — see
-	// docs/adr/0001-project-resolution-not-persisted.md). iOS resolves fresh
+	// bundle-id for the running session. iOS resolves fresh
 	// each time via DerivedData, so it needs no cache.
 	rebuildPaths map[string]string
 }
@@ -90,6 +90,7 @@ func initialModel(version string, logger *logging.Logger, launchDir string) mode
 		sidebar:      ui.NewSidebar(),
 		mainPane:     ui.NewMainPane(),
 		focus:        focusSidebar,
+		layout:       &appLayout{},
 		coordinator:  coord,
 		logger:       logger,
 		loading:      true,

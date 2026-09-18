@@ -87,6 +87,65 @@ func (m MainPane) View() string {
 	return strings.Join(wrapped, "\n")
 }
 
+// HandleClick maps a click at (x, y) — local to this pane's own View()
+// output (0,0 = the outer "╭" border) — to a panel switch and/or row
+// selection. Row math mirrors View() exactly (same header/label/divider
+// row counts, same scroll-window offset formula as renderApps/renderTreePane),
+// so a click always lands on the row it visually looks like it hit.
+func (m *MainPane) HandleClick(x, y int) {
+	if m.active == nil || m.width < 12 || m.height < 5 {
+		return
+	}
+	innerW := m.width - 2
+	innerH := m.height - 2
+	if x < 1 || x > innerW || y < 1 || y > innerH {
+		return // border rows/columns
+	}
+	lx := x - 1 // 0-based column within the inner content
+	ly := y - 1 // 0-based row within the inner content
+
+	content := max(innerH-6, 1)
+	treeW, _, _ := filesLayout(innerW)
+
+	switch {
+	case ly == 3: // "[2] Apps" label row
+		m.panel = panelApps
+
+	case m.panel == panelApps && ly >= 4 && ly < 4+content:
+		m.panel = panelApps
+		block := ly - 4
+		listH := max(content-2, 1)
+		if block < 1 || block-1 >= listH {
+			return
+		}
+		offset := 0
+		if m.appsIdx >= listH {
+			offset = m.appsIdx - listH + 1
+		}
+		if idx := offset + block - 1; idx < len(m.filteredApps()) {
+			m.appsIdx = idx
+		}
+
+	case (m.panel == panelApps && ly == 5+content) || (m.panel == panelFiles && ly == 5):
+		m.panel = panelFiles
+
+	case m.panel == panelFiles && ly >= 6 && ly < 6+content:
+		m.panel = panelFiles
+		block := ly - 6
+		visibleH := max(content-1, 1)
+		if block < 1 || block-1 >= visibleH || lx >= treeW {
+			return
+		}
+		offset := 0
+		if m.treeIdx >= visibleH {
+			offset = m.treeIdx - visibleH + 1
+		}
+		if idx := offset + block - 1; idx < len(m.flattenTree()) {
+			m.treeIdx = idx
+		}
+	}
+}
+
 // hrule renders a horizontal rule of `width` cells, optionally inserting a
 // junction glyph at column `at`. Set at < 0 (or junction == "") for a plain rule.
 func hrule(width, at int, junction string, style lipgloss.Style) string {

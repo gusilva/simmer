@@ -640,11 +640,56 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, nil
 
-	case tea.MouseClickMsg, tea.MouseWheelMsg:
+	case tea.MouseWheelMsg:
 		if m.dbViewerModal != nil {
 			updated, cmd := m.dbViewerModal.Update(msg)
 			m.dbViewerModal = &updated
 			return m, cmd
+		}
+		return m, nil
+
+	case tea.MouseClickMsg:
+		if msg.Button != tea.MouseLeft {
+			return m, nil
+		}
+
+		// dbviewer already handles its own mouse clicks.
+		if m.dbViewerModal != nil {
+			updated, cmd := m.dbViewerModal.Update(msg)
+			m.dbViewerModal = &updated
+			return m, cmd
+		}
+
+		// Complex modals swallow all clicks — same overlays that intercept
+		// every key in the tea.KeyPressMsg case above.
+		if m.platformPicker != nil || m.createIOSModal != nil || m.createAndModal != nil ||
+			m.installAppModal != nil || m.sqliteModal != nil ||
+			m.infoOverlay != nil || m.helpOverlay != nil {
+			return m, nil
+		}
+
+		// Simple alert modals: click outside dismisses, click inside is
+		// swallowed
+		if m.deleteAlert != nil || m.deleteAppAlert != nil || m.closeAppAlert != nil {
+			if !m.layout.overlay.contains(msg.X, msg.Y) {
+				return m, func() tea.Msg { return ui.CancelOverlayMsg{} }
+			}
+			return m, nil
+		}
+
+		// No overlay open: hit-test the sidebar / main-pane split and, within
+		// whichever was hit, the panel/row under the cursor.
+		if m.layout.sidebar.contains(msg.X, msg.Y) {
+			m.focus = focusSidebar
+			m.applyFocus()
+			m.sidebar.HandleClick(msg.Y - m.layout.sidebar.y - 1)
+			return m, nil
+		}
+		if m.layout.mainPane.contains(msg.X, msg.Y) {
+			m.focus = focusMain
+			m.applyFocus()
+			m.mainPane.HandleClick(msg.X-m.layout.mainPane.x, msg.Y-m.layout.mainPane.y-1)
+			return m, nil
 		}
 		return m, nil
 

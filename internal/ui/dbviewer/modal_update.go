@@ -279,30 +279,38 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 	return m, nil
 }
 
+// modalOffset returns the modal's top-left screen position. app.View()
+// places the rendered modal via lipgloss centering — (termW-ModalW)/2,
+// (termH-ModalH)/2 — not at a fixed corner, so hit-testing must undo that
+// same centering before applying the row/col math below.
+func (m Modal) modalOffset(l layout) (offX, offY int) {
+	return max((m.width-l.ModalW)/2, 0), max((m.height-l.ModalH)/2, 0)
+}
+
 // handleMouseClick maps a terminal click to a pane focus and optional navigation.
 //
-// Modal layout in terminal coords (modal is always at offset 1,1):
+// Modal layout in terminal coords, relative to modalOffset() (offX, offY):
 //
-//	row 1            top border
-//	row 2            title row
-//	row 3            title separator
-//	rows 4..4+bodyH  body rows
-//	  cols 2..1+SidebarW   sidebar
-//	  col  2+SidebarW      vertical divider
-//	  cols 3+SidebarW..    right pane (query rows 0..QueryH-1, results rows QueryH..BodyH-1)
+//	row offY+0            top border
+//	row offY+1            title row
+//	row offY+2            title separator
+//	rows offY+3..+3+bodyH body rows
+//	  cols offX+1..offX+SidebarW   sidebar
+//	  col  offX+SidebarW+1         vertical divider
+//	  cols offX+SidebarW+2..       right pane (query rows 0..QueryH-1, results rows QueryH..BodyH-1)
 func (m Modal) handleMouseClick(mc tea.MouseClickMsg) (Modal, tea.Cmd) {
 	if mc.Button != tea.MouseLeft {
 		return m, nil
 	}
 	l := computeLayout(m.width, m.height)
-	const offX, offY = 1, 1
+	offX, offY := m.modalOffset(l)
 	bodyStartY := offY + 3
 	bodyRow := mc.Y - bodyStartY
 	if bodyRow < 0 || bodyRow >= l.BodyH {
 		return m, nil
 	}
 
-	const sidebarColStart = 2
+	sidebarColStart := offX + 1
 	sidebarColEnd := offX + l.SidebarW
 	rightColStart := offX + l.SidebarW + 2
 
@@ -346,7 +354,7 @@ func (m Modal) handleMouseClick(mc tea.MouseClickMsg) (Modal, tea.Cmd) {
 // handleMouseWheel scrolls the sidebar or results pane on mouse wheel events.
 func (m Modal) handleMouseWheel(mw tea.MouseWheelMsg) (Modal, tea.Cmd) {
 	l := computeLayout(m.width, m.height)
-	const offX, offY = 1, 1
+	offX, offY := m.modalOffset(l)
 	bodyStartY := offY + 3
 	bodyRow := mw.Y - bodyStartY
 	if bodyRow < 0 || bodyRow >= l.BodyH {

@@ -35,7 +35,8 @@ func (m model) View() tea.View {
 		Help:   footerHelp,
 	})
 
-	bodyH := max(m.height-lipgloss.Height(topBar)-lipgloss.Height(footer), 0)
+	bodyTop := lipgloss.Height(topBar)
+	bodyH := max(m.height-bodyTop-lipgloss.Height(footer), 0)
 
 	var body string
 	if m.loading && m.sidebar.SelectedDevice() == nil {
@@ -43,6 +44,7 @@ func (m model) View() tea.View {
 			Foreground(ui.ColorFgFaint).
 			Background(ui.ColorBg).
 			Render("fetching devices…")
+		*m.layout = appLayout{}
 	} else {
 		sidebar := lipgloss.NewStyle().
 			Padding(1, 1, 0, 1).
@@ -53,6 +55,11 @@ func (m model) View() tea.View {
 			Background(ui.ColorBg).
 			Render(m.mainPane.View())
 		body = lipgloss.JoinHorizontal(lipgloss.Top, sidebar, mainPane)
+
+		*m.layout = appLayout{
+			sidebar:  rect{x: 0, y: bodyTop, w: lipgloss.Width(sidebar), h: lipgloss.Height(sidebar)},
+			mainPane: rect{x: lipgloss.Width(sidebar), y: bodyTop, w: lipgloss.Width(mainPane), h: lipgloss.Height(mainPane)},
+		}
 	}
 
 	body = lipgloss.NewStyle().
@@ -91,6 +98,7 @@ func (m model) View() tea.View {
 		mH := lipgloss.Height(overlayStr)
 		x := max((m.width-mW)/2, 0)
 		y := max((m.height-mH)/2, 0)
+		m.layout.overlay = rect{x: x, y: y, w: mW, h: mH}
 		bg := lipgloss.NewLayer(baseStr)
 		fg := lipgloss.NewLayer(overlayStr).X(x).Y(y).Z(1)
 		if m.dbViewerModal != nil {

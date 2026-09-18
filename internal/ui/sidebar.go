@@ -221,6 +221,80 @@ func (s Sidebar) Update(msg tea.Msg) (Sidebar, tea.Cmd) {
 	return s, nil
 }
 
+// onlineRows maps each rendered row of the Online box to its index in
+// onlinePositions(), or -1 for a row that isn't a cursor stop (the blank
+// separator renderOnlineRows inserts between the iOS and Android groups
+// when both are present, or the "(none)" row when booted is empty). It
+// mirrors renderOnlineRows' loop exactly so HandleClick's row count never
+// drifts from what's actually drawn.
+func (s Sidebar) onlineRows() []int {
+	positions := s.onlinePositions()
+	if len(positions) == 0 {
+		return []int{-1}
+	}
+	rows := make([]int, 0, len(positions)+1)
+	prevPlatform := device.Platform("")
+	for i, p := range positions {
+		if p.isHeader && prevPlatform != "" && prevPlatform != p.platform {
+			rows = append(rows, -1)
+		}
+		rows = append(rows, i)
+		if p.isHeader {
+			prevPlatform = p.platform
+		}
+	}
+	return rows
+}
+
+// HandleClick maps a click at row y — local to this sidebar's own View()
+// output (row 0 = the Online box's top border) — to a focus and cursor
+// change. Row math mirrors View() exactly, via the same helpers
+// (onlineRows, offlineDevices) it renders from, so a click always lands on
+// the row it visually looks like it hit.
+func (s *Sidebar) HandleClick(y int) {
+	rowToPos := s.onlineRows()
+	onlineContentH := len(rowToPos)
+	onlineBoxH := onlineContentH + 2 // top border + content + bottom border
+
+	if y < onlineBoxH {
+		s.focused = PaneBooted
+		if y >= 1 && y <= onlineContentH {
+			if posIdx := rowToPos[y-1]; posIdx >= 0 {
+				s.bootedIdx = posIdx
+			}
+		}
+		return
+	}
+
+	const gapLines = 1
+	offTop := onlineBoxH + gapLines
+	if y < offTop {
+		return // blank gap row between the two boxes
+	}
+
+	offlineHeight := 0
+	if s.height > 0 {
+		offlineHeight = max(s.height-onlineBoxH-gapLines, 3)
+	}
+	localY := y - offTop
+	if localY >= offlineHeight {
+		return // below the offline box entirely
+	}
+	s.focused = PaneAvailable
+
+	innerH := max(offlineHeight-2, 0)
+	contentH := innerH
+	if s.filterMode || s.filterQuery != "" {
+		contentH = max(innerH-1, 0)
+	}
+	if localY >= 1 && localY <= contentH {
+		devs := s.offlineDevices()
+		if idx := localY - 1; idx < len(devs) {
+			s.availIdx = idx
+		}
+	}
+}
+
 // View renders the sidebar. The Online box auto-fits its content; the Offline
 // box fills the remaining height when SetSize was called with a positive height.
 func (s Sidebar) View() string {

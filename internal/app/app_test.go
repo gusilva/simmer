@@ -88,6 +88,7 @@ func newTestModel() model {
 	return model{
 		sidebar:      ui.NewSidebar(),
 		mainPane:     ui.NewMainPane(),
+		layout:       &appLayout{},
 		toolVersions: make(map[device.Platform]string),
 		rebuildPaths: make(map[string]string),
 	}
