@@ -281,6 +281,26 @@ func (m model) deleteAppCmd(dev device.Device, app device.App) tea.Cmd {
 	}
 }
 
+func (m model) launchAppCmd(dev device.Device, app device.App) tea.Cmd {
+	coord := m.coordinator
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		err := coord.LaunchApp(ctx, dev, app.BundleID)
+		return launchAppResultMsg{deviceID: dev.ID, bundleID: app.BundleID, appLabel: app.Label(), err: err}
+	}
+}
+
+func (m model) closeAppCmd(dev device.Device, app device.App) tea.Cmd {
+	coord := m.coordinator
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		err := coord.TerminateApp(ctx, dev, app.BundleID)
+		return closeAppResultMsg{deviceID: dev.ID, bundleID: app.BundleID, appLabel: app.Label(), err: err}
+	}
+}
+
 func (m model) loadAppsCmd(dev device.Device) tea.Cmd {
 	coord := m.coordinator
 	return func() tea.Msg {

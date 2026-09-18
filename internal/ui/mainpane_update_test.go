@@ -219,6 +219,94 @@ func TestMainPaneUpdate_TabApps_DeleteKey_EmptyList(t *testing.T) {
 	}
 }
 
+func TestMainPaneUpdate_TabApps_EnterKey_LaunchesApp(t *testing.T) {
+	m := newTestPane()
+	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
+	m.SetDevice(dev, nil)
+	m.panel = panelApps
+	m.SetApps([]device.App{{BundleID: "com.a", Name: "A"}})
+	m.appsIdx = 0
+
+	_, cmd := m.Update(tea.KeyPressMsg{Text: "enter"})
+	if cmd == nil {
+		t.Fatal("expected command from enter key")
+	}
+	msg := cmd()
+	req, ok := msg.(LaunchAppMsg)
+	if !ok {
+		t.Fatalf("expected LaunchAppMsg, got %T", msg)
+	}
+	if req.App.BundleID != "com.a" {
+		t.Errorf("expected app com.a, got %s", req.App.BundleID)
+	}
+}
+
+func TestMainPaneUpdate_TabApps_EnterKey_NoDevice(t *testing.T) {
+	m := newTestPane()
+	m.panel = panelApps
+	_, cmd := m.Update(tea.KeyPressMsg{Text: "enter"})
+	if cmd != nil {
+		t.Error("expected no command when no device")
+	}
+}
+
+func TestMainPaneUpdate_TabApps_EnterKey_EmptyList(t *testing.T) {
+	m := newTestPane()
+	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
+	m.SetDevice(dev, nil)
+	m.panel = panelApps
+	m.SetApps(nil)
+
+	_, cmd := m.Update(tea.KeyPressMsg{Text: "enter"})
+	if cmd != nil {
+		t.Error("expected no command for empty apps list")
+	}
+}
+
+func TestMainPaneUpdate_TabApps_CKey_ShowsCloseAlert(t *testing.T) {
+	m := newTestPane()
+	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
+	m.SetDevice(dev, nil)
+	m.panel = panelApps
+	m.SetApps([]device.App{{BundleID: "com.a", Name: "A"}})
+	m.appsIdx = 0
+
+	_, cmd := m.Update(tea.KeyPressMsg{Text: "c"})
+	if cmd == nil {
+		t.Fatal("expected command from c key")
+	}
+	msg := cmd()
+	req, ok := msg.(ShowCloseAppMsg)
+	if !ok {
+		t.Fatalf("expected ShowCloseAppMsg, got %T", msg)
+	}
+	if req.App.BundleID != "com.a" {
+		t.Errorf("expected app com.a, got %s", req.App.BundleID)
+	}
+}
+
+func TestMainPaneUpdate_TabApps_CKey_NoDevice(t *testing.T) {
+	m := newTestPane()
+	m.panel = panelApps
+	_, cmd := m.Update(tea.KeyPressMsg{Text: "c"})
+	if cmd != nil {
+		t.Error("expected no command when no device")
+	}
+}
+
+func TestMainPaneUpdate_TabApps_CKey_EmptyList(t *testing.T) {
+	m := newTestPane()
+	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
+	m.SetDevice(dev, nil)
+	m.panel = panelApps
+	m.SetApps(nil)
+
+	_, cmd := m.Update(tea.KeyPressMsg{Text: "c"})
+	if cmd != nil {
+		t.Error("expected no command for empty apps list")
+	}
+}
+
 func TestMainPaneUpdate_TabApps_Space_PinsApp(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}

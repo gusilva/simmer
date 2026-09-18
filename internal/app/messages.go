@@ -51,6 +51,20 @@ type deleteAppResultMsg struct {
 	err      error
 }
 
+type launchAppResultMsg struct {
+	deviceID string
+	bundleID string
+	appLabel string
+	err      error
+}
+
+type closeAppResultMsg struct {
+	deviceID string
+	bundleID string
+	appLabel string
+	err      error
+}
+
 type xcodeSchemesMsg struct {
 	schemes []string
 	err     error

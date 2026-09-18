@@ -272,6 +272,53 @@ func (m *androidManager) TerminateApp(ctx context.Context, deviceID, bundleID st
 	return err
 }
 
+// LaunchApp starts an already-installed app. device.App only stores the
+// package name (BundleID), not an activity, so the launcher activity is
+// resolved first via `cmd package resolve-activity`.
+func (m *androidManager) LaunchApp(ctx context.Context, deviceID, bundleID string) error {
+	serial, err := findAndroidSerial(ctx, deviceID)
+	if err != nil {
+		return fmt.Errorf("find android serial: %w", err)
+	}
+	d, err := gadbDevice(serial)
+	if err != nil {
+		return err
+	}
+	activity, err := androidResolveLauncherActivity(d, bundleID)
+	if err != nil {
+		return fmt.Errorf("resolve launcher activity: %w", err)
+	}
+	component := bundleID + "/" + activity
+	out, err := d.RunShellCommand("am", "start", "-n", component)
+	m.logger.LogExec("adb shell", []string{"am", "start", "-n", component}, out, err)
+	return err
+}
+
+// androidResolveLauncherActivity looks up the launcher activity for a package
+// via `cmd package resolve-activity --brief`, whose last line is
+// "<package>/<activity>".
+func androidResolveLauncherActivity(d gadb.Device, bundleID string) (string, error) {
+	out, err := d.RunShellCommand("cmd", "package", "resolve-activity", "--brief", bundleID)
+	if err != nil {
+		return "", err
+	}
+	return parseLauncherActivity(out, bundleID)
+}
+
+// parseLauncherActivity extracts "<activity>" from `cmd package
+// resolve-activity --brief` output, whose relevant line is
+// "<package>/<activity>".
+func parseLauncherActivity(out, bundleID string) (string, error) {
+	prefix := bundleID + "/"
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if activity, ok := strings.CutPrefix(line, prefix); ok && activity != "" {
+			return activity, nil
+		}
+	}
+	return "", fmt.Errorf("no launcher activity found for %s", bundleID)
+}
+
 // DeleteApp uninstalls an app from an Android emulator via pm uninstall.
 func (m *androidManager) DeleteApp(ctx context.Context, deviceID, bundleID string) error {
 	serial, err := findAndroidSerial(ctx, deviceID)

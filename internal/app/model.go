@@ -61,6 +61,7 @@ type model struct {
 	createAndModal  *ui.CreateAndroidEmulatorModal
 	deleteAlert     *ui.DeleteSimulatorAlert
 	deleteAppAlert  *ui.DeleteAppAlert
+	closeAppAlert   *ui.CloseAppAlert
 	installAppModal *ui.InstallAppModal
 	buildStream     *device.BuildStream
 	buildDeviceID   string

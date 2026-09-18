@@ -110,6 +110,8 @@ type MainPaneKeyMap struct {
 	PinApp  key.Binding
 	Log     key.Binding
 	Rebuild key.Binding
+	Launch  key.Binding
+	Close   key.Binding
 	// Files panel
 	Expand key.Binding
 	Help   key.Binding
@@ -124,6 +126,7 @@ func (k MainPaneKeyMap) FullHelp() [][]key.Binding {
 		{k.Up, k.Down, k.Home, k.End},
 		{k.Panel, k.Back},
 		{k.Filter, k.Install, k.Delete, k.PinApp, k.Log, k.Rebuild},
+		{k.Launch, k.Close},
 		{k.Info, k.Expand, k.Help},
 	}
 }
@@ -144,6 +147,7 @@ func (appsPaneHelp) FullHelp() [][]key.Binding {
 		{k.Up, k.Down, k.Home, k.End},
 		{k.Panel, k.Back, k.Info},
 		{k.Filter, k.Install, k.Delete, k.PinApp, k.Log, k.Rebuild},
+		{k.Launch, k.Close},
 		{k.Help},
 	}
 }
@@ -186,6 +190,8 @@ var MainPaneKeys = MainPaneKeyMap{
 	PinApp:  key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "browse app files")),
 	Log:     key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "log app to file")),
 	Rebuild: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "rebuild & reinstall")),
+	Launch:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "launch")),
+	Close:   key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "close")),
 	Expand:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "expand dir / open db")),
 	Help:    key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 }

@@ -59,6 +59,24 @@ type ConfirmDeleteAppMsg struct {
 	App    device.App
 }
 
+// LaunchAppMsg is emitted by MainPane when enter is pressed on an app row.
+type LaunchAppMsg struct {
+	Device device.Device
+	App    device.App
+}
+
+// ShowCloseAppMsg is emitted by MainPane when 'c' is pressed on an app row.
+type ShowCloseAppMsg struct {
+	Device device.Device
+	App    device.App
+}
+
+// ConfirmCloseAppMsg is emitted when the user confirms closing the app.
+type ConfirmCloseAppMsg struct {
+	Device device.Device
+	App    device.App
+}
+
 // RequestRebuildMsg is emitted by MainPane when 'r' is pressed on an app row.
 type RequestRebuildMsg struct {
 	Device device.Device

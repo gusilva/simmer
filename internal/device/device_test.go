@@ -74,3 +74,27 @@ func TestCoordinator_TerminateApp_NoTerminator(t *testing.T) {
 		t.Error("expected error when no terminator registered for platform")
 	}
 }
+
+func TestCoordinator_LaunchApp(t *testing.T) {
+	iosMock := &MockManager{PlatformVal: PlatformIOS}
+	coord := NewCoordinator(iosMock)
+
+	dev := Device{ID: "test-id", Platform: PlatformIOS, Kind: KindVirtual}
+	if err := coord.LaunchApp(context.Background(), dev, "com.example.app"); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	if !iosMock.LaunchCalled || iosMock.LaunchBundleID != "com.example.app" {
+		t.Errorf("launch was not called correctly on mock")
+	}
+}
+
+func TestCoordinator_LaunchApp_NoLauncher(t *testing.T) {
+	androidMock := &MockManager{PlatformVal: PlatformAndroid}
+	coord := NewCoordinator(androidMock)
+
+	dev := Device{ID: "test-id", Platform: PlatformIOS, Kind: KindVirtual}
+	if err := coord.LaunchApp(context.Background(), dev, "com.example.app"); err == nil {
+		t.Error("expected error when no launcher registered for platform")
+	}
+}

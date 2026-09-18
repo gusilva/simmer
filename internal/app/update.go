@@ -104,6 +104,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.deleteAppAlert = &updated
 			return m, cmd
 		}
+		if m.closeAppAlert != nil {
+			updated, cmd := m.closeAppAlert.Update(msg)
+			m.closeAppAlert = &updated
+			return m, cmd
+		}
 		if m.installAppModal != nil {
 			updated, cmd := m.installAppModal.Update(msg)
 			m.installAppModal = &updated
@@ -538,6 +543,38 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.deleteAppAlert = &alert
 		return m, nil
 
+	case ui.LaunchAppMsg:
+		if msg.Device.Status != device.StatusRunning {
+			return m, m.setStatus("Device not running", ui.StatusErr)
+		}
+		return m, m.launchAppCmd(msg.Device, msg.App)
+
+	case launchAppResultMsg:
+		if msg.err != nil {
+			m.errs = append(m.errs, msg.err)
+			return m, m.setStatus("launch failed: "+errPreview(msg.err), ui.StatusErr)
+		}
+		return m, m.setStatus("Launched "+msg.appLabel, ui.StatusOk)
+
+	case ui.ShowCloseAppMsg:
+		if msg.Device.Status != device.StatusRunning {
+			return m, m.setStatus("Device not running", ui.StatusErr)
+		}
+		alert := ui.NewCloseAppAlert(msg.Device, msg.App)
+		m.closeAppAlert = &alert
+		return m, nil
+
+	case ui.ConfirmCloseAppMsg:
+		m.closeAppAlert = nil
+		return m, m.closeAppCmd(msg.Device, msg.App)
+
+	case closeAppResultMsg:
+		if msg.err != nil {
+			m.errs = append(m.errs, msg.err)
+			return m, m.setStatus("close failed: "+errPreview(msg.err), ui.StatusErr)
+		}
+		return m, m.setStatus("Closed "+msg.appLabel, ui.StatusOk)
+
 	case ui.RequestRebuildMsg:
 		dev, app := msg.Device, msg.App
 		if dev.Kind != device.KindVirtual || !app.IsLocal() {
@@ -623,6 +660,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.createAndModal = nil
 		m.deleteAlert = nil
 		m.deleteAppAlert = nil
+		m.closeAppAlert = nil
 		m.installAppModal = nil
 		m.sqliteModal = nil
 		m.dbViewerModal = nil

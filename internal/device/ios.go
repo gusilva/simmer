@@ -642,6 +642,13 @@ func (m *iosManager) TerminateApp(ctx context.Context, deviceID, bundleID string
 	return err
 }
 
+// LaunchApp starts an already-installed app via `xcrun simctl launch`.
+func (m *iosManager) LaunchApp(ctx context.Context, deviceID, bundleID string) error {
+	err := simctlLaunch(ctx, deviceID, bundleID)
+	m.logger.LogExec("xcrun", []string{"simctl", "launch", deviceID, bundleID}, "", err)
+	return err
+}
+
 // ResolveIOSProjectPath finds the Xcode project/workspace for a locally
 // built app by matching its display name against DerivedData folder names,
 // then reading WorkspacePath from that folder's info.plist. See

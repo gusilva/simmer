@@ -169,6 +169,20 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 			dev := *m.active
 			a := filtered[m.appsIdx]
 			return m, func() tea.Msg { return RequestRebuildMsg{Device: dev, App: a} }
+		case "enter":
+			if len(filtered) == 0 || m.appsIdx >= len(filtered) || m.active == nil {
+				return m, nil
+			}
+			dev := *m.active
+			a := filtered[m.appsIdx]
+			return m, func() tea.Msg { return LaunchAppMsg{Device: dev, App: a} }
+		case "c":
+			if len(filtered) == 0 || m.appsIdx >= len(filtered) || m.active == nil {
+				return m, nil
+			}
+			dev := *m.active
+			a := filtered[m.appsIdx]
+			return m, func() tea.Msg { return ShowCloseAppMsg{Device: dev, App: a} }
 		case "space":
 			// Pin / unpin the app whose sandbox the Files panel browses.
 			if len(filtered) == 0 || m.appsIdx >= len(filtered) {
