@@ -264,6 +264,9 @@ func (p ResultsPane) tableToTSV() string {
 //	row h-1      pager
 func (p ResultsPane) Rows(width, height int, focused bool) []string {
 	rh := p.rh
+	if focused {
+		rh = rh.WithSepColor(theme.ColorBorderHi)
+	}
 	fillTo := func(s string) string { return rh.FillTo(s, width) }
 
 	out := make([]string, height)

@@ -212,6 +212,65 @@ func TestAPIFromSysdir(t *testing.T) {
 
 // ---------- filterGradleLine ----------
 
+// ---------- parseLauncherActivity ----------
+
+func TestParseLauncherActivity(t *testing.T) {
+	tests := []struct {
+		name       string
+		out        string
+		bundleID   string
+		wantActiv  string
+		wantErrNil bool
+	}{
+		{
+			name:       "brief output with dotted activity",
+			out:        "priority=0 preferredOrder=0 match=0x108000\ncom.example.app/.MainActivity",
+			bundleID:   "com.example.app",
+			wantActiv:  ".MainActivity",
+			wantErrNil: true,
+		},
+		{
+			name:       "brief output with fully qualified activity",
+			out:        "com.example.app/com.example.app.ui.LauncherActivity",
+			bundleID:   "com.example.app",
+			wantActiv:  "com.example.app.ui.LauncherActivity",
+			wantErrNil: true,
+		},
+		{
+			name:       "no matching package line",
+			out:        "priority=0\nsome.other.pkg/.MainActivity",
+			bundleID:   "com.example.app",
+			wantErrNil: false,
+		},
+		{
+			name:       "empty output",
+			out:        "",
+			bundleID:   "com.example.app",
+			wantErrNil: false,
+		},
+		{
+			name:       "package prefix with no activity suffix",
+			out:        "com.example.app/",
+			bundleID:   "com.example.app",
+			wantErrNil: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseLauncherActivity(tc.out, tc.bundleID)
+			if tc.wantErrNil && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !tc.wantErrNil && err == nil {
+				t.Fatalf("expected error, got activity %q", got)
+			}
+			if tc.wantErrNil && got != tc.wantActiv {
+				t.Errorf("parseLauncherActivity() = %q, want %q", got, tc.wantActiv)
+			}
+		})
+	}
+}
+
 func TestFilterGradleLine(t *testing.T) {
 	tests := []struct {
 		input string

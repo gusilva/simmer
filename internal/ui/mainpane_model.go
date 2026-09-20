@@ -2,43 +2,38 @@ package ui
 
 import (
 	"simmer/internal/device"
+
+	"charm.land/bubbles/v2/help"
 )
 
-// MainTab identifies one of the top-level tabs in the main pane.
-// The iota values must stay in lockstep with the order of mainTabs.
-type MainTab int
+// mainPanel identifies which of the two stacked panels is expanded. The other
+// is drawn as a one-line strip.
+type mainPanel int
 
 const (
-	// TabInfo shows device info key/value rows.
-	TabInfo MainTab = iota
-	// TabApps shows installed apps.
-	TabApps
-	// TabFiles shows the device filesystem tree + preview.
-	TabFiles
+	// panelApps expands the installed-apps list (default on device load — apps
+	// load eagerly, the file tree does not).
+	panelApps mainPanel = iota
+	// panelFiles expands the filesystem tree + preview.
+	panelFiles
 )
-
-var mainTabs = []Tab{
-	{Key: "1", Label: "Info"},
-	{Key: "2", Label: "Apps"},
-	{Key: "3", Label: "Files"},
-}
 
 // MainPane is the right-hand panel showing details for the active device.
 // It is a pure UI component: callers pass in the active device and a loaded
 // filesystem tree via SetDevice.
 type MainPane struct {
 	active        *device.Device    // Which device is selected (nil = none)
-	tab           MainTab           // Which tab is active: Info, Apps, Files
-	tree          *device.FileNode  // Filesystem tree for Files Tab
+	panel         mainPanel         // Which panel is expanded: Files (default) or Apps
+	tree          *device.FileNode  // Filesystem tree for the Files panel
 	expanded      map[string]bool   // Which dirs are open in the tree
 	treeIdx       int               // Cursor row in the tree
 	apps          []device.App      // List of installed apps
 	appsIdx       int               // Cursor row in the filtered apps list
 	appsFilter    string            // Active fuzzy filter for apps
 	appsFiltering bool              // Whether filter input is active
-	selectedApp   *device.App       // App pinned (via space) for Files-tab sandbox browsing
-	info          device.DeviceInfo // Device info fields for the Info tab
-	infoIdx       int               // Cursor row in the info list
+	selectedApp   *device.App       // App pinned (via space) for Files sandbox browsing
+	info          device.DeviceInfo // Device info fields (rendered by the info overlay)
+	infoOpen      bool              // Whether the device-info overlay is open (hides the header hint)
 	loggingBundle string            // Bundle id whose logs are currently written to file ("" = none)
 	focused       bool              // Does this pane have keyboard focus?
 	width         int               // Outer width available to the pane (including borders)
@@ -64,6 +59,7 @@ func (m *MainPane) SetFocused(f bool) { m.focused = f }
 // for both to clear the pane. Resets the apps list as well.
 func (m *MainPane) SetDevice(d *device.Device, root *device.FileNode) {
 	m.active = d
+	m.panel = panelApps
 	m.tree = root
 	m.expanded = map[string]bool{}
 	m.treeIdx = 0
@@ -73,7 +69,7 @@ func (m *MainPane) SetDevice(d *device.Device, root *device.FileNode) {
 	m.appsFiltering = false
 	m.selectedApp = nil
 	m.info = device.DeviceInfo{}
-	m.infoIdx = 0
+	m.infoOpen = false
 	m.loggingBundle = ""
 
 	if root != nil {
@@ -147,13 +143,18 @@ func (m MainPane) filteredApps() []device.App {
 	return out
 }
 
-// SetInfo replaces the device info shown in the Info tab.
-func (m *MainPane) SetInfo(info device.DeviceInfo) {
-	m.info = info
-	if m.infoIdx >= len(info.Fields) {
-		m.infoIdx = 0
-	}
-}
+// SetInfo replaces the device info rendered by the info overlay.
+func (m *MainPane) SetInfo(info device.DeviceInfo) { m.info = info }
+
+// DeviceInfo returns the loaded device info (may have zero fields while loading).
+func (m MainPane) DeviceInfo() device.DeviceInfo { return m.info }
+
+// ActiveDevice returns the currently loaded device, or nil.
+func (m MainPane) ActiveDevice() *device.Device { return m.active }
+
+// SetInfoOpen tells the pane whether the device-info overlay is showing, so the
+// header can drop its "[i] more info" hint while the sheet is up.
+func (m *MainPane) SetInfoOpen(open bool) { m.infoOpen = open }
 
 // SelectedApp returns the app currently highlighted in the Apps tab, or nil.
 func (m MainPane) SelectedApp() *device.App {
@@ -163,6 +164,39 @@ func (m MainPane) SelectedApp() *device.App {
 	}
 	a := filtered[m.appsIdx]
 	return &a
+}
+
+// IsDatabaseFile reports whether name looks like a SQLite database, by
+// extension — the same rule the Files panel uses to offer its SQLite
+// viewer.
+func IsDatabaseFile(name string) bool { return isDatabaseFile(name) }
+
+// IsFilesPanel reports whether the Files panel is currently expanded (as
+// opposed to Apps).
+func (m MainPane) IsFilesPanel() bool { return m.panel == panelFiles }
+
+// SelectedTreeNode returns the file/dir node currently highlighted in the
+// Files tab, or nil.
+func (m MainPane) SelectedTreeNode() *device.FileNode {
+	rows := m.flattenTree()
+	if m.treeIdx < 0 || m.treeIdx >= len(rows) {
+		return nil
+	}
+	return rows[m.treeIdx].node
+}
+
+// TogglePinnedApp pins app for the Files panel's sandbox browsing, or unpins
+// it if it's already pinned. Shared by the "space" key and the double-click
+// action menu.
+func (m *MainPane) TogglePinnedApp(app device.App) {
+	if m.selectedApp != nil && m.selectedApp.BundleID == app.BundleID {
+		m.selectedApp = nil
+		m.tree = nil
+		return
+	}
+	a := app
+	m.selectedApp = &a
+	m.tree = nil
 }
 
 // SetLoggingBundle records which app's logs are currently being written to a
@@ -190,10 +224,29 @@ type RequestFileTreeMsg struct {
 }
 
 // AppFocusedMsg is dispatched whenever the cursor lands on an app row in the
-// Apps tab. Useful for surfacing the selection in a status bar.
+// Apps panel. Useful for surfacing the selection in a status bar.
 type AppFocusedMsg struct {
 	App device.App
 }
 
+// ShowDeviceInfoMsg is dispatched when "i" is pressed in the main pane. The
+// parent opens the device-info overlay.
+type ShowDeviceInfoMsg struct {
+	Device device.Device
+}
+
+// ReleaseFocusMsg is dispatched when "esc" in the main pane has nothing left to
+// unwind. The parent hands keyboard focus back to the sidebar.
+type ReleaseFocusMsg struct{}
+
 // HasDevice reports whether a device is currently loaded.
 func (m MainPane) HasDevice() bool { return m.active != nil }
+
+// HelpKeyMap returns the title and key map for the "?" overlay, scoped to
+// whichever panel is currently expanded.
+func (m MainPane) HelpKeyMap() (string, help.KeyMap) {
+	if m.panel == panelApps {
+		return "Apps", MainPaneAppsKeys
+	}
+	return "Files", MainPaneFilesKeys
+}

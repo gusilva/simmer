@@ -1,6 +1,7 @@
 package dbviewer
 
 import (
+	"image/color"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -19,6 +20,15 @@ func newRenderHelpers() renderHelpers {
 		bg:  lipgloss.NewStyle().Background(theme.ColorBg),
 		sep: lipgloss.NewStyle().Foreground(theme.ColorBorder).Background(theme.ColorBg),
 	}
+}
+
+// WithSepColor returns a copy of h whose separator rule is tinted c. Panes
+// call this at the top of Rows() with theme.ColorBorderHi when they hold
+// focus, so the pane's own divider lights up instead of dimming the whole
+// pane's background.
+func (h renderHelpers) WithSepColor(c color.Color) renderHelpers {
+	h.sep = lipgloss.NewStyle().Foreground(c).Background(theme.ColorBg)
+	return h
 }
 
 // BlankN returns n background-colored spaces. Returns "" for n ≤ 0.

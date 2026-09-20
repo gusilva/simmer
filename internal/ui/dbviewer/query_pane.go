@@ -226,6 +226,9 @@ func (p QueryPane) Update(msg tea.Msg) (QueryPane, tea.Cmd) {
 //	rows 2..h-1  textarea
 func (p QueryPane) Rows(width, height int, focused bool) []string {
 	rh := p.rh
+	if focused {
+		rh = rh.WithSepColor(theme.ColorBorderHi)
+	}
 	fillTo := func(s string) string { return rh.FillTo(s, width) }
 
 	out := make([]string, height)

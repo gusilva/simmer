@@ -3,6 +3,7 @@ package ui
 import (
 	"testing"
 
+	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 )
 
@@ -74,6 +75,59 @@ func TestMainPaneKeyMap_FullHelp_IncludesAllAppsShortcuts(t *testing.T) {
 		if !found {
 			t.Errorf("expected Apps tab shortcut %q in FullHelp(), got %v", desc, full)
 		}
+	}
+}
+
+func flatHelp(km help.KeyMap) []key.Binding {
+	var flat []key.Binding
+	for _, row := range km.FullHelp() {
+		flat = append(flat, row...)
+	}
+	return flat
+}
+
+func hasHelp(bs []key.Binding, want string) bool {
+	for _, b := range bs {
+		if b.Help().Desc == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestPerPanelHelp_AppsShowsAppKeysNotFilesKeys(t *testing.T) {
+	flat := flatHelp(MainPaneAppsKeys)
+	for _, d := range []string{"filter apps", "install app", "delete app", "log app to file"} {
+		if !hasHelp(flat, d) {
+			t.Errorf("Apps help missing %q", d)
+		}
+	}
+	if hasHelp(flat, "expand dir / open db") {
+		t.Error("Apps help must not list the Files tree key")
+	}
+}
+
+func TestPerPanelHelp_FilesShowsTreeKeysNotAppKeys(t *testing.T) {
+	flat := flatHelp(MainPaneFilesKeys)
+	if !hasHelp(flat, "expand dir / open db") {
+		t.Error("Files help missing the tree key")
+	}
+	for _, d := range []string{"filter apps", "install app", "delete app", "log app to file"} {
+		if hasHelp(flat, d) {
+			t.Errorf("Files help must not list Apps key %q", d)
+		}
+	}
+}
+
+func TestMainPane_HelpKeyMap_TracksExpandedPanel(t *testing.T) {
+	m := newTestPane()
+	m.panel = panelApps
+	if title, _ := m.HelpKeyMap(); title != "Apps" {
+		t.Errorf("expected Apps, got %q", title)
+	}
+	m.panel = panelFiles
+	if title, km := m.HelpKeyMap(); title != "Files" || !hasHelp(flatHelp(km), "expand dir / open db") {
+		t.Errorf("expected Files help with tree key, got %q", title)
 	}
 }
 

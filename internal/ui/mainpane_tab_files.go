@@ -6,6 +6,7 @@ import (
 
 	"simmer/internal/device"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
 
@@ -42,9 +43,61 @@ func (m MainPane) renderFiles(innerW, innerH int) string {
 
 // ── Files: tree pane ───────────────────────────────────────────────────
 
+// isDatabaseFile reports whether name looks like a SQLite database, by
+// extension.
+func isDatabaseFile(name string) bool {
+	lname := strings.ToLower(name)
+	return strings.HasSuffix(lname, ".db") || strings.HasSuffix(lname, ".sqlite") || strings.HasSuffix(lname, ".sqlite3")
+}
+
 type treeRow struct {
 	node  *device.FileNode
 	depth int
+}
+
+// ActivateTreeRow performs the effect of "enter" on the currently
+// highlighted tree row: toggling a directory's expanded state, or opening
+// the SQLite viewer for a recognized database file. Shared by the "enter"
+// key and the double-click action menu.
+func (m *MainPane) ActivateTreeRow() tea.Cmd {
+	rows := m.flattenTree()
+	if m.treeIdx < 0 || m.treeIdx >= len(rows) {
+		return nil
+	}
+	n := rows[m.treeIdx].node
+	if !n.IsDir {
+		if m.active == nil {
+			return nil
+		}
+		if !isDatabaseFile(n.Name) {
+			return nil
+		}
+		dev := *m.active
+		packageID := ""
+		if m.selectedApp != nil {
+			packageID = m.selectedApp.BundleID
+		}
+		nodeName := n.Name
+		nodePath := n.Path
+		return func() tea.Msg {
+			return ShowSQLiteViewerMsg{
+				Device:    dev,
+				PackageID: packageID,
+				DBPath:    nodePath,
+				DBName:    nodeName,
+			}
+		}
+	}
+
+	m.expanded[n.Path] = !m.expanded[n.Path]
+	rows = m.flattenTree()
+	if m.treeIdx >= len(rows) {
+		m.treeIdx = len(rows) - 1
+	}
+	if m.treeIdx < 0 {
+		m.treeIdx = 0
+	}
+	return nil
 }
 
 func (m MainPane) flattenTree() []treeRow {
@@ -69,7 +122,9 @@ func (m MainPane) flattenTree() []treeRow {
 }
 
 func (m MainPane) renderTreePane(w, h int) []string {
-	lines := []string{m.renderCrumb(w), padBg(w)}
+	// The path now rides on the "[3] Files" label row (renderPanelLabel); keep
+	// one blank line so the tree doesn't butt against the header.
+	lines := []string{padBg(w)}
 
 	if m.tree == nil && m.active != nil {
 		hint := "  loading files…"
@@ -102,56 +157,6 @@ func (m MainPane) renderTreePane(w, h int) []string {
 		lines = append(lines, padBg(w))
 	}
 	return lines
-}
-
-func (m MainPane) renderCrumb(w int) string {
-	bg := lipgloss.NewStyle().Background(ColorBg)
-
-	const lead = " "
-	const rootPrefix = "~/"
-	const sep = " · "
-
-	plainName := m.active.Name
-	plainPath := ""
-	if m.tree != nil {
-		plainPath = m.tree.Path
-	}
-
-	// Budget the plain text to fit `w` cells. Trim path first, then name.
-	avail := w - len(lead) - len(rootPrefix)
-	if avail < 1 {
-		return bg.Render(strings.Repeat(" ", w))
-	}
-	if plainPath != "" {
-		if budget := avail - lipgloss.Width(plainName) - len(sep); budget > 0 {
-			plainPath = truncateName(plainPath, budget)
-		} else {
-			plainPath = ""
-		}
-	}
-	if lipgloss.Width(plainName)+len(sep)+lipgloss.Width(plainPath) > avail {
-		nameBudget := avail - len(sep) - lipgloss.Width(plainPath)
-		if nameBudget < 1 {
-			nameBudget = avail
-			plainPath = ""
-		}
-		plainName = truncateName(plainName, nameBudget)
-	}
-
-	root := lipgloss.NewStyle().Foreground(ColorFgDim).Background(ColorBg).Render(rootPrefix)
-	name := lipgloss.NewStyle().Foreground(ColorFg).Background(ColorBg).Render(plainName)
-	rest := ""
-	if plainPath != "" {
-		rest = lipgloss.NewStyle().
-			Foreground(ColorFgFaint).
-			Background(ColorBg).
-			Render(sep + plainPath)
-	}
-	row := lead + root + name + rest
-	if pad := w - lipgloss.Width(row); pad > 0 {
-		row += bg.Render(strings.Repeat(" ", pad))
-	}
-	return row
 }
 
 func (m MainPane) renderTreeRow(r treeRow, w int, selected bool) string {
@@ -213,7 +218,10 @@ func (m MainPane) renderPreviewPane(w, h int) []string {
 	}
 
 	bg := lipgloss.NewStyle().Background(ColorBg)
-	var lines []string
+
+	// Leading blank so the "preview …" line sits level with the first tree row
+	// (the tree pane also opens with one blank line).
+	lines := []string{padBg(w)}
 
 	if sel == nil {
 		lines = append(lines, " "+lipgloss.NewStyle().
@@ -247,8 +255,7 @@ func (m MainPane) renderPreviewPane(w, h int) []string {
 		}
 		// SQLite viewer hint
 		if !sel.IsDir && m.active != nil {
-			lname := strings.ToLower(sel.Name)
-			if strings.HasSuffix(lname, ".db") || strings.HasSuffix(lname, ".sqlite") || strings.HasSuffix(lname, ".sqlite3") {
+			if isDatabaseFile(sel.Name) {
 				lines = append(lines, padBg(w))
 				lines = append(lines, " "+lipgloss.NewStyle().
 					Foreground(ColorAccent).
@@ -295,8 +302,7 @@ func previewContent(n *device.FileNode) []string {
 	if n.IsDir {
 		return []string{fmt.Sprintf("(directory — %d entries)", len(n.Children))}
 	}
-	lname := strings.ToLower(n.Name)
-	if strings.HasSuffix(lname, ".db") || strings.HasSuffix(lname, ".sqlite") || strings.HasSuffix(lname, ".sqlite3") {
+	if isDatabaseFile(n.Name) {
 		return []string{
 			"SQLite database",
 			formatSize(n.Size),

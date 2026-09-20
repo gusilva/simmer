@@ -35,7 +35,8 @@ func (m model) View() tea.View {
 		Help:   footerHelp,
 	})
 
-	bodyH := max(m.height-lipgloss.Height(topBar)-lipgloss.Height(footer), 0)
+	bodyTop := lipgloss.Height(topBar)
+	bodyH := max(m.height-bodyTop-lipgloss.Height(footer), 0)
 
 	var body string
 	if m.loading && m.sidebar.SelectedDevice() == nil {
@@ -43,6 +44,7 @@ func (m model) View() tea.View {
 			Foreground(ui.ColorFgFaint).
 			Background(ui.ColorBg).
 			Render("fetching devices…")
+		*m.layout = appLayout{}
 	} else {
 		sidebar := lipgloss.NewStyle().
 			Padding(1, 1, 0, 1).
@@ -53,6 +55,11 @@ func (m model) View() tea.View {
 			Background(ui.ColorBg).
 			Render(m.mainPane.View())
 		body = lipgloss.JoinHorizontal(lipgloss.Top, sidebar, mainPane)
+
+		*m.layout = appLayout{
+			sidebar:  rect{x: 0, y: bodyTop, w: lipgloss.Width(sidebar), h: lipgloss.Height(sidebar)},
+			mainPane: rect{x: lipgloss.Width(sidebar), y: bodyTop, w: lipgloss.Width(mainPane), h: lipgloss.Height(mainPane)},
+		}
 	}
 
 	body = lipgloss.NewStyle().
@@ -65,11 +72,13 @@ func (m model) View() tea.View {
 
 	// Primary overlays (db viewer, create/delete dialogs). Rendered before help
 	// so the help panel always sits on top.
-	if m.platformPicker != nil || m.createIOSModal != nil || m.createAndModal != nil || m.deleteAlert != nil || m.deleteAppAlert != nil || m.installAppModal != nil || m.sqliteModal != nil || m.dbViewerModal != nil {
+	if m.actionMenu != nil || m.platformPicker != nil || m.createIOSModal != nil || m.createAndModal != nil || m.deleteAlert != nil || m.deleteAppAlert != nil || m.closeAppAlert != nil || m.installAppModal != nil || m.sqliteModal != nil || m.dbViewerModal != nil {
 		var overlayStr string
 		switch {
 		case m.dbViewerModal != nil:
 			overlayStr = m.dbViewerModal.View()
+		case m.actionMenu != nil:
+			overlayStr = m.actionMenu.View()
 		case m.platformPicker != nil:
 			overlayStr = m.platformPicker.View()
 		case m.createIOSModal != nil:
@@ -82,6 +91,8 @@ func (m model) View() tea.View {
 			overlayStr = m.installAppModal.View()
 		case m.deleteAppAlert != nil:
 			overlayStr = m.deleteAppAlert.View()
+		case m.closeAppAlert != nil:
+			overlayStr = m.closeAppAlert.View()
 		default:
 			overlayStr = m.deleteAlert.View()
 		}
@@ -89,6 +100,7 @@ func (m model) View() tea.View {
 		mH := lipgloss.Height(overlayStr)
 		x := max((m.width-mW)/2, 0)
 		y := max((m.height-mH)/2, 0)
+		m.layout.overlay = rect{x: x, y: y, w: mW, h: mH}
 		bg := lipgloss.NewLayer(baseStr)
 		fg := lipgloss.NewLayer(overlayStr).X(x).Y(y).Z(1)
 		if m.dbViewerModal != nil {
@@ -97,6 +109,17 @@ func (m model) View() tea.View {
 		} else {
 			baseStr = lipgloss.NewCompositor(bg, fg).Render()
 		}
+	}
+
+	// Device-info sheet: full-height layer pinned to the right edge. Nothing
+	// beneath reflows.
+	if m.infoOverlay != nil {
+		overlayStr := m.infoOverlay.View()
+		oW := lipgloss.Width(overlayStr)
+		x := max(m.width-oW, 0)
+		bg := lipgloss.NewLayer(baseStr)
+		fg := lipgloss.NewLayer(overlayStr).X(x).Y(0).Z(1)
+		baseStr = lipgloss.NewCompositor(bg, fg).Render()
 	}
 
 	// Help overlay is always the topmost layer so it appears over the db viewer.

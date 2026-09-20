@@ -54,16 +54,6 @@ func TestMainPane_SetInfo(t *testing.T) {
 	}
 }
 
-func TestMainPane_SetInfo_ClampsIdx(t *testing.T) {
-	m := newTestPane()
-	m.infoIdx = 10
-	info := device.DeviceInfo{Fields: []device.InfoField{{Key: "k", Value: "v"}}}
-	m.SetInfo(info)
-	if m.infoIdx != 0 {
-		t.Errorf("expected infoIdx clamped to 0, got %d", m.infoIdx)
-	}
-}
-
 func TestMainPane_SetFocused(t *testing.T) {
 	m := newTestPane()
 	m.SetFocused(true)
@@ -82,19 +72,17 @@ func TestMainPane_LoggingBundle(t *testing.T) {
 	}
 }
 
-func TestMainPane_Update_TabInfo_Navigation(t *testing.T) {
+func TestMainPane_Update_DeviceInfoKey_EmitsShowMsg(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Name: "iPhone", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
-	m.SetInfo(device.DeviceInfo{Fields: []device.InfoField{{Key: "k", Value: "v"}, {Key: "k2", Value: "v2"}}})
 
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'j'})
-	if m.infoIdx != 1 {
-		t.Errorf("expected infoIdx 1, got %d", m.infoIdx)
+	_, cmd := m.Update(tea.KeyPressMsg{Text: "i"})
+	if cmd == nil {
+		t.Fatal("expected a command from 'i' press")
 	}
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'k'})
-	if m.infoIdx != 0 {
-		t.Errorf("expected infoIdx 0, got %d", m.infoIdx)
+	if _, ok := cmd().(ShowDeviceInfoMsg); !ok {
+		t.Errorf("expected ShowDeviceInfoMsg, got %T", cmd())
 	}
 }
 
@@ -102,7 +90,7 @@ func TestMainPane_Update_TabApps_Navigation(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Name: "iPhone", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
-	m.tab = TabApps
+	m.panel = panelApps
 	apps := []device.App{
 		{BundleID: "com.a", Name: "A"},
 		{BundleID: "com.b", Name: "B"},
@@ -123,7 +111,7 @@ func TestMainPane_Update_TabApps_FilterEsc(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
-	m.tab = TabApps
+	m.panel = panelApps
 	m.appsFilter = "test"
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	if m.appsFilter != "" {
@@ -135,7 +123,7 @@ func TestMainPane_Update_TabFiles_HomeEnd(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
-	m.tab = TabFiles
+	m.panel = panelFiles
 	root := &device.FileNode{
 		Path:  "/",
 		Name:  "/",
@@ -157,7 +145,7 @@ func TestMainPane_Update_TabFiles_HomeEnd(t *testing.T) {
 	}
 }
 
-func TestMainPane_View_WithDevice_AllTabs(t *testing.T) {
+func TestMainPane_View_WithDevice_BothPanels(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{
 		ID: "1", Name: "iPhone", Platform: device.PlatformIOS, Status: device.StatusRunning,
@@ -168,11 +156,11 @@ func TestMainPane_View_WithDevice_AllTabs(t *testing.T) {
 	root := &device.FileNode{Path: "/", Name: "/", IsDir: true}
 	m.SetTree(root)
 
-	for _, tab := range []MainTab{TabInfo, TabApps, TabFiles} {
-		m.tab = tab
+	for _, p := range []mainPanel{panelFiles, panelApps} {
+		m.panel = p
 		got := m.View()
 		if got == "" {
-			t.Errorf("tab %d: expected non-empty view", tab)
+			t.Errorf("panel %d: expected non-empty view", p)
 		}
 	}
 }
@@ -251,23 +239,23 @@ func TestMainPane(t *testing.T) {
 	if !m.HasDevice() {
 		t.Error("expected HasDevice() to be true")
 	}
-	if m.tab != TabInfo {
-		t.Errorf("expected default tab TabInfo, got %v", m.tab)
+	if m.panel != panelApps {
+		t.Errorf("expected default panel panelApps, got %v", m.panel)
 	}
 
-	// 3. Tab Switching
-	m, _ = m.Update(tea.KeyPressMsg{Text: "2"})
-	if m.tab != TabApps {
-		t.Errorf("expected TabApps, got %v", m.tab)
-	}
-
+	// 3. Panel toggling
 	m, _ = m.Update(tea.KeyPressMsg{Text: "3"})
-	if m.tab != TabFiles {
-		t.Errorf("expected TabFiles, got %v", m.tab)
+	if m.panel != panelFiles {
+		t.Errorf("expected panelFiles, got %v", m.panel)
+	}
+
+	m, _ = m.Update(tea.KeyPressMsg{Text: "2"})
+	if m.panel != panelApps {
+		t.Errorf("expected panelApps, got %v", m.panel)
 	}
 
 	// 4. App Filtering
-	m.tab = TabApps
+	m.panel = panelApps
 	apps := []device.App{
 		{BundleID: "com.apple.Maps", ShortVersion: "3.0"},
 		{BundleID: "com.google.Maps", ShortVersion: "6.0"},
@@ -293,7 +281,7 @@ func TestMainPane(t *testing.T) {
 	}
 
 	// 5. File Tree
-	m.tab = TabFiles
+	m.panel = panelFiles
 	root := &device.FileNode{
 		Path:  "/",
 		Name:  "/",
@@ -317,7 +305,7 @@ func TestMainPane(t *testing.T) {
 	}
 
 	// 6. App logging toggle
-	m.tab = TabApps
+	m.panel = panelApps
 	m.SetApps([]device.App{{BundleID: "com.apple.Maps", Name: "Maps"}})
 	_, cmd := m.Update(tea.KeyPressMsg{Text: "l"})
 	if cmd == nil {

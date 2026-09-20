@@ -22,6 +22,10 @@ type MockManager struct {
 	TerminateAppError error
 	TerminateCalled   bool
 	TerminateBundleID string
+
+	LaunchAppError error
+	LaunchCalled   bool
+	LaunchBundleID string
 }
 
 // NewMockManager creates a mock manager for the given platform.
@@ -62,6 +66,12 @@ func (m *MockManager) TerminateApp(ctx context.Context, deviceID, bundleID strin
 	return m.TerminateAppError
 }
 
+func (m *MockManager) LaunchApp(ctx context.Context, deviceID, bundleID string) error {
+	m.LaunchCalled = true
+	m.LaunchBundleID = bundleID
+	return m.LaunchAppError
+}
+
 // Ensure MockManager implements all desired interfaces
 var (
 	_ Manager       = (*MockManager)(nil)
@@ -69,4 +79,5 @@ var (
 	_ Booter        = (*MockManager)(nil)
 	_ Shutdowner    = (*MockManager)(nil)
 	_ AppTerminator = (*MockManager)(nil)
+	_ AppLauncher   = (*MockManager)(nil)
 )

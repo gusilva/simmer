@@ -24,13 +24,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+
 		// Body wrapper applies 1 line of top padding around each panel; pass
 		// the remaining height so panels fill exactly.
 		bodyH := m.bodyHeight() - 1
+
 		m.sidebar.SetSize(ui.DefaultSidebarWidth, bodyH)
+
 		// Sidebar wrapper: pad 1 left + 1 right around DefaultSidebarWidth.
 		// MainPane wrapper: pad 0 left + 1 right around its width.
 		mainW := max(m.width-(ui.DefaultSidebarWidth+2)-1, 0)
+
 		m.mainPane.SetSize(mainW, bodyH)
 		if m.sqliteModal != nil {
 			m.sqliteModal.SetSize(m.width, m.height)
@@ -70,7 +74,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.dbViewerModal = nil
 				return m, nil
 			}
-			if m.platformPicker == nil && m.createIOSModal == nil && m.createAndModal == nil && m.deleteAlert == nil && m.deleteAppAlert == nil && m.installAppModal == nil && m.sqliteModal == nil {
+			if m.actionMenu == nil && m.platformPicker == nil && m.createIOSModal == nil && m.createAndModal == nil && m.deleteAlert == nil && m.deleteAppAlert == nil && m.installAppModal == nil && m.sqliteModal == nil {
 				modal := dbviewer.New(func() tea.Msg { return ui.CancelOverlayMsg{} })
 				modal.SetSize(m.width, m.height)
 				m.dbViewerModal = &modal
@@ -79,6 +83,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Overlay intercepts all other keys when active.
+		if m.actionMenu != nil {
+			updated, cmd := m.actionMenu.Update(msg)
+			m.actionMenu = &updated
+			return m, cmd
+		}
 		if m.platformPicker != nil {
 			updated, cmd := m.platformPicker.Update(msg)
 			m.platformPicker = &updated
@@ -104,6 +113,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.deleteAppAlert = &updated
 			return m, cmd
 		}
+		if m.closeAppAlert != nil {
+			updated, cmd := m.closeAppAlert.Update(msg)
+			m.closeAppAlert = &updated
+			return m, cmd
+		}
 		if m.installAppModal != nil {
 			updated, cmd := m.installAppModal.Update(msg)
 			m.installAppModal = &updated
@@ -119,6 +133,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.dbViewerModal = &updated
 			return m, cmd
 		}
+		// Device-info sheet is modal-ish: it owns the keyboard while open.
+		if m.infoOverlay != nil {
+			updated, cmd := m.infoOverlay.Update(msg)
+			m.infoOverlay = &updated
+			return m, cmd
+		}
 
 		// Global keys (no overlay active).
 		if msg.String() == "q" {
@@ -128,11 +148,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.focus == focusMain {
-			if msg.String() == "esc" {
-				m.focus = focusSidebar
-				m.applyFocus()
-				return m, nil
-			}
+			// esc unwinds inside the main pane; it hands focus back to the
+			// sidebar via ui.ReleaseFocusMsg only when nothing is left to undo.
 			var cmd tea.Cmd
 			m.mainPane, cmd = m.mainPane.Update(msg)
 			return m, cmd
@@ -141,20 +158,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// focus == focusSidebar
 		switch msg.String() {
 		case "r":
-			m.loading = true
-			m.errs = nil
-			return m, m.fetchDevicesCmd()
+			return m, func() tea.Msg { return ui.RefreshDevicesMsg{} }
 		case "b":
 			sel := m.sidebar.SelectedDevice()
 			if sel == nil || sel.Status == device.StatusRunning {
 				return m, nil
 			}
-			m.booting = true
-			return m, tea.Batch(
-				m.bootDeviceCmd(*sel),
-				m.setStatus("Booting "+sel.Name+"…", ui.StatusInfo),
-				tea.Cmd(m.installSpinner.Tick),
-			)
+			dev := *sel
+			return m, func() tea.Msg { return ui.StartBootMsg{Device: dev} }
 		case "s":
 			sel := m.sidebar.SelectedDevice()
 			if sel == nil || sel.Status != device.StatusRunning || sel.Kind == device.KindPhysical {
@@ -166,17 +177,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if sel == nil || sel.Status != device.StatusRunning {
 				return m, nil
 			}
-
-			// Switching the active device stops any in-flight app logging.
-			m.teardownAppLogging()
-
-			m.focus = focusMain
-			m.applyFocus()
-
 			dev := *sel
-			m.mainPane.SetDevice(&dev, nil)
-
-			return m, tea.Batch(m.loadInfoCmd(dev), m.loadAppsCmd(dev))
+			return m, func() tea.Msg { return ui.LoadDeviceMsg{Device: dev} }
 		}
 		var cmd tea.Cmd
 		m.sidebar, cmd = m.sidebar.Update(msg)
@@ -316,6 +318,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.mainPane.SetInfo(msg.info)
+		if m.infoOverlay != nil {
+			ov := ui.NewInfoOverlay(msg.device, msg.info, m.width, m.height)
+			m.infoOverlay = &ov
+		}
 
 		return m, nil
 
@@ -439,6 +445,43 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.setStatus("app logging ended", ui.StatusInfo)
 
+	case ui.RefreshDevicesMsg:
+		m.loading = true
+		m.errs = nil
+		return m, m.fetchDevicesCmd()
+
+	case ui.LoadDeviceMsg:
+		// Switching the active device stops any in-flight app logging.
+		m.teardownAppLogging()
+
+		m.focus = focusMain
+		m.applyFocus()
+		m.infoOverlay = nil
+
+		dev := msg.Device
+		m.mainPane.SetDevice(&dev, nil)
+
+		return m, tea.Batch(m.loadInfoCmd(dev), m.loadAppsCmd(dev))
+
+	case ui.StartBootMsg:
+		m.booting = true
+		return m, tea.Batch(
+			m.bootDeviceCmd(msg.Device),
+			m.setStatus("Booting "+msg.Device.Name+"…", ui.StatusInfo),
+			tea.Cmd(m.installSpinner.Tick),
+		)
+
+	case ui.PinAppMsg:
+		m.mainPane.TogglePinnedApp(msg.App)
+		return m, nil
+
+	case ui.ActivateTreeRowMsg:
+		return m, m.mainPane.ActivateTreeRow()
+
+	case ui.ActionMenuSelectedMsg:
+		m.actionMenu = nil
+		return m, msg.Cmd
+
 	case ui.ShowPlatformPickerMsg:
 		p := ui.NewPlatformPickerModal()
 		m.platformPicker = &p
@@ -530,6 +573,38 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.deleteAppAlert = &alert
 		return m, nil
 
+	case ui.LaunchAppMsg:
+		if msg.Device.Status != device.StatusRunning {
+			return m, m.setStatus("Device not running", ui.StatusErr)
+		}
+		return m, m.launchAppCmd(msg.Device, msg.App)
+
+	case launchAppResultMsg:
+		if msg.err != nil {
+			m.errs = append(m.errs, msg.err)
+			return m, m.setStatus("launch failed: "+errPreview(msg.err), ui.StatusErr)
+		}
+		return m, m.setStatus("Launched "+msg.appLabel, ui.StatusOk)
+
+	case ui.ShowCloseAppMsg:
+		if msg.Device.Status != device.StatusRunning {
+			return m, m.setStatus("Device not running", ui.StatusErr)
+		}
+		alert := ui.NewCloseAppAlert(msg.Device, msg.App)
+		m.closeAppAlert = &alert
+		return m, nil
+
+	case ui.ConfirmCloseAppMsg:
+		m.closeAppAlert = nil
+		return m, m.closeAppCmd(msg.Device, msg.App)
+
+	case closeAppResultMsg:
+		if msg.err != nil {
+			m.errs = append(m.errs, msg.err)
+			return m, m.setStatus("close failed: "+errPreview(msg.err), ui.StatusErr)
+		}
+		return m, m.setStatus("Closed "+msg.appLabel, ui.StatusOk)
+
 	case ui.RequestRebuildMsg:
 		dev, app := msg.Device, msg.App
 		if dev.Kind != device.KindVirtual || !app.IsLocal() {
@@ -595,11 +670,75 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, nil
 
-	case tea.MouseClickMsg, tea.MouseWheelMsg:
+	case tea.MouseWheelMsg:
 		if m.dbViewerModal != nil {
 			updated, cmd := m.dbViewerModal.Update(msg)
 			m.dbViewerModal = &updated
 			return m, cmd
+		}
+		return m, nil
+
+	case tea.MouseClickMsg:
+		if msg.Button != tea.MouseLeft {
+			return m, nil
+		}
+
+		// dbviewer already handles its own mouse clicks.
+		if m.dbViewerModal != nil {
+			updated, cmd := m.dbViewerModal.Update(msg)
+			m.dbViewerModal = &updated
+			return m, cmd
+		}
+
+		// Complex modals swallow all clicks — same overlays that intercept
+		// every key in the tea.KeyPressMsg case above.
+		if m.actionMenu != nil || m.platformPicker != nil || m.createIOSModal != nil || m.createAndModal != nil ||
+			m.installAppModal != nil || m.sqliteModal != nil ||
+			m.infoOverlay != nil || m.helpOverlay != nil {
+			return m, nil
+		}
+
+		// Simple alert modals: click outside dismisses, click inside is
+		// swallowed
+		if m.deleteAlert != nil || m.deleteAppAlert != nil || m.closeAppAlert != nil {
+			if !m.layout.overlay.contains(msg.X, msg.Y) {
+				return m, func() tea.Msg { return ui.CancelOverlayMsg{} }
+			}
+			return m, nil
+		}
+
+		// No overlay open: hit-test the sidebar / main-pane split and, within
+		// whichever was hit, the panel/row under the cursor. A second click on
+		// an already-selected row within the double-click threshold opens that
+		// row's action menu instead of just reselecting it.
+		if m.layout.sidebar.contains(msg.X, msg.Y) {
+			m.focus = focusSidebar
+			m.applyFocus()
+			preID := deviceIdentity(m.sidebar.SelectedDevice())
+			m.sidebar.HandleClick(msg.Y - m.layout.sidebar.y - 1)
+			sel := m.sidebar.SelectedDevice()
+			if m.registerClick(deviceIdentity(sel), preID) && sel != nil {
+				m.actionMenu = m.buildDeviceActionMenu(*sel)
+			}
+			return m, nil
+		}
+		if m.layout.mainPane.contains(msg.X, msg.Y) {
+			m.focus = focusMain
+			m.applyFocus()
+			preID := m.mainPaneSelectionID()
+			m.mainPane.HandleClick(msg.X-m.layout.mainPane.x, msg.Y-m.layout.mainPane.y-1)
+			id := m.mainPaneSelectionID()
+			if m.registerClick(id, preID) && m.mainPane.ActiveDevice() != nil {
+				dev := *m.mainPane.ActiveDevice()
+				if m.mainPane.IsFilesPanel() {
+					if n := m.mainPane.SelectedTreeNode(); n != nil {
+						m.actionMenu = m.buildFileActionMenu(dev, *n)
+					}
+				} else if a := m.mainPane.SelectedApp(); a != nil {
+					m.actionMenu = m.buildAppActionMenu(dev, *a)
+				}
+			}
+			return m, nil
 		}
 		return m, nil
 
@@ -610,15 +749,39 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ui.CancelOverlayMsg:
+		m.actionMenu = nil
 		m.platformPicker = nil
 		m.createIOSModal = nil
 		m.createAndModal = nil
 		m.deleteAlert = nil
 		m.deleteAppAlert = nil
+		m.closeAppAlert = nil
 		m.installAppModal = nil
 		m.sqliteModal = nil
 		m.dbViewerModal = nil
+		if m.infoOverlay != nil {
+			m.infoOverlay = nil
+			m.mainPane.SetInfoOpen(false)
+		}
 		return m, nil
+
+	case ui.ShowDeviceInfoMsg:
+		ov := ui.NewInfoOverlay(msg.Device, m.mainPane.DeviceInfo(), m.width, m.height)
+		m.infoOverlay = &ov
+		m.mainPane.SetInfoOpen(true)
+		return m, nil
+
+	case ui.ReleaseFocusMsg:
+		m.focus = focusSidebar
+		m.applyFocus()
+		return m, nil
+
+	case ui.RevealedMsg:
+		if msg.Err != nil {
+			m.errs = append(m.errs, msg.Err)
+			return m, m.setStatus("reveal failed: "+errPreview(msg.Err), ui.StatusErr)
+		}
+		return m, m.setStatus("revealed in Finder", ui.StatusOk)
 
 	case ui.ConfirmCreateSimulatorMsg:
 		m.createIOSModal = nil

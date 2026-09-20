@@ -107,6 +107,40 @@ type AppTerminator interface {
 	TerminateApp(ctx context.Context, deviceID, bundleID string) error
 }
 
+// AppLauncher is an optional interface a Manager may implement to start an
+// already-installed application on a device.
+type AppLauncher interface {
+	Platform() Platform
+	LaunchApp(ctx context.Context, deviceID, bundleID string) error
+}
+
+// LaunchApp starts an app, routing to the Manager that implements AppLauncher
+// for the device's Platform, preferring a KindedManager match.
+func (c *Coordinator) LaunchApp(ctx context.Context, dev Device, bundleID string) error {
+	for _, m := range c.Managers {
+		l, ok := m.(AppLauncher)
+		if !ok || l.Platform() != dev.Platform {
+			continue
+		}
+		k, isKinded := m.(KindedManager)
+		if !isKinded || k.Kind() != dev.Kind {
+			continue
+		}
+		return l.LaunchApp(ctx, dev.ID, bundleID)
+	}
+	for _, m := range c.Managers {
+		l, ok := m.(AppLauncher)
+		if !ok || l.Platform() != dev.Platform {
+			continue
+		}
+		if _, isKinded := m.(KindedManager); isKinded {
+			continue
+		}
+		return l.LaunchApp(ctx, dev.ID, bundleID)
+	}
+	return fmt.Errorf("no app launcher registered for platform %s", dev.Platform)
+}
+
 // TerminateApp stops a running app, routing to the Manager that implements
 // AppTerminator for the device's Platform, preferring a KindedManager match.
 // Callers that treat termination as best-effort (the app may simply not be

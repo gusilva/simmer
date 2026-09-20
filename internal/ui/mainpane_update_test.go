@@ -15,7 +15,7 @@ func TestMainPaneUpdate_FilterMode_Backspace(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
-	m.tab = TabApps
+	m.panel = panelApps
 	m.SetApps([]device.App{{BundleID: "com.a", Name: "A"}})
 	m.appsFiltering = true
 	m.appsFilter = "ab"
@@ -30,7 +30,7 @@ func TestMainPaneUpdate_FilterMode_BackspaceEmpty(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
-	m.tab = TabApps
+	m.panel = panelApps
 	m.appsFiltering = true
 	m.appsFilter = ""
 	// Backspace on empty filter should not panic or change anything.
@@ -44,7 +44,7 @@ func TestMainPaneUpdate_FilterMode_Enter_ExitsFilter(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
-	m.tab = TabApps
+	m.panel = panelApps
 	m.appsFiltering = true
 
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -57,7 +57,7 @@ func TestMainPaneUpdate_FilterMode_Esc_ExitsFilter(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
-	m.tab = TabApps
+	m.panel = panelApps
 	m.appsFiltering = true
 
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
@@ -70,7 +70,7 @@ func TestMainPaneUpdate_FilterMode_Text_Appends(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
-	m.tab = TabApps
+	m.panel = panelApps
 	m.appsFiltering = true
 	m.appsFilter = "x"
 
@@ -86,7 +86,7 @@ func TestMainPaneUpdate_TabApps_HomeEnd(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
-	m.tab = TabApps
+	m.panel = panelApps
 	m.SetApps([]device.App{
 		{BundleID: "com.a", Name: "A"},
 		{BundleID: "com.b", Name: "B"},
@@ -107,12 +107,12 @@ func TestMainPaneUpdate_TabApps_InstallKey(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
-	m.tab = TabApps
+	m.panel = panelApps
 	m.SetApps([]device.App{{BundleID: "com.a", Name: "A"}})
 
-	_, cmd := m.Update(tea.KeyPressMsg{Text: "i"})
+	_, cmd := m.Update(tea.KeyPressMsg{Text: "a"})
 	if cmd == nil {
-		t.Fatal("expected command from i key")
+		t.Fatal("expected command from a key")
 	}
 	msg := cmd()
 	if _, ok := msg.(ShowInstallAppMsg); !ok {
@@ -122,9 +122,9 @@ func TestMainPaneUpdate_TabApps_InstallKey(t *testing.T) {
 
 func TestMainPaneUpdate_TabApps_InstallKey_NoDevice(t *testing.T) {
 	m := newTestPane()
-	m.tab = TabApps
+	m.panel = panelApps
 	// No device set.
-	_, cmd := m.Update(tea.KeyPressMsg{Text: "i"})
+	_, cmd := m.Update(tea.KeyPressMsg{Text: "a"})
 	if cmd != nil {
 		t.Error("expected no command when no device")
 	}
@@ -134,7 +134,7 @@ func TestMainPaneUpdate_TabApps_RebuildKey(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning, Kind: device.KindVirtual}
 	m.SetDevice(dev, nil)
-	m.tab = TabApps
+	m.panel = panelApps
 	m.SetApps([]device.App{{BundleID: "com.a", Name: "A", Type: "User"}})
 	m.appsIdx = 0
 
@@ -154,7 +154,7 @@ func TestMainPaneUpdate_TabApps_RebuildKey(t *testing.T) {
 
 func TestMainPaneUpdate_TabApps_RebuildKey_NoDevice(t *testing.T) {
 	m := newTestPane()
-	m.tab = TabApps
+	m.panel = panelApps
 	_, cmd := m.Update(tea.KeyPressMsg{Text: "r"})
 	if cmd != nil {
 		t.Error("expected no command when no device")
@@ -165,7 +165,7 @@ func TestMainPaneUpdate_TabApps_RebuildKey_EmptyList(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
-	m.tab = TabApps
+	m.panel = panelApps
 	m.SetApps(nil)
 
 	_, cmd := m.Update(tea.KeyPressMsg{Text: "r"})
@@ -178,7 +178,7 @@ func TestMainPaneUpdate_TabApps_DeleteKey_UserApp(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
-	m.tab = TabApps
+	m.panel = panelApps
 	m.SetApps([]device.App{{BundleID: "com.a", Name: "A", Type: "User"}})
 	m.appsIdx = 0
 
@@ -196,7 +196,7 @@ func TestMainPaneUpdate_TabApps_DeleteKey_SystemApp_NoOp(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
-	m.tab = TabApps
+	m.panel = panelApps
 	m.SetApps([]device.App{{BundleID: "com.apple.Foo", Name: "Foo", Type: "System"}})
 	m.appsIdx = 0
 
@@ -210,10 +210,98 @@ func TestMainPaneUpdate_TabApps_DeleteKey_EmptyList(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
-	m.tab = TabApps
+	m.panel = panelApps
 	m.SetApps(nil)
 
 	_, cmd := m.Update(tea.KeyPressMsg{Text: "d"})
+	if cmd != nil {
+		t.Error("expected no command for empty apps list")
+	}
+}
+
+func TestMainPaneUpdate_TabApps_EnterKey_LaunchesApp(t *testing.T) {
+	m := newTestPane()
+	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
+	m.SetDevice(dev, nil)
+	m.panel = panelApps
+	m.SetApps([]device.App{{BundleID: "com.a", Name: "A"}})
+	m.appsIdx = 0
+
+	_, cmd := m.Update(tea.KeyPressMsg{Text: "enter"})
+	if cmd == nil {
+		t.Fatal("expected command from enter key")
+	}
+	msg := cmd()
+	req, ok := msg.(LaunchAppMsg)
+	if !ok {
+		t.Fatalf("expected LaunchAppMsg, got %T", msg)
+	}
+	if req.App.BundleID != "com.a" {
+		t.Errorf("expected app com.a, got %s", req.App.BundleID)
+	}
+}
+
+func TestMainPaneUpdate_TabApps_EnterKey_NoDevice(t *testing.T) {
+	m := newTestPane()
+	m.panel = panelApps
+	_, cmd := m.Update(tea.KeyPressMsg{Text: "enter"})
+	if cmd != nil {
+		t.Error("expected no command when no device")
+	}
+}
+
+func TestMainPaneUpdate_TabApps_EnterKey_EmptyList(t *testing.T) {
+	m := newTestPane()
+	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
+	m.SetDevice(dev, nil)
+	m.panel = panelApps
+	m.SetApps(nil)
+
+	_, cmd := m.Update(tea.KeyPressMsg{Text: "enter"})
+	if cmd != nil {
+		t.Error("expected no command for empty apps list")
+	}
+}
+
+func TestMainPaneUpdate_TabApps_CKey_ShowsCloseAlert(t *testing.T) {
+	m := newTestPane()
+	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
+	m.SetDevice(dev, nil)
+	m.panel = panelApps
+	m.SetApps([]device.App{{BundleID: "com.a", Name: "A"}})
+	m.appsIdx = 0
+
+	_, cmd := m.Update(tea.KeyPressMsg{Text: "c"})
+	if cmd == nil {
+		t.Fatal("expected command from c key")
+	}
+	msg := cmd()
+	req, ok := msg.(ShowCloseAppMsg)
+	if !ok {
+		t.Fatalf("expected ShowCloseAppMsg, got %T", msg)
+	}
+	if req.App.BundleID != "com.a" {
+		t.Errorf("expected app com.a, got %s", req.App.BundleID)
+	}
+}
+
+func TestMainPaneUpdate_TabApps_CKey_NoDevice(t *testing.T) {
+	m := newTestPane()
+	m.panel = panelApps
+	_, cmd := m.Update(tea.KeyPressMsg{Text: "c"})
+	if cmd != nil {
+		t.Error("expected no command when no device")
+	}
+}
+
+func TestMainPaneUpdate_TabApps_CKey_EmptyList(t *testing.T) {
+	m := newTestPane()
+	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
+	m.SetDevice(dev, nil)
+	m.panel = panelApps
+	m.SetApps(nil)
+
+	_, cmd := m.Update(tea.KeyPressMsg{Text: "c"})
 	if cmd != nil {
 		t.Error("expected no command for empty apps list")
 	}
@@ -223,7 +311,7 @@ func TestMainPaneUpdate_TabApps_Space_PinsApp(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
-	m.tab = TabApps
+	m.panel = panelApps
 	m.SetApps([]device.App{{BundleID: "com.a", Name: "A"}})
 	m.appsIdx = 0
 
@@ -237,7 +325,7 @@ func TestMainPaneUpdate_TabApps_Space_UnpinsApp(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
-	m.tab = TabApps
+	m.panel = panelApps
 	app := device.App{BundleID: "com.a", Name: "A"}
 	m.SetApps([]device.App{app})
 	m.appsIdx = 0
@@ -253,7 +341,7 @@ func TestMainPaneUpdate_TabApps_L_StartsLogging(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
-	m.tab = TabApps
+	m.panel = panelApps
 	m.SetApps([]device.App{{BundleID: "com.a", Name: "A"}})
 	m.appsIdx = 0
 
@@ -274,7 +362,7 @@ func TestMainPaneUpdate_TabApps_L_StopsLogging(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
-	m.tab = TabApps
+	m.panel = panelApps
 	m.SetApps([]device.App{{BundleID: "com.a", Name: "A"}})
 	m.appsIdx = 0
 	m.SetLoggingBundle("com.a") // already logging this app
@@ -292,7 +380,7 @@ func TestMainPaneUpdate_TabApps_Space_EmptyList(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
-	m.tab = TabApps
+	m.panel = panelApps
 	m.SetApps(nil)
 
 	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
@@ -305,7 +393,7 @@ func TestMainPaneUpdate_TabApps_Navigation_EmitsAppFocused(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
-	m.tab = TabApps
+	m.panel = panelApps
 	m.SetApps([]device.App{
 		{BundleID: "com.a", Name: "A"},
 		{BundleID: "com.b", Name: "B"},
@@ -321,52 +409,32 @@ func TestMainPaneUpdate_TabApps_Navigation_EmitsAppFocused(t *testing.T) {
 	}
 }
 
-// ── TabInfo ────────────────────────────────────────────────────────────────
+// ── esc unwind chain ─────────────────────────────────────────────────────
 
-func TestMainPaneUpdate_TabInfo_HomeEnd(t *testing.T) {
+func TestMainPaneUpdate_Esc_ClearsFilterThenCollapsesThenReleases(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
-	m.tab = TabInfo
-	m.SetInfo(device.DeviceInfo{Fields: []device.InfoField{
-		{Key: "A", Value: "1"}, {Key: "B", Value: "2"}, {Key: "C", Value: "3"},
-	}})
+	m.panel = panelApps
+	m.appsFilter = "foo"
 
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'G'})
-	if m.infoIdx != 2 {
-		t.Errorf("expected infoIdx 2 after G, got %d", m.infoIdx)
+	// 1st esc clears the filter.
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.appsFilter != "" || m.panel != panelApps {
+		t.Fatalf("expected filter cleared, panel unchanged; got filter=%q panel=%v", m.appsFilter, m.panel)
 	}
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'g'})
-	if m.infoIdx != 0 {
-		t.Errorf("expected infoIdx 0 after g, got %d", m.infoIdx)
+	// 2nd esc collapses Apps back to Files.
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.panel != panelFiles {
+		t.Fatalf("expected panelFiles after collapse, got %v", m.panel)
 	}
-}
-
-func TestMainPaneUpdate_TabInfo_Space_CopiesValue(t *testing.T) {
-	m := newTestPane()
-	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
-	m.SetDevice(dev, nil)
-	m.tab = TabInfo
-	m.SetInfo(device.DeviceInfo{Fields: []device.InfoField{{Key: "ID", Value: "test-uuid"}}})
-	m.infoIdx = 0
-
-	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	// 3rd esc releases focus to the sidebar.
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	if cmd == nil {
-		t.Fatal("expected clipboard command from space on info")
+		t.Fatal("expected ReleaseFocusMsg cmd")
 	}
-}
-
-func TestMainPaneUpdate_TabInfo_Space_OutOfRange(t *testing.T) {
-	m := newTestPane()
-	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
-	m.SetDevice(dev, nil)
-	m.tab = TabInfo
-	m.SetInfo(device.DeviceInfo{Fields: []device.InfoField{{Key: "k", Value: "v"}}})
-	m.infoIdx = 5 // out of range
-
-	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
-	if cmd != nil {
-		t.Error("expected no command when infoIdx out of range")
+	if _, ok := cmd().(ReleaseFocusMsg); !ok {
+		t.Errorf("expected ReleaseFocusMsg, got %T", cmd())
 	}
 }
 
@@ -376,7 +444,7 @@ func TestMainPaneUpdate_TabFiles_Enter_ToggleDir(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
-	m.tab = TabFiles
+	m.panel = panelFiles
 	root := &device.FileNode{Path: "/", Name: "/", IsDir: true,
 		Children: []device.FileNode{
 			{Path: "/sub", Name: "sub", IsDir: true,
@@ -397,7 +465,7 @@ func TestMainPaneUpdate_TabFiles_Enter_NonDB_File_NoOp(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
-	m.tab = TabFiles
+	m.panel = panelFiles
 	root := &device.FileNode{Path: "/", Name: "/", IsDir: true,
 		Children: []device.FileNode{{Path: "/notes.txt", Name: "notes.txt", IsDir: false}},
 	}
@@ -414,7 +482,7 @@ func TestMainPaneUpdate_TabFiles_Enter_DBFile_OpensSQLite(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
-	m.tab = TabFiles
+	m.panel = panelFiles
 	root := &device.FileNode{Path: "/", Name: "/", IsDir: true,
 		Children: []device.FileNode{{Path: "/data.db", Name: "data.db", IsDir: false}},
 	}
@@ -435,7 +503,7 @@ func TestMainPaneUpdate_TabFiles_Enter_SQLiteFile_OpensSQLite(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
-	m.tab = TabFiles
+	m.panel = panelFiles
 	root := &device.FileNode{Path: "/", Name: "/", IsDir: true,
 		Children: []device.FileNode{{Path: "/store.sqlite", Name: "store.sqlite", IsDir: false}},
 	}
@@ -456,7 +524,7 @@ func TestMainPaneUpdate_TabFiles_Enter_OutOfRange(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
-	m.tab = TabFiles
+	m.panel = panelFiles
 	root := &device.FileNode{Path: "/", Name: "/", IsDir: true}
 	m.SetTree(root)
 	m.treeIdx = 99 // out of range
@@ -504,7 +572,7 @@ func TestMainPaneUpdate_Tab2_WithSelectedApp_EmitsFocused(t *testing.T) {
 	dev := &device.Device{ID: "1", Platform: device.PlatformIOS, Status: device.StatusRunning}
 	m.SetDevice(dev, nil)
 	m.SetApps([]device.App{{BundleID: "com.a", Name: "A"}})
-	m.tab = TabInfo // start on Info
+	m.panel = panelFiles
 
 	_, cmd := m.Update(tea.KeyPressMsg{Text: "2"})
 	if cmd == nil {
@@ -533,7 +601,7 @@ func TestRenderAppsFilterBar_FilteringActive(t *testing.T) {
 	m := newTestPane()
 	m.appsFiltering = true
 	m.appsFilter = "map"
-	got := m.renderAppsFilterBar(60)
+	got := m.renderAppsFilterBar()
 	// Active cursor block should appear.
 	if !strings.Contains(got, "map") {
 		t.Error("expected filter text in bar")

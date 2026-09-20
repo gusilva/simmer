@@ -7,6 +7,7 @@ import (
 
 	"simmer/internal/device"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
 
@@ -58,7 +59,7 @@ func TestMainPaneView_FocusedBorderDiffers(t *testing.T) {
 
 func TestMainPaneView_FilesTab_BottomJunction(t *testing.T) {
 	m := newPaneWithDevice()
-	m.tab = TabFiles
+	m.panel = panelFiles
 	root := &device.FileNode{Path: "/", Name: "/", IsDir: true}
 	m.SetTree(root)
 	got := m.View()
@@ -109,26 +110,51 @@ func TestRenderTitleRow_LongID_Truncated(t *testing.T) {
 	}
 }
 
-// ── renderTabContent / renderPlaceholder ─────────────────────────────────
+// ── renderPanelLabel ─────────────────────────────────────────────────────
 
-func TestRenderTabContent_UnknownTab_ShowsPlaceholder(t *testing.T) {
+func TestRenderPanelLabel_Apps(t *testing.T) {
 	m := newPaneWithDevice()
-	// Use an out-of-range tab value to hit the default branch.
-	m.tab = MainTab(99)
-	got := m.renderTabContent(70, 10)
-	if !strings.Contains(got, "not implemented") {
-		t.Errorf("expected placeholder text, got %q", got)
+	got := m.renderPanelLabel(panelApps, 80, 40, false)
+	if !strings.Contains(got, "[2] ") || !strings.Contains(got, "Apps") {
+		t.Errorf("expected '[2] Apps', got %q", got)
 	}
-	if lineCount(got) != 10 {
-		t.Errorf("expected %d lines, got %d", 10, lineCount(got))
+	if lipgloss.Width(got) != 80 {
+		t.Errorf("expected full-width label, got %d", lipgloss.Width(got))
 	}
 }
 
-func TestRenderPlaceholder_FillsHeight(t *testing.T) {
-	m := newTestPane()
-	got := m.renderPlaceholder(60, 8)
-	if lineCount(got) != 8 {
-		t.Errorf("expected 8 lines, got %d", lineCount(got))
+func TestRenderPanelLabel_Files_Plain(t *testing.T) {
+	m := newPaneWithDevice()
+	got := m.renderPanelLabel(panelFiles, 80, 40, false)
+	if !strings.Contains(got, "[3] ") || !strings.Contains(got, "Files") {
+		t.Errorf("expected '[3] Files', got %q", got)
+	}
+}
+
+func TestRenderPanelLabel_Files_ShowsPathOnLabelRow(t *testing.T) {
+	m := newPaneWithDevice()
+	m.SetTree(&device.FileNode{Path: "/var/mobile/Containers/Data/Application/ABC/Documents", Name: "Documents", IsDir: true})
+	got := m.renderPanelLabel(panelFiles, 90, 46, true)
+	if !strings.Contains(got, "Files") {
+		t.Fatalf("expected label, got %q", got)
+	}
+	// tail of the path is kept (left-truncated), separator still present
+	if !strings.Contains(got, "Documents") || !strings.Contains(got, "│") {
+		t.Errorf("expected path tail + separator on the label row, got %q", got)
+	}
+	if lipgloss.Width(got) != 90 {
+		t.Errorf("expected full-width label, got %d", lipgloss.Width(got))
+	}
+}
+
+func TestRenderPanelLabel_Files_WithSeparator(t *testing.T) {
+	m := newPaneWithDevice()
+	got := m.renderPanelLabel(panelFiles, 80, 40, true)
+	if !strings.Contains(got, "Files") || !strings.Contains(got, "│") {
+		t.Errorf("expected label to carry the tree/preview separator, got %q", got)
+	}
+	if lipgloss.Width(got) != 80 {
+		t.Errorf("expected full-width label, got %d", lipgloss.Width(got))
 	}
 }
 
@@ -180,7 +206,7 @@ func TestFilesLayout_WidePane(t *testing.T) {
 
 func TestRenderApps_Empty_ShowsHint(t *testing.T) {
 	m := newPaneWithDevice()
-	m.tab = TabApps
+	m.panel = panelApps
 	m.SetApps(nil)
 	got := m.renderApps(70, 10)
 	if !strings.Contains(got, "no apps") {
@@ -193,7 +219,7 @@ func TestRenderApps_Empty_ShowsHint(t *testing.T) {
 
 func TestRenderApps_NoMatches_ShowsHint(t *testing.T) {
 	m := newPaneWithDevice()
-	m.tab = TabApps
+	m.panel = panelApps
 	m.SetApps([]device.App{{BundleID: "com.apple.Maps", Name: "Maps"}})
 	m.appsFilter = "zzznomatch"
 	got := m.renderApps(70, 10)
@@ -204,7 +230,7 @@ func TestRenderApps_NoMatches_ShowsHint(t *testing.T) {
 
 func TestRenderApps_WithApps_ShowsLabels(t *testing.T) {
 	m := newPaneWithDevice()
-	m.tab = TabApps
+	m.panel = panelApps
 	m.SetApps([]device.App{
 		{BundleID: "com.apple.Maps", Name: "Maps", ShortVersion: "3.0"},
 		{BundleID: "com.spotify.music", Name: "Spotify", ShortVersion: "8.1"},
@@ -220,7 +246,7 @@ func TestRenderApps_WithApps_ShowsLabels(t *testing.T) {
 
 func TestRenderApps_ScrollOffset(t *testing.T) {
 	m := newPaneWithDevice()
-	m.tab = TabApps
+	m.panel = panelApps
 	apps := make([]device.App, 20)
 	for i := range apps {
 		apps[i] = device.App{BundleID: "com.app." + string(rune('a'+i)), Name: string(rune('A' + i))}
@@ -332,60 +358,66 @@ func TestRenderAppRow_NoLocalBadgeWhenNotLocal(t *testing.T) {
 	}
 }
 
-// ── renderInfo ────────────────────────────────────────────────────────────
+// ── InfoOverlay ──────────────────────────────────────────────────────────
 
-func TestRenderInfo_Empty_ShowsLoading(t *testing.T) {
-	m := newPaneWithDevice()
-	m.tab = TabInfo
-	// No info set → shows "loading info…"
-	got := m.renderInfo(70, 8)
+func TestInfoOverlay_Empty_ShowsLoading(t *testing.T) {
+	o := NewInfoOverlay(device.Device{ID: "u1"}, device.DeviceInfo{}, 120, 30)
+	got := o.View()
 	if !strings.Contains(got, "loading") {
 		t.Errorf("expected loading hint, got %q", got)
 	}
-	if lineCount(got) != 8 {
-		t.Errorf("expected %d lines, got %d", 8, lineCount(got))
+	if !strings.Contains(got, "Device info") {
+		t.Error("expected sheet title")
 	}
 }
 
-func TestRenderInfo_WithFields(t *testing.T) {
-	m := newPaneWithDevice()
-	m.SetInfo(device.DeviceInfo{Fields: []device.InfoField{
+func TestInfoOverlay_WithFields(t *testing.T) {
+	info := device.DeviceInfo{Fields: []device.InfoField{
 		{Key: "Status", Value: "Running"},
 		{Key: "OS", Value: "iOS 17"},
-	}})
-	got := m.renderInfo(70, 10)
-	if !strings.Contains(got, "Status") {
-		t.Error("field key 'Status' not in render")
+	}}
+	o := NewInfoOverlay(device.Device{ID: "u1"}, info, 120, 30)
+	got := o.View()
+	if !strings.Contains(got, "Status") || !strings.Contains(got, "Running") {
+		t.Errorf("expected field key/value in sheet, got %q", got)
 	}
-	if !strings.Contains(got, "Running") {
-		t.Error("field value 'Running' not in render")
-	}
-}
-
-func TestRenderInfo_SelectedRow(t *testing.T) {
-	m := newPaneWithDevice()
-	m.SetInfo(device.DeviceInfo{Fields: []device.InfoField{
-		{Key: "Name", Value: "iPhone"},
-		{Key: "OS", Value: "iOS"},
-	}})
-	m.infoIdx = 1
-	got := m.renderInfo(70, 5)
-	if !strings.Contains(got, "OS") {
-		t.Error("selected field not rendered")
+	if !strings.Contains(got, "c copy udid") {
+		t.Error("expected copy-udid footer action")
 	}
 }
 
-func TestRenderInfo_ScrollOffset(t *testing.T) {
-	m := newPaneWithDevice()
-	fields := make([]device.InfoField, 20)
-	for i := range fields {
-		fields[i] = device.InfoField{Key: "k", Value: "v"}
+func TestInfoOverlay_RevealShownOnlyWithDataPath(t *testing.T) {
+	physical := NewInfoOverlay(device.Device{ID: "u1"},
+		device.DeviceInfo{Fields: []device.InfoField{{Key: "Model", Value: "iPhone"}}}, 120, 30)
+	if strings.Contains(physical.View(), "reveal in Finder") {
+		t.Error("did not expect reveal action without a Data Path field")
 	}
-	m.SetInfo(device.DeviceInfo{Fields: fields})
-	m.infoIdx = 18
-	got := m.renderInfo(70, 5)
-	if lineCount(got) != 5 {
-		t.Errorf("expected %d lines, got %d", 5, lineCount(got))
+	local := NewInfoOverlay(device.Device{ID: "u1"},
+		device.DeviceInfo{Fields: []device.InfoField{{Key: "Data Path", Value: "/Users/x/data"}}}, 120, 30)
+	if !strings.Contains(local.View(), "reveal in Finder") {
+		t.Error("expected reveal action when a Data Path field is present")
+	}
+}
+
+func TestInfoOverlay_CopyKeyEmitsClipboardCmd(t *testing.T) {
+	o := NewInfoOverlay(device.Device{ID: "the-udid"}, device.DeviceInfo{}, 120, 30)
+	_, cmd := o.Update(tea.KeyPressMsg{Text: "c"})
+	if cmd == nil {
+		t.Fatal("expected a command from 'c'")
+	}
+	if _, ok := cmd().(ClipboardCopiedMsg); !ok {
+		t.Errorf("expected ClipboardCopiedMsg, got %T", cmd())
+	}
+}
+
+func TestInfoOverlay_EscEmitsCancel(t *testing.T) {
+	o := NewInfoOverlay(device.Device{ID: "u1"}, device.DeviceInfo{}, 120, 30)
+	_, cmd := o.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if cmd == nil {
+		t.Fatal("expected a command from esc")
+	}
+	if _, ok := cmd().(CancelOverlayMsg); !ok {
+		t.Errorf("expected CancelOverlayMsg, got %T", cmd())
 	}
 }
 

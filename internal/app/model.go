@@ -29,6 +29,7 @@ type model struct {
 	sidebar      ui.Sidebar
 	mainPane     ui.MainPane
 	focus        appFocus
+	layout       *appLayout
 	coordinator  *device.Coordinator
 	logger       *logging.Logger
 	loading      bool
@@ -54,12 +55,14 @@ type model struct {
 	statusSeq  int
 
 	helpOverlay *ui.HelpOverlay
+	infoOverlay *ui.InfoOverlay
 
 	platformPicker  *ui.PlatformPickerModal
 	createIOSModal  *ui.CreateSimulatorModal
 	createAndModal  *ui.CreateAndroidEmulatorModal
 	deleteAlert     *ui.DeleteSimulatorAlert
 	deleteAppAlert  *ui.DeleteAppAlert
+	closeAppAlert   *ui.CloseAppAlert
 	installAppModal *ui.InstallAppModal
 	buildStream     *device.BuildStream
 	buildDeviceID   string
@@ -68,10 +71,14 @@ type model struct {
 	installSpinner  spinner.Model
 	sqliteModal     *ui.SQLiteModal
 	dbViewerModal   *dbviewer.Modal
+	actionMenu      *ui.ActionMenuModal
+
+	// lastClick tracks the most recent mouse click's target identity, for
+	// double-click detection (see registerClick in mouse.go).
+	lastClick lastClickInfo
 
 	// rebuildPaths caches the resolved Android gradle project directory per
-	// bundle-id for the running session (no persistence — see
-	// docs/adr/0001-project-resolution-not-persisted.md). iOS resolves fresh
+	// bundle-id for the running session. iOS resolves fresh
 	// each time via DerivedData, so it needs no cache.
 	rebuildPaths map[string]string
 }
@@ -88,6 +95,7 @@ func initialModel(version string, logger *logging.Logger, launchDir string) mode
 		sidebar:      ui.NewSidebar(),
 		mainPane:     ui.NewMainPane(),
 		focus:        focusSidebar,
+		layout:       &appLayout{},
 		coordinator:  coord,
 		logger:       logger,
 		loading:      true,
@@ -133,8 +141,12 @@ func (m *model) contextHelpOverlay() ui.HelpOverlay {
 	if m.dbViewerModal != nil {
 		return ui.NewHelpOverlay("DB Viewer", ui.DBViewerKeys)
 	}
+	if m.infoOverlay != nil {
+		return ui.NewHelpOverlay("Device Info", ui.InfoOverlayKeys)
+	}
 	if m.focus == focusMain {
-		return ui.NewHelpOverlay("Main Pane", ui.MainPaneKeys)
+		title, keys := m.mainPane.HelpKeyMap()
+		return ui.NewHelpOverlay(title, keys)
 	}
 	return ui.NewHelpOverlay("Sidebar", ui.SidebarKeys)
 }

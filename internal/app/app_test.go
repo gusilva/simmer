@@ -88,6 +88,7 @@ func newTestModel() model {
 	return model{
 		sidebar:      ui.NewSidebar(),
 		mainPane:     ui.NewMainPane(),
+		layout:       &appLayout{},
 		toolVersions: make(map[device.Platform]string),
 		rebuildPaths: make(map[string]string),
 	}
@@ -575,20 +576,39 @@ func TestUpdate_KeyEsc_FromMainFocus(t *testing.T) {
 	m := newTestModel()
 	m.focus = focusMain
 	m.applyFocus()
-	result, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
-	m2 := result.(model)
-	if m2.focus != focusSidebar {
-		t.Error("expected focus back to sidebar after esc")
+	// The main pane's esc chain unwinds one level per press (collapse the Apps
+	// panel first); once there is nothing left it emits ui.ReleaseFocusMsg,
+	// which the parent turns into a focus switch. Press until we get that cmd.
+	var mm tea.Model = m
+	var cmd tea.Cmd
+	for i := 0; i < 4 && cmd == nil; i++ {
+		mm, cmd = mm.(model).Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	}
+	if cmd == nil {
+		t.Fatal("expected a ReleaseFocusMsg command from esc in main focus")
+	}
+	mm, _ = mm.(model).Update(cmd())
+	if mm.(model).focus != focusSidebar {
+		t.Error("expected focus back to sidebar after esc → ReleaseFocusMsg")
 	}
 }
 
 func TestUpdate_KeyR_RefreshLoading(t *testing.T) {
 	m := newTestModel()
 	m.loading = false
-	result, _ := m.Update(tea.KeyPressMsg{Code: 'r'})
+	result, cmd := m.Update(tea.KeyPressMsg{Code: 'r'})
+	m1 := result.(model)
+	if m1.loading {
+		t.Error("loading should only flip once ui.RefreshDevicesMsg is processed")
+	}
+	if cmd == nil {
+		t.Fatal("expected a cmd from r")
+	}
+
+	result, _ = m1.Update(cmd())
 	m2 := result.(model)
 	if !m2.loading {
-		t.Error("expected loading=true after r")
+		t.Error("expected loading=true after ui.RefreshDevicesMsg")
 	}
 }
 

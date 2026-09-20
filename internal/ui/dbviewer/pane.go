@@ -22,12 +22,12 @@ func (p explorerPane) Update(msg tea.Msg) (pane, tea.Cmd) {
 	return explorerPane{next}, cmd
 }
 
-func (p explorerPane) Rows(width, height int, _ bool) []string {
-	return p.inner.Rows(width, height)
+func (p explorerPane) Rows(width, height int, focused bool) []string {
+	return p.inner.Rows(width, height, focused)
 }
 
 func (p explorerPane) Focus() (pane, tea.Cmd) { return p, nil }
-func (p explorerPane) Blur() pane              { return p }
+func (p explorerPane) Blur() pane             { return p }
 
 // ── QueryPane adapter ─────────────────────────────────────────────────────────
 
@@ -69,4 +69,4 @@ func (p resultsPaneAdapter) Rows(width, height int, focused bool) []string {
 }
 
 func (p resultsPaneAdapter) Focus() (pane, tea.Cmd) { return p, nil }
-func (p resultsPaneAdapter) Blur() pane              { return p }
+func (p resultsPaneAdapter) Blur() pane             { return p }
