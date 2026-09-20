@@ -71,6 +71,11 @@ type model struct {
 	installSpinner  spinner.Model
 	sqliteModal     *ui.SQLiteModal
 	dbViewerModal   *dbviewer.Modal
+	actionMenu      *ui.ActionMenuModal
+
+	// lastClick tracks the most recent mouse click's target identity, for
+	// double-click detection (see registerClick in mouse.go).
+	lastClick lastClickInfo
 
 	// rebuildPaths caches the resolved Android gradle project directory per
 	// bundle-id for the running session. iOS resolves fresh

@@ -596,10 +596,19 @@ func TestUpdate_KeyEsc_FromMainFocus(t *testing.T) {
 func TestUpdate_KeyR_RefreshLoading(t *testing.T) {
 	m := newTestModel()
 	m.loading = false
-	result, _ := m.Update(tea.KeyPressMsg{Code: 'r'})
+	result, cmd := m.Update(tea.KeyPressMsg{Code: 'r'})
+	m1 := result.(model)
+	if m1.loading {
+		t.Error("loading should only flip once ui.RefreshDevicesMsg is processed")
+	}
+	if cmd == nil {
+		t.Fatal("expected a cmd from r")
+	}
+
+	result, _ = m1.Update(cmd())
 	m2 := result.(model)
 	if !m2.loading {
-		t.Error("expected loading=true after r")
+		t.Error("expected loading=true after ui.RefreshDevicesMsg")
 	}
 }
 

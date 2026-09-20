@@ -166,6 +166,39 @@ func (m MainPane) SelectedApp() *device.App {
 	return &a
 }
 
+// IsDatabaseFile reports whether name looks like a SQLite database, by
+// extension — the same rule the Files panel uses to offer its SQLite
+// viewer.
+func IsDatabaseFile(name string) bool { return isDatabaseFile(name) }
+
+// IsFilesPanel reports whether the Files panel is currently expanded (as
+// opposed to Apps).
+func (m MainPane) IsFilesPanel() bool { return m.panel == panelFiles }
+
+// SelectedTreeNode returns the file/dir node currently highlighted in the
+// Files tab, or nil.
+func (m MainPane) SelectedTreeNode() *device.FileNode {
+	rows := m.flattenTree()
+	if m.treeIdx < 0 || m.treeIdx >= len(rows) {
+		return nil
+	}
+	return rows[m.treeIdx].node
+}
+
+// TogglePinnedApp pins app for the Files panel's sandbox browsing, or unpins
+// it if it's already pinned. Shared by the "space" key and the double-click
+// action menu.
+func (m *MainPane) TogglePinnedApp(app device.App) {
+	if m.selectedApp != nil && m.selectedApp.BundleID == app.BundleID {
+		m.selectedApp = nil
+		m.tree = nil
+		return
+	}
+	a := app
+	m.selectedApp = &a
+	m.tree = nil
+}
+
 // SetLoggingBundle records which app's logs are currently being written to a
 // file, so the Apps tab can badge that row. Pass "" to clear.
 func (m *MainPane) SetLoggingBundle(bundleID string) { m.loggingBundle = bundleID }

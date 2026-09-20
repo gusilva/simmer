@@ -322,8 +322,11 @@ func (e Explorer) Update(msg tea.Msg) (Explorer, tea.Cmd) {
 //	row 2           group label   "  CONNECTIONS"
 //	rows 3..h-2     scrollable tree items
 //	row h-1         footer        "/ filter tables…"
-func (e Explorer) Rows(width, height int) []string {
+func (e Explorer) Rows(width, height int, focused bool) []string {
 	rh := e.rh
+	if focused {
+		rh = rh.WithSepColor(theme.ColorBorderHi)
+	}
 	selBgStyle := lipgloss.NewStyle().Background(theme.ColorAccent)
 
 	fillTo := func(s string, sel bool) string {

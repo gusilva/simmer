@@ -1,8 +1,6 @@
 package ui
 
 import (
-	"strings"
-
 	tea "charm.land/bubbletea/v2"
 )
 
@@ -89,41 +87,7 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 				m.treeIdx = len(rows) - 1
 			}
 		case "enter":
-			if m.treeIdx < 0 || m.treeIdx >= len(rows) {
-				return m, nil
-			}
-			n := rows[m.treeIdx].node
-			if !n.IsDir {
-				if m.active != nil {
-					name := strings.ToLower(n.Name)
-					if strings.HasSuffix(name, ".db") || strings.HasSuffix(name, ".sqlite") || strings.HasSuffix(name, ".sqlite3") {
-						dev := *m.active
-						packageID := ""
-						if m.selectedApp != nil {
-							packageID = m.selectedApp.BundleID
-						}
-						nodeName := n.Name
-						nodePath := n.Path
-						return m, func() tea.Msg {
-							return ShowSQLiteViewerMsg{
-								Device:    dev,
-								PackageID: packageID,
-								DBPath:    nodePath,
-								DBName:    nodeName,
-							}
-						}
-					}
-				}
-				return m, nil
-			}
-			m.expanded[n.Path] = !m.expanded[n.Path]
-			rows = m.flattenTree()
-			if m.treeIdx >= len(rows) {
-				m.treeIdx = len(rows) - 1
-			}
-			if m.treeIdx < 0 {
-				m.treeIdx = 0
-			}
+			return m, m.ActivateTreeRow()
 		}
 	case panelApps:
 		filtered := m.filteredApps()
@@ -188,15 +152,7 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 			if len(filtered) == 0 || m.appsIdx >= len(filtered) {
 				return m, nil
 			}
-			app := filtered[m.appsIdx]
-			if m.selectedApp != nil && m.selectedApp.BundleID == app.BundleID {
-				m.selectedApp = nil
-				m.tree = nil
-				return m, nil
-			}
-			a := app
-			m.selectedApp = &a
-			m.tree = nil
+			m.TogglePinnedApp(filtered[m.appsIdx])
 			return m, nil
 		case "l":
 			// Toggle writing the highlighted app's logs to a file.

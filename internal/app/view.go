@@ -72,11 +72,13 @@ func (m model) View() tea.View {
 
 	// Primary overlays (db viewer, create/delete dialogs). Rendered before help
 	// so the help panel always sits on top.
-	if m.platformPicker != nil || m.createIOSModal != nil || m.createAndModal != nil || m.deleteAlert != nil || m.deleteAppAlert != nil || m.closeAppAlert != nil || m.installAppModal != nil || m.sqliteModal != nil || m.dbViewerModal != nil {
+	if m.actionMenu != nil || m.platformPicker != nil || m.createIOSModal != nil || m.createAndModal != nil || m.deleteAlert != nil || m.deleteAppAlert != nil || m.closeAppAlert != nil || m.installAppModal != nil || m.sqliteModal != nil || m.dbViewerModal != nil {
 		var overlayStr string
 		switch {
 		case m.dbViewerModal != nil:
 			overlayStr = m.dbViewerModal.View()
+		case m.actionMenu != nil:
+			overlayStr = m.actionMenu.View()
 		case m.platformPicker != nil:
 			overlayStr = m.platformPicker.View()
 		case m.createIOSModal != nil:

@@ -94,3 +94,26 @@ type ConfirmRebuildMsg struct {
 
 // CancelOverlayMsg is emitted when the user dismisses any overlay.
 type CancelOverlayMsg struct{}
+
+// StartBootMsg is emitted when the user requests booting a device, either via
+// the sidebar's 'b' key or the double-click action menu.
+type StartBootMsg struct{ Device device.Device }
+
+// PinAppMsg is emitted when the user requests pinning/unpinning an app for
+// Files-panel sandbox browsing from the double-click action menu (the
+// "space" key calls MainPane.TogglePinnedApp directly, since it already owns
+// the pane).
+type PinAppMsg struct{ App device.App }
+
+// ActivateTreeRowMsg is emitted by the double-click action menu to run the
+// same effect as pressing "enter" on the selected Files-panel row.
+type ActivateTreeRowMsg struct{}
+
+// LoadDeviceMsg is emitted when the user requests loading a running device
+// into the main pane, either via the sidebar's "space" key or the
+// double-click action menu.
+type LoadDeviceMsg struct{ Device device.Device }
+
+// RefreshDevicesMsg is emitted when the user requests a device list refresh,
+// either via the sidebar's "r" key or the double-click action menu.
+type RefreshDevicesMsg struct{}

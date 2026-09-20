@@ -6,6 +6,7 @@ import (
 
 	"simmer/internal/device"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
 
@@ -42,9 +43,61 @@ func (m MainPane) renderFiles(innerW, innerH int) string {
 
 // ── Files: tree pane ───────────────────────────────────────────────────
 
+// isDatabaseFile reports whether name looks like a SQLite database, by
+// extension.
+func isDatabaseFile(name string) bool {
+	lname := strings.ToLower(name)
+	return strings.HasSuffix(lname, ".db") || strings.HasSuffix(lname, ".sqlite") || strings.HasSuffix(lname, ".sqlite3")
+}
+
 type treeRow struct {
 	node  *device.FileNode
 	depth int
+}
+
+// ActivateTreeRow performs the effect of "enter" on the currently
+// highlighted tree row: toggling a directory's expanded state, or opening
+// the SQLite viewer for a recognized database file. Shared by the "enter"
+// key and the double-click action menu.
+func (m *MainPane) ActivateTreeRow() tea.Cmd {
+	rows := m.flattenTree()
+	if m.treeIdx < 0 || m.treeIdx >= len(rows) {
+		return nil
+	}
+	n := rows[m.treeIdx].node
+	if !n.IsDir {
+		if m.active == nil {
+			return nil
+		}
+		if !isDatabaseFile(n.Name) {
+			return nil
+		}
+		dev := *m.active
+		packageID := ""
+		if m.selectedApp != nil {
+			packageID = m.selectedApp.BundleID
+		}
+		nodeName := n.Name
+		nodePath := n.Path
+		return func() tea.Msg {
+			return ShowSQLiteViewerMsg{
+				Device:    dev,
+				PackageID: packageID,
+				DBPath:    nodePath,
+				DBName:    nodeName,
+			}
+		}
+	}
+
+	m.expanded[n.Path] = !m.expanded[n.Path]
+	rows = m.flattenTree()
+	if m.treeIdx >= len(rows) {
+		m.treeIdx = len(rows) - 1
+	}
+	if m.treeIdx < 0 {
+		m.treeIdx = 0
+	}
+	return nil
 }
 
 func (m MainPane) flattenTree() []treeRow {
@@ -202,8 +255,7 @@ func (m MainPane) renderPreviewPane(w, h int) []string {
 		}
 		// SQLite viewer hint
 		if !sel.IsDir && m.active != nil {
-			lname := strings.ToLower(sel.Name)
-			if strings.HasSuffix(lname, ".db") || strings.HasSuffix(lname, ".sqlite") || strings.HasSuffix(lname, ".sqlite3") {
+			if isDatabaseFile(sel.Name) {
 				lines = append(lines, padBg(w))
 				lines = append(lines, " "+lipgloss.NewStyle().
 					Foreground(ColorAccent).
@@ -250,8 +302,7 @@ func previewContent(n *device.FileNode) []string {
 	if n.IsDir {
 		return []string{fmt.Sprintf("(directory — %d entries)", len(n.Children))}
 	}
-	lname := strings.ToLower(n.Name)
-	if strings.HasSuffix(lname, ".db") || strings.HasSuffix(lname, ".sqlite") || strings.HasSuffix(lname, ".sqlite3") {
+	if isDatabaseFile(n.Name) {
 		return []string{
 			"SQLite database",
 			formatSize(n.Size),
