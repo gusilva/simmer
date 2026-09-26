@@ -1,6 +1,7 @@
 package device
 
 import (
+	"archive/zip"
 	"bufio"
 	"context"
 	"fmt"
@@ -20,6 +21,12 @@ import (
 type androidManager struct {
 	logger *logging.Logger
 }
+
+// rnDetectCache memoizes React Native detection results keyed by
+// "bundleID@nativeLibDir" (the dir path changes on reinstall/update,
+// naturally invalidating the entry). Shared across the emulator and physical
+// Android managers since the check and its cost are identical for both.
+var rnDetectCache sync.Map // map[string]bool
 
 // NewAndroidManager returns a Manager implementation for Android emulators.
 func NewAndroidManager(logger *logging.Logger) Manager {
@@ -748,10 +755,11 @@ func (m *androidManager) ListApps(ctx context.Context, id string) ([]App, error)
 	apps := make([]App, 0, len(byID))
 	for bundleID, e := range byID {
 		apps = append(apps, App{
-			BundleID:     bundleID,
-			Path:         e.path,
-			Type:         "User",
-			ShortVersion: versions[bundleID],
+			BundleID:      bundleID,
+			Path:          e.path,
+			Type:          "User",
+			ShortVersion:  versions[bundleID],
+			IsReactNative: detectReactNativeApp(m.logger, d, bundleID, e.path),
 		})
 	}
 
@@ -765,8 +773,64 @@ func (m *androidManager) ListApps(ctx context.Context, id string) ([]App, error)
 	return apps, nil
 }
 
-// androidFetchVersions returns a bundleID→versionName map by parsing a single
-// `dumpsys package packages` call, skipping lines for packages not in byID.
+// detectReactNativeApp reports whether the APK at apkPath is a React Native
+// app. It pulls the APK once (cached in rnDetectCache, keyed by bundleID and
+// apkPath so a reinstall/update invalidates it) and inspects its zip
+// directory locally — checking legacyNativeLibraryDir or shelling out to
+// `unzip` both proved unreliable: modern React Native builds set
+// extractNativeLibs="false" (AGP default), so their .so files are read
+// straight out of the APK and never extracted to disk, and `unzip` isn't
+// guaranteed to be symlinked into the on-device toybox.
+func detectReactNativeApp(logger *logging.Logger, d gadb.Device, bundleID, apkPath string) bool {
+	if apkPath == "" {
+		return false
+	}
+	key := bundleID + "@" + apkPath
+	if v, ok := rnDetectCache.Load(key); ok {
+		return v.(bool)
+	}
+	isRN := probeReactNativeAPK(logger, d, apkPath)
+	rnDetectCache.Store(key, isRN)
+	return isRN
+}
+
+func probeReactNativeAPK(logger *logging.Logger, d gadb.Device, apkPath string) bool {
+	tmp, err := os.CreateTemp("", "simmer-rn-*.apk")
+	if err != nil {
+		return false
+	}
+	defer os.Remove(tmp.Name())
+	defer tmp.Close()
+
+	err = d.Pull(apkPath, tmp)
+	logger.LogExec("adb pull", []string{apkPath}, "", err)
+	if err != nil {
+		return false
+	}
+
+	info, err := tmp.Stat()
+	if err != nil {
+		return false
+	}
+	zr, err := zip.NewReader(tmp, info.Size())
+	if err != nil {
+		return false
+	}
+	for _, f := range zr.File {
+		if f.Name == "assets/index.android.bundle" {
+			return true
+		}
+		if lower := strings.ToLower(f.Name); strings.HasPrefix(f.Name, "lib/") &&
+			(strings.Contains(lower, "hermes") || strings.Contains(lower, "reactnativejni") || strings.Contains(lower, "jscexecutor")) {
+			return true
+		}
+	}
+	return false
+}
+
+// androidFetchVersions returns a bundleID→versionName map by parsing a
+// single `dumpsys package packages` call, skipping lines for packages not
+// in byID.
 func androidFetchVersions[E any](logger *logging.Logger, d gadb.Device, byID map[string]E) map[string]string {
 	out, err := d.RunShellCommand("dumpsys", "package", "packages")
 	logger.LogExec("adb shell", []string{"dumpsys", "package", "packages"}, out, err)
@@ -774,7 +838,7 @@ func androidFetchVersions[E any](logger *logging.Logger, d gadb.Device, byID map
 		return map[string]string{}
 	}
 
-	result := make(map[string]string, len(byID))
+	versions := make(map[string]string, len(byID))
 	cur := ""
 	for line := range strings.SplitSeq(string(out), "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -793,11 +857,11 @@ func androidFetchVersions[E any](logger *logging.Logger, d gadb.Device, byID map
 		}
 		if after, ok := strings.CutPrefix(trimmed, "versionName="); ok {
 			if parts := strings.Fields(after); len(parts) > 0 {
-				result[cur] = strings.Clone(parts[0])
+				versions[cur] = strings.Clone(parts[0])
 			}
 		}
 	}
-	return result
+	return versions
 }
 
 // StreamLogs implements LogStreamer for Android emulators. It launches the app

@@ -7,13 +7,14 @@ import (
 
 // App describes one application installed on a device.
 type App struct {
-	BundleID     string
-	DisplayName  string // CFBundleDisplayName (preferred)
-	Name         string // CFBundleName (fallback)
-	Version      string // CFBundleVersion
-	ShortVersion string // CFBundleShortVersionString
-	Type         string // ApplicationType: "User", "System", ...
-	Path         string // on-disk bundle path
+	BundleID      string
+	DisplayName   string // CFBundleDisplayName (preferred)
+	Name          string // CFBundleName (fallback)
+	Version       string // CFBundleVersion
+	ShortVersion  string // CFBundleShortVersionString
+	Type          string // ApplicationType: "User", "System", ...
+	Path          string // on-disk bundle path
+	IsReactNative bool   // detected React Native app (main.jsbundle / hermes)
 }
 
 // Label returns the user-facing display label for the app, falling back from

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	ios "github.com/danielpaulus/go-ios/ios"
+	"github.com/danielpaulus/go-ios/ios/house_arrest"
 	"github.com/danielpaulus/go-ios/ios/installationproxy"
 	"github.com/danielpaulus/go-ios/ios/syslog"
 	"github.com/danielpaulus/go-ios/ios/zipconduit"
@@ -30,7 +31,6 @@ func NewPhysicalIOSManager(logger *logging.Logger) Manager {
 
 func (m *physicalIOSManager) Platform() Platform { return PlatformIOS }
 func (m *physicalIOSManager) Kind() DeviceKind   { return KindPhysical }
-
 
 // ListDevices returns all physical iOS devices visible to usbmuxd.
 // Returns nil, nil when usbmuxd is unavailable so the coordinator skips
@@ -104,12 +104,13 @@ func (m *physicalIOSManager) ListApps(_ context.Context, id string) ([]App, erro
 			displayName = v
 		}
 		out = append(out, App{
-			BundleID:     bundleID,
-			DisplayName:  displayName,
-			Name:         info.CFBundleName(),
-			ShortVersion: info.CFBundleShortVersionString(),
-			Path:         info.Path(),
-			Type:         "User",
+			BundleID:      bundleID,
+			DisplayName:   displayName,
+			Name:          info.CFBundleName(),
+			ShortVersion:  info.CFBundleShortVersionString(),
+			Path:          info.Path(),
+			Type:          "User",
+			IsReactNative: isReactNativeBundlePhysical(entry, bundleID),
 		})
 	}
 
@@ -121,6 +122,27 @@ func (m *physicalIOSManager) ListApps(_ context.Context, id string) ([]App, erro
 		return a < b
 	})
 	return out, nil
+}
+
+// isReactNativeBundlePhysical is a best-effort React Native check for
+// physical iOS devices, via the house_arrest AFC service. house_arrest only
+// vends the app's data container (Documents/Library), not its bundle
+// container where main.jsbundle/hermes.framework actually live, so this
+// commonly finds nothing and returns false — that is expected, not an error.
+func isReactNativeBundlePhysical(entry ios.DeviceEntry, bundleID string) bool {
+	client, err := house_arrest.New(entry, bundleID)
+	if err != nil {
+		return false
+	}
+	defer client.Close()
+
+	if _, err := client.Stat("/main.jsbundle"); err == nil {
+		return true
+	}
+	if _, err := client.Stat("/Frameworks/hermes.framework"); err == nil {
+		return true
+	}
+	return false
 }
 
 // DeleteApp uninstalls an app from a physical iOS device via installationproxy.

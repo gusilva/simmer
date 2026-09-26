@@ -106,6 +106,15 @@ func (m MainPane) renderAppRow(app device.App, w int, cursor bool, logging bool,
 
 	pinned := m.selectedApp != nil && m.selectedApp.BundleID == app.BundleID
 
+	// ⚛ = React Native app, left of the name; 1 cell.
+	const rnIcon = "⚛ "
+	rnStr := ""
+	rnIconW := 0
+	if app.IsReactNative {
+		rnStr = rnIcon
+		rnIconW = 2
+	}
+
 	devStr := ""
 	devW := 0
 	if local {
@@ -133,9 +142,9 @@ func (m MainPane) renderAppRow(app device.App, w int, cursor bool, logging bool,
 	)
 
 	metaW := lipgloss.Width(meta)
-	nameMax := max(w-leadW-iconW-metaW-trailW-minGap, 1)
+	nameMax := max(w-leadW-rnIconW-iconW-metaW-trailW-minGap, 1)
 	nameStr := truncateName(label, nameMax)
-	gap := max(w-leadW-lipgloss.Width(nameStr)-iconW-metaW-trailW, minGap)
+	gap := max(w-leadW-rnIconW-lipgloss.Width(nameStr)-iconW-metaW-trailW, minGap)
 
 	system := app.Type == "System"
 
@@ -145,18 +154,19 @@ func (m MainPane) renderAppRow(app device.App, w int, cursor bool, logging bool,
 			selBg = ColorFgDim
 		}
 		sel := lipgloss.NewStyle().Foreground(ColorBg).Background(selBg).Bold(true)
-		return sel.Render(" " + nameStr + devStr + logStr + pinStr + strings.Repeat(" ", gap) + meta + " ")
+		return sel.Render(" " + rnStr + nameStr + devStr + logStr + pinStr + strings.Repeat(" ", gap) + meta + " ")
 	}
 
 	nameFg := ColorFg
 	if system {
 		nameFg = ColorFgDim
 	}
+	rnStyled := lipgloss.NewStyle().Foreground(ColorAccent2).Background(ColorBg).Render(rnStr)
 	nameStyled := lipgloss.NewStyle().Foreground(nameFg).Background(ColorBg).Render(nameStr)
 	devStyled := lipgloss.NewStyle().Foreground(ColorOrange).Background(ColorBg).Render(devStr)
 	logStyled := lipgloss.NewStyle().Foreground(ColorErr).Background(ColorBg).Bold(true).Render(logStr)
 	pinStyled := lipgloss.NewStyle().Foreground(ColorAccent2).Background(ColorBg).Render(pinStr)
 	metaStyled := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg).Render(meta)
 
-	return " " + nameStyled + devStyled + logStyled + pinStyled + bg.Render(strings.Repeat(" ", gap)) + metaStyled + bg.Render(" ")
+	return " " + rnStyled + nameStyled + devStyled + logStyled + pinStyled + bg.Render(strings.Repeat(" ", gap)) + metaStyled + bg.Render(" ")
 }

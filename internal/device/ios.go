@@ -135,6 +135,7 @@ func (m *iosManager) ListApps(ctx context.Context, id string) ([]App, error) {
 		if v, ok := info["Path"].(string); ok {
 			app.Path = v
 		}
+		app.IsReactNative = isReactNativeBundle(app.Path)
 		apps = append(apps, app)
 	}
 

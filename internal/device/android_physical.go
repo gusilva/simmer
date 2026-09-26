@@ -28,7 +28,6 @@ func NewPhysicalAndroidManager(logger *logging.Logger) Manager {
 func (m *physicalAndroidManager) Platform() Platform { return PlatformAndroid }
 func (m *physicalAndroidManager) Kind() DeviceKind   { return KindPhysical }
 
-
 // ListDevices returns all physical Android devices seen by the ADB server.
 // Emulator serials (emulator-NNNN) are excluded — those belong to androidManager.
 // Returns nil, nil when the ADB server is unreachable so the coordinator skips
@@ -144,10 +143,11 @@ func (m *physicalAndroidManager) ListApps(_ context.Context, id string) ([]App, 
 	apps := make([]App, 0, len(byID))
 	for bundleID, e := range byID {
 		apps = append(apps, App{
-			BundleID:     bundleID,
-			Path:         e.path,
-			Type:         "User",
-			ShortVersion: versions[bundleID],
+			BundleID:      bundleID,
+			Path:          e.path,
+			Type:          "User",
+			ShortVersion:  versions[bundleID],
+			IsReactNative: detectReactNativeApp(m.logger, d, bundleID, e.path),
 		})
 	}
 
