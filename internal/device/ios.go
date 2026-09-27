@@ -135,6 +135,7 @@ func (m *iosManager) ListApps(ctx context.Context, id string) ([]App, error) {
 		if v, ok := info["Path"].(string); ok {
 			app.Path = v
 		}
+		app.IsReactNative = isReactNativeBundle(app.Path)
 		apps = append(apps, app)
 	}
 
@@ -647,6 +648,39 @@ func (m *iosManager) LaunchApp(ctx context.Context, deviceID, bundleID string) e
 	err := simctlLaunch(ctx, deviceID, bundleID)
 	m.logger.LogExec("xcrun", []string{"simctl", "launch", deviceID, bundleID}, "", err)
 	return err
+}
+
+// SetBundlerLocation writes RCT_jsLocation into the app's preferences via
+// `xcrun simctl spawn defaults write`, then terminates and relaunches it so
+// React Native picks up the new Metro host:port.
+func (m *iosManager) SetBundlerLocation(ctx context.Context, deviceID, bundleID, hostPort string) error {
+	args := []string{"simctl", "spawn", deviceID, "defaults", "write", bundleID, "RCT_jsLocation", "-string", hostPort}
+	cmd := exec.CommandContext(ctx, "xcrun", args...)
+	out, err := cmd.CombinedOutput()
+	m.logger.LogExec("xcrun", args, string(out), err)
+	if err != nil {
+		return fmt.Errorf("set bundler location: %w", err)
+	}
+	_ = m.TerminateApp(ctx, deviceID, bundleID) // best-effort; app may not be running yet
+	return m.LaunchApp(ctx, deviceID, bundleID)
+}
+
+// TriggerDevMenu opens the React Native dev menu on the (single, assumed
+// frontmost) Simulator window by activating Simulator.app and sending the
+// same Cmd+D shortcut a developer would type. RCTShowDevMenuNotification is
+// posted in-process on a shake gesture — there is no CLI/Darwin-notification
+// route to it, so UI automation is the only scriptable trigger.
+func (m *iosManager) TriggerDevMenu(ctx context.Context, deviceID, _ string) error {
+	const script = `tell application "Simulator" to activate
+delay 0.3
+tell application "System Events" to keystroke "d" using command down`
+	cmd := exec.CommandContext(ctx, "osascript", "-e", script)
+	out, err := cmd.CombinedOutput()
+	m.logger.LogExec("osascript", []string{"-e", script}, string(out), err)
+	if err != nil {
+		return fmt.Errorf("trigger dev menu: %w", err)
+	}
+	return nil
 }
 
 // ResolveIOSProjectPath finds the Xcode project/workspace for a locally

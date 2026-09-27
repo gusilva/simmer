@@ -164,6 +164,13 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 				return m, func() tea.Msg { return StopAppLoggingMsg{} }
 			}
 			return m, func() tea.Msg { return StartAppLoggingMsg{App: a} }
+		case "m":
+			if len(filtered) == 0 || m.appsIdx >= len(filtered) || m.active == nil {
+				return m, nil
+			}
+			dev := *m.active
+			a := filtered[m.appsIdx]
+			return m, func() tea.Msg { return ShowRNOptionsMsg{Device: dev, App: a} }
 		}
 		if m.appsIdx != prev {
 			if app := m.SelectedApp(); app != nil {

@@ -72,6 +72,8 @@ type model struct {
 	sqliteModal     *ui.SQLiteModal
 	dbViewerModal   *dbviewer.Modal
 	actionMenu      *ui.ActionMenuModal
+	rnOptionsModal  *ui.RNOptionsModal
+	textPromptModal *ui.TextPromptModal
 
 	// lastClick tracks the most recent mouse click's target identity, for
 	// double-click detection (see registerClick in mouse.go).
@@ -81,6 +83,15 @@ type model struct {
 	// bundle-id for the running session. iOS resolves fresh
 	// each time via DerivedData, so it needs no cache.
 	rebuildPaths map[string]string
+
+	// bundlerHostPorts remembers the Metro host:port last configured per
+	// bundle-id via "Configure Bundler Location". On physical iOS this is
+	// load-bearing, not just a convenience: RCT_jsLocation there is only ever
+	// set via a one-shot launch argument (there's no `defaults write`
+	// equivalent for real hardware), so it has no persistence of its own —
+	// any later relaunch we trigger (e.g. "Log to File") has to re-supply it
+	// or the app reverts to its compiled-in default and never reaches Metro.
+	bundlerHostPorts map[string]string
 }
 
 func initialModel(version string, logger *logging.Logger, launchDir string) model {
@@ -92,17 +103,18 @@ func initialModel(version string, logger *logging.Logger, launchDir string) mode
 	)
 
 	m := model{
-		sidebar:      ui.NewSidebar(),
-		mainPane:     ui.NewMainPane(),
-		focus:        focusSidebar,
-		layout:       &appLayout{},
-		coordinator:  coord,
-		logger:       logger,
-		loading:      true,
-		toolVersions: make(map[device.Platform]string),
-		rebuildPaths: make(map[string]string),
-		appVersion:   version,
-		launchDir:    launchDir,
+		sidebar:          ui.NewSidebar(),
+		mainPane:         ui.NewMainPane(),
+		focus:            focusSidebar,
+		layout:           &appLayout{},
+		coordinator:      coord,
+		logger:           logger,
+		loading:          true,
+		toolVersions:     make(map[device.Platform]string),
+		rebuildPaths:     make(map[string]string),
+		bundlerHostPorts: make(map[string]string),
+		appVersion:       version,
+		launchDir:        launchDir,
 		installSpinner: spinner.New(
 			spinner.WithSpinner(spinner.MiniDot),
 			spinner.WithStyle(lipgloss.NewStyle().Foreground(ui.ColorAccent)),
@@ -143,6 +155,9 @@ func (m *model) contextHelpOverlay() ui.HelpOverlay {
 	}
 	if m.infoOverlay != nil {
 		return ui.NewHelpOverlay("Device Info", ui.InfoOverlayKeys)
+	}
+	if m.rnOptionsModal != nil || m.textPromptModal != nil {
+		return ui.NewHelpOverlay("RN Debugging", ui.RNOptionsKeys)
 	}
 	if m.focus == focusMain {
 		title, keys := m.mainPane.HelpKeyMap()

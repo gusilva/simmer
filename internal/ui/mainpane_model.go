@@ -28,6 +28,7 @@ type MainPane struct {
 	expanded      map[string]bool   // Which dirs are open in the tree
 	treeIdx       int               // Cursor row in the tree
 	apps          []device.App      // List of installed apps
+	appsLoading   bool              // Apps list requested but not yet arrived
 	appsIdx       int               // Cursor row in the filtered apps list
 	appsFilter    string            // Active fuzzy filter for apps
 	appsFiltering bool              // Whether filter input is active
@@ -64,6 +65,7 @@ func (m *MainPane) SetDevice(d *device.Device, root *device.FileNode) {
 	m.expanded = map[string]bool{}
 	m.treeIdx = 0
 	m.apps = nil
+	m.appsLoading = d != nil
 	m.appsIdx = 0
 	m.appsFilter = ""
 	m.appsFiltering = false
@@ -124,9 +126,40 @@ func (m *MainPane) SetTree(root *device.FileNode) {
 // SetApps replaces the list of installed apps shown in the Apps tab.
 func (m *MainPane) SetApps(apps []device.App) {
 	m.apps = apps
+	m.appsLoading = false
 	m.appsFilter = ""
 	m.appsFiltering = false
 	m.appsIdx = 0
+}
+
+// SetAppVersion fills in one app's version name, fetched in the background
+// after the bare app list was already shown (see model.enrichAppsCmd), if
+// the pane is still showing the device that app belongs to.
+func (m *MainPane) SetAppVersion(deviceID, bundleID, version string) {
+	if m.active == nil || m.active.ID != deviceID {
+		return
+	}
+	for i := range m.apps {
+		if m.apps[i].BundleID == bundleID {
+			m.apps[i].ShortVersion = version
+			return
+		}
+	}
+}
+
+// SetAppReactNative marks a single app as React Native once background
+// detection completes (see model.detectReactNativeCmd), if the pane is
+// still showing the device that app belongs to.
+func (m *MainPane) SetAppReactNative(deviceID, bundleID string, isRN bool) {
+	if m.active == nil || m.active.ID != deviceID {
+		return
+	}
+	for i := range m.apps {
+		if m.apps[i].BundleID == bundleID {
+			m.apps[i].IsReactNative = isRN
+			return
+		}
+	}
 }
 
 // filteredApps returns apps matching the active filter, or all apps when empty.
@@ -216,6 +249,13 @@ type StartAppLoggingMsg struct {
 // StopAppLoggingMsg is dispatched when the user presses "l" again on the app
 // currently being logged.
 type StopAppLoggingMsg struct{}
+
+// ShowRNOptionsMsg is dispatched when the user presses "m" on an app row. The
+// parent opens the React Native debugging options menu for that app.
+type ShowRNOptionsMsg struct {
+	Device device.Device
+	App    device.App
+}
 
 // RequestFileTreeMsg is dispatched when the Files tab is opened. App is nil
 // when no app is selected, in which case the parent should load the root tree.

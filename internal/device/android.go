@@ -1,13 +1,17 @@
 package device
 
 import (
+	"archive/zip"
 	"bufio"
 	"context"
+	"encoding/base64"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -20,6 +24,12 @@ import (
 type androidManager struct {
 	logger *logging.Logger
 }
+
+// rnDetectCache memoizes React Native detection results keyed by
+// "bundleID@nativeLibDir" (the dir path changes on reinstall/update,
+// naturally invalidating the entry). Shared across the emulator and physical
+// Android managers since the check and its cost are identical for both.
+var rnDetectCache sync.Map // map[string]bool
 
 // NewAndroidManager returns a Manager implementation for Android emulators.
 func NewAndroidManager(logger *logging.Logger) Manager {
@@ -292,6 +302,94 @@ func (m *androidManager) LaunchApp(ctx context.Context, deviceID, bundleID strin
 	out, err := d.RunShellCommand("am", "start", "-n", component)
 	m.logger.LogExec("adb shell", []string{"am", "start", "-n", component}, out, err)
 	return err
+}
+
+// SetBundlerLocation patches the app's default SharedPreferences with the
+// debug_http_host key React Native reads for the Metro bundler address, then
+// force-stops and relaunches the app so it picks up the change.
+func (m *androidManager) SetBundlerLocation(ctx context.Context, deviceID, bundleID, hostPort string) error {
+	serial, err := findAndroidSerial(ctx, deviceID)
+	if err != nil {
+		return fmt.Errorf("find android serial: %w", err)
+	}
+	d, err := gadbDevice(serial)
+	if err != nil {
+		return err
+	}
+	if err := androidWriteDebugHost(m.logger, d, bundleID, hostPort); err != nil {
+		return err
+	}
+	out, err := d.RunShellCommand("am", "force-stop", bundleID)
+	m.logger.LogExec("adb shell", []string{"am", "force-stop", bundleID}, out, err)
+	return m.LaunchApp(ctx, deviceID, bundleID)
+}
+
+// TriggerDevMenu opens the React Native dev menu via the hardware Menu key
+// (KEYCODE_MENU), the standard emulator/device dev-menu shortcut.
+func (m *androidManager) TriggerDevMenu(ctx context.Context, deviceID, _ string) error {
+	serial, err := findAndroidSerial(ctx, deviceID)
+	if err != nil {
+		return fmt.Errorf("find android serial: %w", err)
+	}
+	d, err := gadbDevice(serial)
+	if err != nil {
+		return err
+	}
+	out, err := d.RunShellCommand("input", "keyevent", "82")
+	m.logger.LogExec("adb shell", []string{"input", "keyevent", "82"}, out, err)
+	return err
+}
+
+// androidWriteDebugHost patches pkg's default SharedPreferences file
+// (shared_prefs/<pkg>_preferences.xml) with debug_http_host=hostPort via
+// `adb shell run-as`, which requires the app be debuggable. The file content
+// is base64-encoded on the wire so hostPort never appears unescaped inside a
+// shell command string.
+func androidWriteDebugHost(logger *logging.Logger, d gadb.Device, pkg, hostPort string) error {
+	prefsDir := fmt.Sprintf("/data/data/%s/shared_prefs", pkg)
+	prefsPath := fmt.Sprintf("%s/%s_preferences.xml", prefsDir, pkg)
+
+	existing, _ := d.RunShellCommand("run-as", pkg, "cat", prefsPath)
+	patched := patchDebugHostXML(existing, hostPort)
+	encoded := base64.StdEncoding.EncodeToString([]byte(patched))
+
+	script := fmt.Sprintf("mkdir -p %s && echo %s | base64 -d > %s", prefsDir, encoded, prefsPath)
+	out, err := d.RunShellCommand("run-as", pkg, "sh", "-c", "'"+script+"'")
+	logger.LogExec("adb shell", []string{"run-as", pkg, "sh", "-c", "<write debug_http_host>"}, out, err)
+	if err != nil {
+		return fmt.Errorf("run-as write shared_prefs: %w: %s", err, strings.TrimSpace(out))
+	}
+	return nil
+}
+
+// debugHostEntryRE matches an existing debug_http_host string entry inside a
+// SharedPreferences XML document, for patchDebugHostXML.
+var debugHostEntryRE = regexp.MustCompile(`<string name="debug_http_host">[^<]*</string>`)
+
+// patchDebugHostXML sets (inserting or replacing) the debug_http_host entry
+// in a SharedPreferences XML document, the key React Native's
+// PackagerConnectionSettings reads for the Metro bundler host:port. existing
+// may be empty — the app may not have a preferences file yet on first run —
+// in which case a minimal valid document is generated.
+func patchDebugHostXML(existing, hostPort string) string {
+	entry := `<string name="debug_http_host">` + escapeXMLText(hostPort) + `</string>`
+
+	existing = strings.TrimSpace(existing)
+	if existing == "" || !strings.Contains(existing, "<map>") {
+		return "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n" + entry + "\n</map>\n"
+	}
+	if debugHostEntryRE.MatchString(existing) {
+		return debugHostEntryRE.ReplaceAllString(existing, entry)
+	}
+	return strings.Replace(existing, "</map>", entry+"\n</map>", 1)
+}
+
+func escapeXMLText(s string) string {
+	var b strings.Builder
+	if err := xml.EscapeText(&b, []byte(s)); err != nil {
+		return s
+	}
+	return b.String()
 }
 
 // androidResolveLauncherActivity looks up the launcher activity for a package
@@ -697,9 +795,11 @@ func (m *androidManager) getRunningDevices(ctx context.Context) (map[string]bool
 	return running, nil
 }
 
-// ListApps implements AppLister for Android emulators. It fetches user-installed
-// packages via `pm list packages -3 -f`, then enriches version info from
-// `dumpsys package packages` in a single additional adb call.
+// ListApps implements AppLister for Android emulators. It fetches
+// user-installed packages via `pm list packages -3 -f` and returns
+// immediately — version names and React Native status are fetched
+// separately (FetchAppVersions, DetectReactNative) so this call is a single
+// adb round-trip.
 func (m *androidManager) ListApps(ctx context.Context, id string) ([]App, error) {
 	serial, err := findAndroidSerial(ctx, id)
 	if err != nil {
@@ -743,15 +843,16 @@ func (m *androidManager) ListApps(ctx context.Context, id string) ([]App, error)
 		return nil, nil
 	}
 
-	versions := androidFetchVersions(m.logger, d, byID)
-
+	// Version names are fetched separately via FetchAppVersions, and React
+	// Native status via DetectReactNative — both need an extra device
+	// round-trip, so this list returns the moment `pm list packages` itself
+	// is parsed instead of blocking on them too.
 	apps := make([]App, 0, len(byID))
 	for bundleID, e := range byID {
 		apps = append(apps, App{
-			BundleID:     bundleID,
-			Path:         e.path,
-			Type:         "User",
-			ShortVersion: versions[bundleID],
+			BundleID: bundleID,
+			Path:     e.path,
+			Type:     "User",
 		})
 	}
 
@@ -765,39 +866,128 @@ func (m *androidManager) ListApps(ctx context.Context, id string) ([]App, error)
 	return apps, nil
 }
 
-// androidFetchVersions returns a bundleID→versionName map by parsing a single
-// `dumpsys package packages` call, skipping lines for packages not in byID.
-func androidFetchVersions[E any](logger *logging.Logger, d gadb.Device, byID map[string]E) map[string]string {
-	out, err := d.RunShellCommand("dumpsys", "package", "packages")
-	logger.LogExec("adb shell", []string{"dumpsys", "package", "packages"}, out, err)
+// FetchAppVersions implements AppVersionFetcher for Android emulators.
+func (m *androidManager) FetchAppVersions(ctx context.Context, id string, bundleIDs []string) map[string]string {
+	serial, err := findAndroidSerial(ctx, id)
 	if err != nil {
-		return map[string]string{}
+		return nil
+	}
+	d, err := gadbDevice(serial)
+	if err != nil {
+		return nil
+	}
+	return androidFetchVersions(m.logger, d, bundleIDs)
+}
+
+// DetectReactNative implements ReactNativeDetector for Android emulators.
+func (m *androidManager) DetectReactNative(ctx context.Context, id string, app App) bool {
+	serial, err := findAndroidSerial(ctx, id)
+	if err != nil {
+		return false
+	}
+	d, err := gadbDevice(serial)
+	if err != nil {
+		return false
+	}
+	return detectReactNativeApp(m.logger, d, app.BundleID, app.Path)
+}
+
+// detectReactNativeApp reports whether the APK at apkPath is a React Native
+// app. It pulls the APK once (cached in rnDetectCache, keyed by bundleID and
+// apkPath so a reinstall/update invalidates it) and inspects its zip
+// directory locally — checking legacyNativeLibraryDir or shelling out to
+// `unzip` both proved unreliable: modern React Native builds set
+// extractNativeLibs="false" (AGP default), so their .so files are read
+// straight out of the APK and never extracted to disk, and `unzip` isn't
+// guaranteed to be symlinked into the on-device toybox.
+func detectReactNativeApp(logger *logging.Logger, d gadb.Device, bundleID, apkPath string) bool {
+	if apkPath == "" {
+		return false
+	}
+	key := bundleID + "@" + apkPath
+	if v, ok := rnDetectCache.Load(key); ok {
+		return v.(bool)
+	}
+	isRN := probeReactNativeAPK(logger, d, apkPath)
+	rnDetectCache.Store(key, isRN)
+	return isRN
+}
+
+func probeReactNativeAPK(logger *logging.Logger, d gadb.Device, apkPath string) bool {
+	tmp, err := os.CreateTemp("", "simmer-rn-*.apk")
+	if err != nil {
+		return false
+	}
+	defer os.Remove(tmp.Name())
+	defer tmp.Close()
+
+	err = d.Pull(apkPath, tmp)
+	logger.LogExec("adb pull", []string{apkPath}, "", err)
+	if err != nil {
+		return false
 	}
 
-	result := make(map[string]string, len(byID))
-	cur := ""
-	for line := range strings.SplitSeq(string(out), "\n") {
+	info, err := tmp.Stat()
+	if err != nil {
+		return false
+	}
+	zr, err := zip.NewReader(tmp, info.Size())
+	if err != nil {
+		return false
+	}
+	for _, f := range zr.File {
+		// Default Metro output is assets/index.android.bundle, but Expo and
+		// custom entry-file configs ship the JS bundle under a different or
+		// hashed name — still always under assets/ with a .bundle
+		// extension, so match on that shape rather than the exact default.
+		if strings.HasPrefix(f.Name, "assets/") && strings.HasSuffix(f.Name, ".bundle") {
+			return true
+		}
+		if lower := strings.ToLower(f.Name); strings.HasPrefix(f.Name, "lib/") &&
+			(strings.Contains(lower, "hermes") || strings.Contains(lower, "reactnativejni") || strings.Contains(lower, "jscexecutor")) {
+			return true
+		}
+	}
+	return false
+}
+
+// androidFetchVersions returns a bundleID→versionName map, one
+// `dumpsys package <id>` call per bundle ID. A single scrape of `dumpsys
+// package packages` (the whole device) used to back this, but its output
+// format varies enough across Android versions/vendor skins (observed
+// missing versionName for a subset of packages on a real MIUI/Android 11
+// device) that it silently dropped entries; scoping the dump to one package
+// at a time is what `adb shell dumpsys package <id>` is meant for and is
+// far smaller, so nothing gets lost or truncated. Callers already bound
+// concurrency across apps (see model.enrichAppsCmd), so this runs
+// sequentially.
+func androidFetchVersions(logger *logging.Logger, d gadb.Device, bundleIDs []string) map[string]string {
+	versions := make(map[string]string, len(bundleIDs))
+	for _, id := range bundleIDs {
+		out, err := d.RunShellCommand("dumpsys", "package", id)
+		logger.LogExec("adb shell", []string{"dumpsys", "package", id}, out, err)
+		if err != nil {
+			continue
+		}
+		if v := parseDumpsysVersionName(out); v != "" {
+			versions[id] = v
+		}
+	}
+	return versions
+}
+
+// parseDumpsysVersionName extracts the first "versionName=" value from a
+// `dumpsys package <id>` block.
+func parseDumpsysVersionName(out string) string {
+	for line := range strings.SplitSeq(out, "\n") {
 		trimmed := strings.TrimSpace(line)
-		if after, ok := strings.CutPrefix(trimmed, "Package ["); ok {
-			if before, _, ok0 := strings.Cut(after, "]"); ok0 {
-				// Clone breaks the reference to the large dumpsys backing array.
-				cur = strings.Clone(before)
-			}
-			continue
-		}
-		if cur == "" {
-			continue
-		}
-		if _, want := byID[cur]; !want {
-			continue
-		}
 		if after, ok := strings.CutPrefix(trimmed, "versionName="); ok {
 			if parts := strings.Fields(after); len(parts) > 0 {
-				result[cur] = strings.Clone(parts[0])
+				return parts[0]
 			}
 		}
 	}
-	return result
+	return ""
 }
 
 // StreamLogs implements LogStreamer for Android emulators. It launches the app

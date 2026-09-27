@@ -1,6 +1,10 @@
 package app
 
-import "simmer/internal/device"
+import (
+	"simmer/internal/device"
+
+	tea "charm.land/bubbletea/v2"
+)
 
 type buildStartedMsg struct {
 	device device.Device
@@ -115,6 +119,32 @@ type appsListMsg struct {
 	err    error
 }
 
+// appReactNativeMsg carries a single app's background React Native detection
+// result (see model.enrichAppsCmd).
+type appReactNativeMsg struct {
+	deviceID string
+	bundleID string
+	isRN     bool
+}
+
+// appVersionMsg carries a single app's version name, fetched in the
+// background after the bare app list is already on screen (see
+// model.enrichAppsCmd).
+type appVersionMsg struct {
+	deviceID string
+	bundleID string
+	version  string
+}
+
+// appEnrichMsg wraps one streamed result from model.enrichAppsCmd's worker
+// pool (either appVersionMsg or appReactNativeMsg) along with the channel it
+// came from, so Update can re-arm the listener and keep draining until the
+// pool finishes and closes ch.
+type appEnrichMsg struct {
+	msg tea.Msg
+	ch  <-chan tea.Msg
+}
+
 type infoMsg struct {
 	device device.Device
 	info   device.DeviceInfo
@@ -134,4 +164,39 @@ type logBatchMsg struct {
 type logEndedMsg struct {
 	bundleID string
 	err      error
+}
+
+// bundlerConfigResultMsg reports the outcome of setting an RN app's Metro
+// bundler location (see model.setBundlerLocationCmd).
+type bundlerConfigResultMsg struct {
+	appLabel string
+	err      error
+}
+
+// devMenuTriggerResultMsg reports the outcome of triggering the RN dev menu
+// (see model.triggerDevMenuCmd).
+type devMenuTriggerResultMsg struct {
+	err error
+}
+
+// rnLogRelaunchedMsg reports the outcome of the terminate+relaunch step that
+// precedes starting an RN "log to file" session (see
+// model.rnStartLoggingCmd), carrying the resolved log path through to the
+// handler that opens the file and starts streaming.
+type rnLogRelaunchedMsg struct {
+	device device.Device
+	app    device.App
+	path   string
+	err    error
+}
+
+// consoleLogStartedMsg reports the outcome of starting a devicectl --console
+// log stream (physical iOS only) for the RN debugging menu's "log to file"
+// (see model.startConsoleLogCmd).
+type consoleLogStartedMsg struct {
+	device device.Device
+	app    device.App
+	path   string
+	stream *device.LogStream
+	err    error
 }

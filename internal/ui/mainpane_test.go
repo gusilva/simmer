@@ -32,6 +32,65 @@ func TestMainPane_SyncActiveDevice_Found(t *testing.T) {
 	}
 }
 
+func TestMainPane_SetAppVersion_UpdatesMatchingApp(t *testing.T) {
+	m := newTestPane()
+	dev := &device.Device{ID: "abc"}
+	m.SetDevice(dev, nil)
+	m.SetApps([]device.App{{BundleID: "com.a", Name: "A"}, {BundleID: "com.b", Name: "B"}})
+
+	m.SetAppVersion("abc", "com.b", "2.0.0")
+
+	if m.apps[0].ShortVersion != "" {
+		t.Error("com.a must be unaffected")
+	}
+	if m.apps[1].ShortVersion != "2.0.0" {
+		t.Errorf("expected com.b version 2.0.0, got %q", m.apps[1].ShortVersion)
+	}
+}
+
+func TestMainPane_SetAppVersion_StaleDeviceIgnored(t *testing.T) {
+	m := newTestPane()
+	dev := &device.Device{ID: "abc"}
+	m.SetDevice(dev, nil)
+	m.SetApps([]device.App{{BundleID: "com.a", Name: "A"}})
+
+	m.SetAppVersion("stale-device", "com.a", "9.9.9")
+
+	if m.apps[0].ShortVersion != "" {
+		t.Error("result from a stale device must not apply")
+	}
+}
+
+func TestMainPane_SetAppReactNative_UpdatesMatchingApp(t *testing.T) {
+	m := newTestPane()
+	dev := &device.Device{ID: "abc"}
+	m.SetDevice(dev, nil)
+	m.SetApps([]device.App{{BundleID: "com.a", Name: "A"}, {BundleID: "com.b", Name: "B"}})
+
+	m.SetAppReactNative("abc", "com.b", true)
+
+	if m.apps[0].IsReactNative {
+		t.Error("com.a must be unaffected")
+	}
+	if !m.apps[1].IsReactNative {
+		t.Error("expected com.b marked React Native")
+	}
+}
+
+func TestMainPane_SetAppReactNative_StaleDeviceIgnored(t *testing.T) {
+	m := newTestPane()
+	dev := &device.Device{ID: "abc"}
+	m.SetDevice(dev, nil)
+	m.SetApps([]device.App{{BundleID: "com.a", Name: "A"}})
+
+	// Detection result arrives for a device the pane has since moved on from.
+	m.SetAppReactNative("stale-device", "com.a", true)
+
+	if m.apps[0].IsReactNative {
+		t.Error("result from a stale device must not apply")
+	}
+}
+
 func TestMainPane_SyncActiveDevice_NotFound(t *testing.T) {
 	m := newTestPane()
 	dev := &device.Device{ID: "abc", Status: device.StatusRunning}
