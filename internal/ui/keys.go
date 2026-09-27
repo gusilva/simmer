@@ -112,6 +112,7 @@ type MainPaneKeyMap struct {
 	Rebuild key.Binding
 	Launch  key.Binding
 	Close   key.Binding
+	More    key.Binding
 	// Files panel
 	Expand key.Binding
 	Help   key.Binding
@@ -126,7 +127,7 @@ func (k MainPaneKeyMap) FullHelp() [][]key.Binding {
 		{k.Up, k.Down, k.Home, k.End},
 		{k.Panel, k.Back},
 		{k.Filter, k.Install, k.Delete, k.PinApp, k.Log, k.Rebuild},
-		{k.Launch, k.Close},
+		{k.Launch, k.Close, k.More},
 		{k.Info, k.Expand, k.Help},
 	}
 }
@@ -147,7 +148,7 @@ func (appsPaneHelp) FullHelp() [][]key.Binding {
 		{k.Up, k.Down, k.Home, k.End},
 		{k.Panel, k.Back, k.Info},
 		{k.Filter, k.Install, k.Delete, k.PinApp, k.Log, k.Rebuild},
-		{k.Launch, k.Close},
+		{k.Launch, k.Close, k.More},
 		{k.Help},
 	}
 }
@@ -192,6 +193,7 @@ var MainPaneKeys = MainPaneKeyMap{
 	Rebuild: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "rebuild & reinstall")),
 	Launch:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "launch")),
 	Close:   key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "close")),
+	More:    key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "more")),
 	Expand:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "expand dir / open db")),
 	Help:    key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 }
@@ -218,6 +220,33 @@ var InfoOverlayKeys = InfoOverlayKeyMap{
 	Close:  key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")),
 	Copy:   key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "copy udid")),
 	Reveal: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "reveal in Finder")),
+}
+
+// ── RN debugging options key map ────────────────────────────────────────────
+
+// RNOptionsKeyMap contains bindings for the RN debugging options menu and its
+// follow-up text prompts.
+type RNOptionsKeyMap struct {
+	Up      key.Binding
+	Down    key.Binding
+	Confirm key.Binding
+	Cancel  key.Binding
+}
+
+func (k RNOptionsKeyMap) ShortHelp() []key.Binding {
+	return []key.Binding{k.Up, k.Confirm, k.Cancel}
+}
+
+func (k RNOptionsKeyMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{{k.Up, k.Down}, {k.Confirm, k.Cancel}}
+}
+
+// RNOptionsKeys is the RN debugging options key map singleton.
+var RNOptionsKeys = RNOptionsKeyMap{
+	Up:      key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
+	Down:    key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+	Confirm: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
+	Cancel:  key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 }
 
 // ── Install app file picker key map ─────────────────────────────────────────

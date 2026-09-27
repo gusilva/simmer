@@ -1,9 +1,7 @@
 package app
 
 import (
-	"context"
 	"io"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -74,7 +72,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.dbViewerModal = nil
 				return m, nil
 			}
-			if m.actionMenu == nil && m.platformPicker == nil && m.createIOSModal == nil && m.createAndModal == nil && m.deleteAlert == nil && m.deleteAppAlert == nil && m.installAppModal == nil && m.sqliteModal == nil {
+			if m.actionMenu == nil && m.platformPicker == nil && m.createIOSModal == nil && m.createAndModal == nil && m.deleteAlert == nil && m.deleteAppAlert == nil && m.installAppModal == nil && m.sqliteModal == nil && m.rnOptionsModal == nil && m.textPromptModal == nil {
 				modal := dbviewer.New(func() tea.Msg { return ui.CancelOverlayMsg{} })
 				modal.SetSize(m.width, m.height)
 				m.dbViewerModal = &modal
@@ -126,6 +124,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.sqliteModal != nil {
 			updated, cmd := m.sqliteModal.Update(msg)
 			m.sqliteModal = &updated
+			return m, cmd
+		}
+		if m.rnOptionsModal != nil {
+			updated, cmd := m.rnOptionsModal.Update(msg)
+			m.rnOptionsModal = &updated
+			return m, cmd
+		}
+		if m.textPromptModal != nil {
+			updated, cmd := m.textPromptModal.Update(msg)
+			m.textPromptModal = &updated
 			return m, cmd
 		}
 		if m.dbViewerModal != nil {
@@ -410,34 +418,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if sel == nil {
 			return m, nil
 		}
-		bundleID := msg.App.BundleID
-		if m.logStream != nil && m.logBundleID == bundleID && m.logDeviceID == sel.ID {
+		if m.logStream != nil && m.logBundleID == msg.App.BundleID && m.logDeviceID == sel.ID {
 			return m, nil
 		}
-		// Replace any previous session (different app or device).
-		m.teardownAppLogging()
-
-		f, err := m.startAppLogging(*sel, msg.App)
-		if err != nil {
-			m.errs = append(m.errs, err)
-			return m, m.setStatus("app logging failed: "+errPreview(err), ui.StatusErr)
-		}
-		stream, err := m.coordinator.StreamLogs(context.Background(), *sel, msg.App)
-		if err != nil {
-			f.Close()
-			_ = os.Remove(f.Name()) // header-only file is just noise
-			m.errs = append(m.errs, err)
-			return m, m.setStatus("app logging failed: "+errPreview(err), ui.StatusErr)
-		}
-		m.logFile = f
-		m.logStream = stream
-		m.logBundleID = bundleID
-		m.logDeviceID = sel.ID
-		m.mainPane.SetLoggingBundle(bundleID)
-		return m, tea.Batch(
-			nextLogBatchCmd(stream, bundleID),
-			m.setStatus("logging "+msg.App.Label()+" → "+filepath.Base(f.Name()), ui.StatusOk),
-		)
+		path := filepath.Join(m.launchDir, logFileName(msg.App))
+		return m, m.beginAppLogStream(*sel, msg.App, path)
 
 	case logBatchMsg:
 		if msg.bundleID != m.logBundleID || m.logStream == nil || m.logFile == nil {
@@ -463,6 +448,89 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.setStatus("app logging ended: "+errPreview(msg.err), ui.StatusWarn)
 		}
 		return m, m.setStatus("app logging ended", ui.StatusInfo)
+
+	case ui.ShowRNOptionsMsg:
+		loggingActive := m.mainPane.LoggingBundle() == msg.App.BundleID
+		modal := ui.NewRNOptionsModal(msg.Device, msg.App, true, loggingActive)
+		m.rnOptionsModal = &modal
+		return m, nil
+
+	case ui.RNOptionSelectedMsg:
+		m.rnOptionsModal = nil
+		switch msg.Option {
+		case ui.RNOptionBundler:
+			def := defaultBundlerHostPort(msg.Device)
+			modal, cmd := ui.NewTextPromptModal(ui.TextPromptBundler, "Bundler Location (host:port)",
+				def, def, msg.Device, msg.App, validateHostPort)
+			m.textPromptModal = &modal
+			return m, cmd
+		case ui.RNOptionDevMenu:
+			port := portFromHostPort(m.bundlerHostPorts[msg.App.BundleID])
+			return m, tea.Batch(m.triggerDevMenuCmd(msg.Device, port), m.setStatus("Triggering dev menu…", ui.StatusInfo))
+		case ui.RNOptionLogFile:
+			if m.mainPane.LoggingBundle() == msg.App.BundleID {
+				m.teardownAppLogging()
+				return m, m.setStatus("app logging stopped", ui.StatusInfo)
+			}
+			modal, cmd := ui.NewTextPromptModal(ui.TextPromptLogPath, "Log File Path",
+				"app.log (bare name saves to cwd)", "", msg.Device, msg.App, nil)
+			m.textPromptModal = &modal
+			return m, cmd
+		}
+		return m, nil
+
+	case ui.TextPromptSubmittedMsg:
+		m.textPromptModal = nil
+		switch msg.Kind {
+		case ui.TextPromptBundler:
+			m.bundlerHostPorts[msg.App.BundleID] = msg.Value
+			return m, tea.Batch(
+				m.setBundlerLocationCmd(msg.Device, msg.App, msg.Value),
+				m.setStatus("Configuring bundler…", ui.StatusInfo),
+			)
+		case ui.TextPromptLogPath:
+			path := m.resolveLogPath(msg.Value)
+			if msg.Device.Platform == device.PlatformIOS && msg.Device.Kind == device.KindPhysical {
+				hostPort := m.bundlerHostPorts[msg.App.BundleID]
+				return m, tea.Batch(
+					m.startConsoleLogCmd(msg.Device, msg.App, path, hostPort),
+					m.setStatus("Relaunching "+msg.App.Label()+"…", ui.StatusInfo),
+				)
+			}
+			return m, tea.Batch(
+				m.rnStartLoggingCmd(msg.Device, msg.App, path),
+				m.setStatus("Relaunching "+msg.App.Label()+"…", ui.StatusInfo),
+			)
+		}
+		return m, nil
+
+	case bundlerConfigResultMsg:
+		if msg.err != nil {
+			m.errs = append(m.errs, msg.err)
+			return m, m.setStatus("bundler config failed: "+errPreview(msg.err), ui.StatusErr)
+		}
+		return m, m.setStatus("Bundler configured for "+msg.appLabel, ui.StatusOk)
+
+	case devMenuTriggerResultMsg:
+		if msg.err != nil {
+			m.errs = append(m.errs, msg.err)
+			return m, m.setStatus("dev menu trigger failed: "+errPreview(msg.err), ui.StatusErr)
+		}
+		return m, m.setStatus("Dev menu triggered", ui.StatusOk)
+
+	case rnLogRelaunchedMsg:
+		if msg.err != nil {
+			m.errs = append(m.errs, msg.err)
+			return m, m.setStatus("relaunch failed: "+errPreview(msg.err), ui.StatusErr)
+		}
+		return m, m.beginAppLogStream(msg.device, msg.app, msg.path)
+
+	case consoleLogStartedMsg:
+		if msg.err != nil {
+			m.errs = append(m.errs, msg.err)
+			return m, m.setStatus("app logging failed: "+errPreview(msg.err), ui.StatusErr)
+		}
+		return m, m.attachAppLogStream(msg.device, msg.app, msg.path, msg.stream)
 
 	case ui.RefreshDevicesMsg:
 		m.loading = true
@@ -712,7 +780,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Complex modals swallow all clicks — same overlays that intercept
 		// every key in the tea.KeyPressMsg case above.
 		if m.actionMenu != nil || m.platformPicker != nil || m.createIOSModal != nil || m.createAndModal != nil ||
-			m.installAppModal != nil || m.sqliteModal != nil ||
+			m.installAppModal != nil || m.sqliteModal != nil || m.rnOptionsModal != nil || m.textPromptModal != nil ||
 			m.infoOverlay != nil || m.helpOverlay != nil {
 			return m, nil
 		}
@@ -778,6 +846,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.installAppModal = nil
 		m.sqliteModal = nil
 		m.dbViewerModal = nil
+		m.rnOptionsModal = nil
+		m.textPromptModal = nil
 		if m.infoOverlay != nil {
 			m.infoOverlay = nil
 			m.mainPane.SetInfoOpen(false)

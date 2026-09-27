@@ -52,3 +52,38 @@ func (c *Coordinator) StreamLogs(ctx context.Context, dev Device, app App) (*Log
 	}
 	return nil, fmt.Errorf("no log streamer registered for platform %s", dev.Platform)
 }
+
+// ConsoleLogStreamer is an optional interface a Manager may implement to
+// stream a freshly (re)launched app's own stdout/stderr, as opposed to
+// syslog. Only physicalIOSManager implements this: `devicectl ... --console`
+// captures exactly the process's own output stream — where React Native's
+// console.log/Hermes output lands — which syslog-based StreamLogs often
+// drowns in unrelated system noise or misses outright.
+//
+// hostPort, if non-empty, is re-applied as a `-RCT_jsLocation` launch
+// argument on the relaunch this triggers. This matters specifically for
+// physical iOS: a custom bundler location set there has no persistence of
+// its own (no `defaults write` equivalent exists for real hardware), so
+// without re-supplying it here, this relaunch would silently revert to the
+// app's compiled-in default and never reach Metro.
+type ConsoleLogStreamer interface {
+	Platform() Platform
+	StreamConsoleLog(ctx context.Context, deviceID, bundleID, hostPort string) (*LogStream, error)
+}
+
+// StreamConsoleLog routes to the Manager that implements ConsoleLogStreamer
+// for the device's Platform and Kind.
+func (c *Coordinator) StreamConsoleLog(ctx context.Context, dev Device, bundleID, hostPort string) (*LogStream, error) {
+	for _, m := range c.Managers {
+		s, ok := m.(ConsoleLogStreamer)
+		if !ok || s.Platform() != dev.Platform {
+			continue
+		}
+		k, isKinded := m.(KindedManager)
+		if !isKinded || k.Kind() != dev.Kind {
+			continue
+		}
+		return s.StreamConsoleLog(ctx, dev.ID, bundleID, hostPort)
+	}
+	return nil, fmt.Errorf("no console log streamer registered for platform %s", dev.Platform)
+}

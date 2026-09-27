@@ -195,6 +195,62 @@ func (m *physicalAndroidManager) DeleteApp(_ context.Context, deviceID, bundleID
 	return nil
 }
 
+// TerminateApp stops a running app via `adb shell am force-stop`.
+func (m *physicalAndroidManager) TerminateApp(_ context.Context, deviceID, bundleID string) error {
+	d, err := gadbDevice(deviceID)
+	if err != nil {
+		return err
+	}
+	out, err := d.RunShellCommand("am", "force-stop", bundleID)
+	m.logger.LogExec("adb shell", []string{"am", "force-stop", bundleID}, out, err)
+	return err
+}
+
+// LaunchApp starts an already-installed app, resolving its launcher activity
+// first (device.App only stores the package name).
+func (m *physicalAndroidManager) LaunchApp(_ context.Context, deviceID, bundleID string) error {
+	d, err := gadbDevice(deviceID)
+	if err != nil {
+		return err
+	}
+	activity, err := androidResolveLauncherActivity(d, bundleID)
+	if err != nil {
+		return fmt.Errorf("resolve launcher activity: %w", err)
+	}
+	component := bundleID + "/" + activity
+	out, err := d.RunShellCommand("am", "start", "-n", component)
+	m.logger.LogExec("adb shell", []string{"am", "start", "-n", component}, out, err)
+	return err
+}
+
+// SetBundlerLocation patches the app's default SharedPreferences with the
+// debug_http_host key React Native reads for the Metro bundler address, then
+// force-stops and relaunches the app so it picks up the change.
+func (m *physicalAndroidManager) SetBundlerLocation(ctx context.Context, deviceID, bundleID, hostPort string) error {
+	d, err := gadbDevice(deviceID)
+	if err != nil {
+		return err
+	}
+	if err := androidWriteDebugHost(m.logger, d, bundleID, hostPort); err != nil {
+		return err
+	}
+	out, err := d.RunShellCommand("am", "force-stop", bundleID)
+	m.logger.LogExec("adb shell", []string{"am", "force-stop", bundleID}, out, err)
+	return m.LaunchApp(ctx, deviceID, bundleID)
+}
+
+// TriggerDevMenu opens the React Native dev menu via the hardware Menu key
+// (KEYCODE_MENU), the standard emulator/device dev-menu shortcut.
+func (m *physicalAndroidManager) TriggerDevMenu(_ context.Context, deviceID, _ string) error {
+	d, err := gadbDevice(deviceID)
+	if err != nil {
+		return err
+	}
+	out, err := d.RunShellCommand("input", "keyevent", "82")
+	m.logger.LogExec("adb shell", []string{"input", "keyevent", "82"}, out, err)
+	return err
+}
+
 // StreamLogs streams logcat output from a physical Android device.
 // Uses the adb subprocess (adb logcat) since gadb lacks streaming shell support.
 // The physical device serial (dev.ID) is used directly as the adb serial.

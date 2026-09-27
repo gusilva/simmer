@@ -165,3 +165,38 @@ type logEndedMsg struct {
 	bundleID string
 	err      error
 }
+
+// bundlerConfigResultMsg reports the outcome of setting an RN app's Metro
+// bundler location (see model.setBundlerLocationCmd).
+type bundlerConfigResultMsg struct {
+	appLabel string
+	err      error
+}
+
+// devMenuTriggerResultMsg reports the outcome of triggering the RN dev menu
+// (see model.triggerDevMenuCmd).
+type devMenuTriggerResultMsg struct {
+	err error
+}
+
+// rnLogRelaunchedMsg reports the outcome of the terminate+relaunch step that
+// precedes starting an RN "log to file" session (see
+// model.rnStartLoggingCmd), carrying the resolved log path through to the
+// handler that opens the file and starts streaming.
+type rnLogRelaunchedMsg struct {
+	device device.Device
+	app    device.App
+	path   string
+	err    error
+}
+
+// consoleLogStartedMsg reports the outcome of starting a devicectl --console
+// log stream (physical iOS only) for the RN debugging menu's "log to file"
+// (see model.startConsoleLogCmd).
+type consoleLogStartedMsg struct {
+	device device.Device
+	app    device.App
+	path   string
+	stream *device.LogStream
+	err    error
+}

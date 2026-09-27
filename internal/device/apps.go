@@ -226,6 +226,84 @@ func (c *Coordinator) TerminateApp(ctx context.Context, dev Device, bundleID str
 	return fmt.Errorf("no app terminator registered for platform %s", dev.Platform)
 }
 
+// BundlerConfigurer is an optional interface a Manager may implement to point
+// a React Native app's JS bundler (Metro) at a given host:port and relaunch
+// the app so it picks up the change.
+type BundlerConfigurer interface {
+	Platform() Platform
+	SetBundlerLocation(ctx context.Context, deviceID, bundleID, hostPort string) error
+}
+
+// SetBundlerLocation routes to the Manager that implements BundlerConfigurer
+// for the device's Platform, preferring a KindedManager match whose Kind
+// equals dev.Kind; falls back to any BundlerConfigurer that does not
+// implement KindedManager (e.g. iosManager, which serves only simulators and
+// never needs to disambiguate Kind).
+func (c *Coordinator) SetBundlerLocation(ctx context.Context, dev Device, bundleID, hostPort string) error {
+	for _, m := range c.Managers {
+		b, ok := m.(BundlerConfigurer)
+		if !ok || b.Platform() != dev.Platform {
+			continue
+		}
+		k, isKinded := m.(KindedManager)
+		if !isKinded || k.Kind() != dev.Kind {
+			continue
+		}
+		return b.SetBundlerLocation(ctx, dev.ID, bundleID, hostPort)
+	}
+	for _, m := range c.Managers {
+		b, ok := m.(BundlerConfigurer)
+		if !ok || b.Platform() != dev.Platform {
+			continue
+		}
+		if _, isKinded := m.(KindedManager); isKinded {
+			continue
+		}
+		return b.SetBundlerLocation(ctx, dev.ID, bundleID, hostPort)
+	}
+	return fmt.Errorf("no bundler configurer registered for platform %s", dev.Platform)
+}
+
+// DevMenuTrigger is an optional interface a Manager may implement to open the
+// React Native dev menu on a device. It is device-wide, not app-scoped — the
+// dev menu key/gesture always targets whatever app is foreground. metroPort
+// is only meaningful to a manager whose trigger routes through Metro (only
+// physicalIOSManager, currently) — pass "" to use that manager's default.
+type DevMenuTrigger interface {
+	Platform() Platform
+	TriggerDevMenu(ctx context.Context, deviceID, metroPort string) error
+}
+
+// TriggerDevMenu routes to the Manager that implements DevMenuTrigger for the
+// device's Platform, preferring a KindedManager match whose Kind equals
+// dev.Kind; falls back to any DevMenuTrigger that does not implement
+// KindedManager (e.g. iosManager, which serves only simulators and never
+// needs to disambiguate Kind).
+func (c *Coordinator) TriggerDevMenu(ctx context.Context, dev Device, metroPort string) error {
+	for _, m := range c.Managers {
+		t, ok := m.(DevMenuTrigger)
+		if !ok || t.Platform() != dev.Platform {
+			continue
+		}
+		k, isKinded := m.(KindedManager)
+		if !isKinded || k.Kind() != dev.Kind {
+			continue
+		}
+		return t.TriggerDevMenu(ctx, dev.ID, metroPort)
+	}
+	for _, m := range c.Managers {
+		t, ok := m.(DevMenuTrigger)
+		if !ok || t.Platform() != dev.Platform {
+			continue
+		}
+		if _, isKinded := m.(KindedManager); isKinded {
+			continue
+		}
+		return t.TriggerDevMenu(ctx, dev.ID, metroPort)
+	}
+	return fmt.Errorf("no dev menu trigger registered for platform %s", dev.Platform)
+}
+
 // DeleteApp uninstalls the given app from a device, routing to the Manager that
 // implements AppDeleter for the device's Platform, preferring a KindedManager match.
 func (c *Coordinator) DeleteApp(ctx context.Context, dev Device, bundleID string) error {

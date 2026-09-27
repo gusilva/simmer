@@ -4,11 +4,14 @@ import (
 	"archive/zip"
 	"bufio"
 	"context"
+	"encoding/base64"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -299,6 +302,94 @@ func (m *androidManager) LaunchApp(ctx context.Context, deviceID, bundleID strin
 	out, err := d.RunShellCommand("am", "start", "-n", component)
 	m.logger.LogExec("adb shell", []string{"am", "start", "-n", component}, out, err)
 	return err
+}
+
+// SetBundlerLocation patches the app's default SharedPreferences with the
+// debug_http_host key React Native reads for the Metro bundler address, then
+// force-stops and relaunches the app so it picks up the change.
+func (m *androidManager) SetBundlerLocation(ctx context.Context, deviceID, bundleID, hostPort string) error {
+	serial, err := findAndroidSerial(ctx, deviceID)
+	if err != nil {
+		return fmt.Errorf("find android serial: %w", err)
+	}
+	d, err := gadbDevice(serial)
+	if err != nil {
+		return err
+	}
+	if err := androidWriteDebugHost(m.logger, d, bundleID, hostPort); err != nil {
+		return err
+	}
+	out, err := d.RunShellCommand("am", "force-stop", bundleID)
+	m.logger.LogExec("adb shell", []string{"am", "force-stop", bundleID}, out, err)
+	return m.LaunchApp(ctx, deviceID, bundleID)
+}
+
+// TriggerDevMenu opens the React Native dev menu via the hardware Menu key
+// (KEYCODE_MENU), the standard emulator/device dev-menu shortcut.
+func (m *androidManager) TriggerDevMenu(ctx context.Context, deviceID, _ string) error {
+	serial, err := findAndroidSerial(ctx, deviceID)
+	if err != nil {
+		return fmt.Errorf("find android serial: %w", err)
+	}
+	d, err := gadbDevice(serial)
+	if err != nil {
+		return err
+	}
+	out, err := d.RunShellCommand("input", "keyevent", "82")
+	m.logger.LogExec("adb shell", []string{"input", "keyevent", "82"}, out, err)
+	return err
+}
+
+// androidWriteDebugHost patches pkg's default SharedPreferences file
+// (shared_prefs/<pkg>_preferences.xml) with debug_http_host=hostPort via
+// `adb shell run-as`, which requires the app be debuggable. The file content
+// is base64-encoded on the wire so hostPort never appears unescaped inside a
+// shell command string.
+func androidWriteDebugHost(logger *logging.Logger, d gadb.Device, pkg, hostPort string) error {
+	prefsDir := fmt.Sprintf("/data/data/%s/shared_prefs", pkg)
+	prefsPath := fmt.Sprintf("%s/%s_preferences.xml", prefsDir, pkg)
+
+	existing, _ := d.RunShellCommand("run-as", pkg, "cat", prefsPath)
+	patched := patchDebugHostXML(existing, hostPort)
+	encoded := base64.StdEncoding.EncodeToString([]byte(patched))
+
+	script := fmt.Sprintf("mkdir -p %s && echo %s | base64 -d > %s", prefsDir, encoded, prefsPath)
+	out, err := d.RunShellCommand("run-as", pkg, "sh", "-c", "'"+script+"'")
+	logger.LogExec("adb shell", []string{"run-as", pkg, "sh", "-c", "<write debug_http_host>"}, out, err)
+	if err != nil {
+		return fmt.Errorf("run-as write shared_prefs: %w: %s", err, strings.TrimSpace(out))
+	}
+	return nil
+}
+
+// debugHostEntryRE matches an existing debug_http_host string entry inside a
+// SharedPreferences XML document, for patchDebugHostXML.
+var debugHostEntryRE = regexp.MustCompile(`<string name="debug_http_host">[^<]*</string>`)
+
+// patchDebugHostXML sets (inserting or replacing) the debug_http_host entry
+// in a SharedPreferences XML document, the key React Native's
+// PackagerConnectionSettings reads for the Metro bundler host:port. existing
+// may be empty — the app may not have a preferences file yet on first run —
+// in which case a minimal valid document is generated.
+func patchDebugHostXML(existing, hostPort string) string {
+	entry := `<string name="debug_http_host">` + escapeXMLText(hostPort) + `</string>`
+
+	existing = strings.TrimSpace(existing)
+	if existing == "" || !strings.Contains(existing, "<map>") {
+		return "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n" + entry + "\n</map>\n"
+	}
+	if debugHostEntryRE.MatchString(existing) {
+		return debugHostEntryRE.ReplaceAllString(existing, entry)
+	}
+	return strings.Replace(existing, "</map>", entry+"\n</map>", 1)
+}
+
+func escapeXMLText(s string) string {
+	var b strings.Builder
+	if err := xml.EscapeText(&b, []byte(s)); err != nil {
+		return s
+	}
+	return b.String()
 }
 
 // androidResolveLauncherActivity looks up the launcher activity for a package

@@ -5,6 +5,47 @@ import (
 	"testing"
 )
 
+// ---------- patchDebugHostXML ----------
+
+func TestPatchDebugHostXML(t *testing.T) {
+	tests := []struct {
+		name     string
+		existing string
+		hostPort string
+		want     string
+	}{
+		{
+			name:     "empty file (first run)",
+			existing: "",
+			hostPort: "localhost:8081",
+			want:     "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n<string name=\"debug_http_host\">localhost:8081</string>\n</map>\n",
+		},
+		{
+			name:     "no existing key, other prefs present",
+			existing: "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n<boolean name=\"other_pref\" value=\"true\" />\n</map>\n",
+			hostPort: "192.168.1.26:8083",
+			want:     "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n<boolean name=\"other_pref\" value=\"true\" />\n<string name=\"debug_http_host\">192.168.1.26:8083</string>\n</map>",
+		},
+		{
+			name:     "replaces existing key",
+			existing: "<map>\n<string name=\"debug_http_host\">old-host:9999</string>\n</map>\n",
+			hostPort: "localhost:8081",
+			want:     "<map>\n<string name=\"debug_http_host\">localhost:8081</string>\n</map>",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := patchDebugHostXML(tt.existing, tt.hostPort)
+			if got != tt.want {
+				t.Errorf("patchDebugHostXML() =\n%q\nwant\n%q", got, tt.want)
+			}
+			if !strings.Contains(got, "debug_http_host") {
+				t.Errorf("result missing debug_http_host key: %q", got)
+			}
+		})
+	}
+}
+
 // ---------- parseAVDManagerDevices ----------
 
 func TestParseAVDManagerDevices_Basic(t *testing.T) {

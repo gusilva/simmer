@@ -250,6 +250,13 @@ type StartAppLoggingMsg struct {
 // currently being logged.
 type StopAppLoggingMsg struct{}
 
+// ShowRNOptionsMsg is dispatched when the user presses "m" on an app row. The
+// parent opens the React Native debugging options menu for that app.
+type ShowRNOptionsMsg struct {
+	Device device.Device
+	App    device.App
+}
+
 // RequestFileTreeMsg is dispatched when the Files tab is opened. App is nil
 // when no app is selected, in which case the parent should load the root tree.
 type RequestFileTreeMsg struct {

@@ -2,6 +2,9 @@ package app
 
 import (
 	"context"
+	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -10,6 +13,47 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 )
+
+// defaultBundlerHostPort returns a Metro host:port that is actually
+// reachable from dev, so the prompt isn't prefilled with a value that looks
+// plausible but silently never connects:
+//   - iOS simulator: "localhost" works — simctl processes share this Mac's
+//     network namespace.
+//   - Android emulator: "localhost" resolves to the emulator itself, not
+//     this Mac; the AVD's host-loopback alias is "10.0.2.2" [TODO - ip improvement].
+//   - Any physical device: "localhost" resolves to the phone itself. It has
+//     to be pointed at this Mac's actual LAN address instead.
+func defaultBundlerHostPort(dev device.Device) string {
+	const port = "8081"
+	if dev.Kind == device.KindPhysical {
+		if ip, ok := device.LocalLANIP(); ok {
+			return ip + ":" + port
+		}
+		return "localhost:" + port
+	}
+	if dev.Platform == device.PlatformAndroid {
+		return "10.0.2.2:" + port
+	}
+	return "localhost:" + port
+}
+
+// validateHostPort checks basic well-formedness of a "host:port" string
+// entered in the bundler-location prompt: non-empty, contains ":", and the
+// port segment is numeric. It does not validate the host portion — Metro
+// itself surfaces a connection failure for a bad host.
+func validateHostPort(s string) error {
+	if s == "" {
+		return fmt.Errorf("required")
+	}
+	i := strings.LastIndex(s, ":")
+	if i < 0 || i == len(s)-1 {
+		return fmt.Errorf("expected host:port")
+	}
+	if _, err := strconv.Atoi(s[i+1:]); err != nil {
+		return fmt.Errorf("port must be numeric")
+	}
+	return nil
+}
 
 func (m model) fetchDevicesCmd() tea.Cmd {
 	coord := m.coordinator
@@ -418,6 +462,78 @@ func scheduleBootPoll(dev device.Device, remaining int) tea.Cmd {
 	return tea.Tick(4*time.Second, func(_ time.Time) tea.Msg {
 		return bootPollMsg{device: dev, remaining: remaining}
 	})
+}
+
+// setBundlerLocationCmd points app's JS bundler (Metro) at hostPort and
+// relaunches it, per the RN debugging menu's "Configure Bundler Location".
+func (m model) setBundlerLocationCmd(dev device.Device, app device.App, hostPort string) tea.Cmd {
+	coord := m.coordinator
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		err := coord.SetBundlerLocation(ctx, dev, app.BundleID, hostPort)
+		return bundlerConfigResultMsg{appLabel: app.Label(), err: err}
+	}
+}
+
+// triggerDevMenuCmd opens the RN dev menu on dev, per the RN debugging
+// menu's "Dev Menu (Trigger)". metroPort only matters to the physical-iOS
+// trigger, which routes through Metro's WebSocket and needs to know which
+// port it's on; pass "" to use that trigger's default.
+func (m model) triggerDevMenuCmd(dev device.Device, metroPort string) tea.Cmd {
+	coord := m.coordinator
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		err := coord.TriggerDevMenu(ctx, dev, metroPort)
+		return devMenuTriggerResultMsg{err: err}
+	}
+}
+
+// portFromHostPort returns the port segment of a validated "host:port"
+// string, or "" if none is found.
+func portFromHostPort(hostPort string) string {
+	i := strings.LastIndex(hostPort, ":")
+	if i < 0 || i == len(hostPort)-1 {
+		return ""
+	}
+	return hostPort[i+1:]
+}
+
+// rnStartLoggingCmd terminates and relaunches app, per the RN debugging
+// menu's "Log to File", which always starts from a clean launch. The actual
+// file-open + StreamLogs setup happens in Update's rnLogRelaunchedMsg
+// handler, sharing the existing "l"-key app-logging state/pipeline.
+func (m model) rnStartLoggingCmd(dev device.Device, app device.App, path string) tea.Cmd {
+	coord := m.coordinator
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = coord.TerminateApp(ctx, dev, app.BundleID)
+		cancel()
+
+		ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		err := coord.LaunchApp(ctx, dev, app.BundleID)
+		return rnLogRelaunchedMsg{device: dev, app: app, path: path, err: err}
+	}
+}
+
+// startConsoleLogCmd launches app via `devicectl device process launch
+// --console --terminate-existing`, atomically relaunching it and starting a
+// console-output stream in one step — see
+// physicalIOSManager.StreamConsoleLog. Used by the RN debugging menu's "log
+// to file" only for physical iOS; every other device kind goes through
+// rnStartLoggingCmd (explicit terminate+launch) then StreamLogs instead.
+//
+// hostPort re-applies a previously configured bundler location to this
+// relaunch — see the ConsoleLogStreamer doc comment for why that's required
+// on physical iOS, not just a nice-to-have.
+func (m model) startConsoleLogCmd(dev device.Device, app device.App, path, hostPort string) tea.Cmd {
+	coord := m.coordinator
+	return func() tea.Msg {
+		stream, err := coord.StreamConsoleLog(context.Background(), dev, app.BundleID, hostPort)
+		return consoleLogStartedMsg{device: dev, app: app, path: path, stream: stream, err: err}
+	}
 }
 
 // nextLogBatchCmd blocks until at least one log line is available, then drains
