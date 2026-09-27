@@ -308,7 +308,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.mainPane.SetApps(msg.apps)
 
-		return m, nil
+		// Android and physical iOS need slow per-app round-trips (dumpsys
+		// for version, an APK pull or AFC lookup for React Native status) —
+		// a bounded worker pool fetches those in the background and streams
+		// results back one at a time so the list fills in progressively,
+		// instead of blocking on them or firing one tea.Cmd per app (which
+		// starves a single-device adb/USB connection). Simulator apps are
+		// already correct: ListApps checks the local bundle inline.
+		return m, m.enrichAppsCmd(msg.device, msg.apps)
+
+	case appEnrichMsg:
+		switch inner := msg.msg.(type) {
+		case appVersionMsg:
+			m.mainPane.SetAppVersion(inner.deviceID, inner.bundleID, inner.version)
+		case appReactNativeMsg:
+			if inner.isRN {
+				m.mainPane.SetAppReactNative(inner.deviceID, inner.bundleID, true)
+			}
+		}
+
+		return m, waitForAppEnrichCmd(msg.ch)
 
 	case infoMsg:
 		if msg.err != nil {

@@ -20,7 +20,11 @@ func (m MainPane) renderApps(w, h int) string {
 	listH := max(h-2, 1)
 
 	if len(m.apps) == 0 {
-		hint := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg).Render("  no apps installed")
+		text := "  no apps installed"
+		if m.appsLoading {
+			text = "  loading apps…"
+		}
+		hint := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg).Render(text)
 		if pad := w - lipgloss.Width(hint); pad > 0 {
 			hint += lipgloss.NewStyle().Background(ColorBg).Render(strings.Repeat(" ", pad))
 		}

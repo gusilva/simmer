@@ -60,10 +60,10 @@ func TestIsLsDirHeader(t *testing.T) {
 		line string
 		want bool
 	}{
-		{".", false},            // no trailing colon
-		{".:", true},           // root
-		{"./foo:", true},       // subdirectory
-		{"./foo/bar:", true},   // deeper
+		{".", false},               // no trailing colon
+		{".:", true},               // root
+		{"./foo:", true},           // subdirectory
+		{"./foo/bar:", true},       // deeper
 		{"/absolute/path:", false}, // not relative
 		{"total 24", false},
 		{"-rw-rw-r-- 1 root root 0 2024-01-01 00:00 file.txt", false},
@@ -294,75 +294,26 @@ func TestFilterGradleLine(t *testing.T) {
 	}
 }
 
-// ---------- androidFetchVersions (pure parsing) ----------
+// ---------- parseDumpsysVersionName (pure parsing) ----------
 
-func TestAndroidFetchVersions_ParsesDumpsysOutput(t *testing.T) {
-	// Simulate the output of `adb shell dumpsys package packages` for two packages.
-	dumpsys := `
+func TestParseDumpsysVersionName_Found(t *testing.T) {
+	// Simulate the output of `adb shell dumpsys package <id>` for one package.
+	dumpsys := `Packages:
   Package [com.example.one] (abc123):
-    versionName=1.2.3 extra
-    versionCode=10
-  Package [com.example.two] (def456):
-    versionName=2.0.0
-    versionCode=20
-  Package [com.skipped.app] (ghi789):
-    versionName=9.9.9
+    versionCode=10 minSdk=21 targetSdk=30
+    versionName=1.2.3
+    splits=[base]
 `
-	byID := map[string]struct{}{
-		"com.example.one": {},
-		"com.example.two": {},
-	}
-	result := parseDumpsysVersions([]byte(dumpsys), byID)
-
-	if result["com.example.one"] != "1.2.3" {
-		t.Errorf("com.example.one: got %q, want 1.2.3", result["com.example.one"])
-	}
-	if result["com.example.two"] != "2.0.0" {
-		t.Errorf("com.example.two: got %q, want 2.0.0", result["com.example.two"])
-	}
-	if _, ok := result["com.skipped.app"]; ok {
-		t.Error("com.skipped.app must not be in result — it was not in byID")
+	if got := parseDumpsysVersionName(dumpsys); got != "1.2.3" {
+		t.Errorf("got %q, want 1.2.3", got)
 	}
 }
 
-func TestAndroidFetchVersions_MissingPackage(t *testing.T) {
-	dumpsys := `  Package [com.other.app] ():
-    versionName=5.0
-`
-	byID := map[string]struct{}{"com.missing": {}}
-	result := parseDumpsysVersions([]byte(dumpsys), byID)
-	if len(result) != 0 {
-		t.Errorf("expected empty result for missing package, got %v", result)
+func TestParseDumpsysVersionName_Missing(t *testing.T) {
+	dumpsys := "Packages:\n  Package [com.other.app] ():\n"
+	if got := parseDumpsysVersionName(dumpsys); got != "" {
+		t.Errorf("got %q, want empty", got)
 	}
-}
-
-// parseDumpsysVersions is the pure parsing logic extracted from androidFetchVersions
-// for testability. It mirrors the loop body without the exec.Command call.
-func parseDumpsysVersions[E any](out []byte, byID map[string]E) map[string]string {
-	import_strings := strings.SplitSeq(string(out), "\n")
-	result := make(map[string]string, len(byID))
-	cur := ""
-	for line := range import_strings {
-		trimmed := strings.TrimSpace(line)
-		if after, ok := strings.CutPrefix(trimmed, "Package ["); ok {
-			if before, _, ok0 := strings.Cut(after, "]"); ok0 {
-				cur = strings.Clone(before)
-			}
-			continue
-		}
-		if cur == "" {
-			continue
-		}
-		if _, want := byID[cur]; !want {
-			continue
-		}
-		if after, ok := strings.CutPrefix(trimmed, "versionName="); ok {
-			if parts := strings.Fields(after); len(parts) > 0 {
-				result[cur] = strings.Clone(parts[0])
-			}
-		}
-	}
-	return result
 }
 
 // ---------- formatPartitionSize ----------

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"simmer/internal/device"
@@ -308,6 +309,93 @@ func (m model) loadAppsCmd(dev device.Device) tea.Cmd {
 		defer cancel()
 		apps, err := coord.ListApps(ctx, dev)
 		return appsListMsg{device: dev, apps: apps, err: err}
+	}
+}
+
+// enrichAppsCmd fetches each app's version name and/or React Native status
+// in the background, after the bare app list (see loadAppsCmd) is already
+// on screen. Work is spread across a small bounded worker pool rather than
+// one Cmd per app: for a physical device, firing all apps at once as
+// concurrent tea.Cmds means that many simultaneous APK pulls over the same
+// single USB adb connection, which starves or times out most of them. A
+// pool of workers streams results back one at a time via appEnrichMsg,
+// updating the list progressively as each app finishes — the caller
+// re-arms the listener each time (see waitForAppEnrichCmd) until the pool
+// finishes and closes the channel.
+//
+// Returns nil if this platform/kind needs neither (iOS simulator: ListApps
+// already checks the local bundle inline and returns full data).
+func (m model) enrichAppsCmd(dev device.Device, apps []device.App) tea.Cmd {
+	needVersions := dev.Platform == device.PlatformAndroid
+	needRN := dev.Platform == device.PlatformAndroid ||
+		(dev.Platform == device.PlatformIOS && dev.Kind == device.KindPhysical)
+	if len(apps) == 0 || (!needVersions && !needRN) {
+		return nil
+	}
+
+	coord := m.coordinator
+	ch := make(chan tea.Msg, len(apps))
+
+	go func() {
+		defer close(ch)
+		// Physical devices tolerate far less concurrent adb/AFC traffic than
+		// an emulator (local loopback): the shell/pull calls above raced
+		// each other over a single USB transport in testing, failing
+		// silently and unpredictably (some apps' version/RN data would just
+		// be missing, no pattern) rather than erroring loudly. One worker at
+		// a time is slower in total but each result still streams in as it
+		// completes, and nothing gets dropped.
+		workers := 4
+		if dev.Kind == device.KindPhysical {
+			workers = 1
+		}
+		jobs := make(chan device.App)
+
+		var wg sync.WaitGroup
+		for range workers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for app := range jobs {
+					if needVersions {
+						ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+						versions := coord.FetchAppVersions(ctx, dev, []string{app.BundleID})
+						cancel()
+						if v := versions[app.BundleID]; v != "" {
+							ch <- appVersionMsg{deviceID: dev.ID, bundleID: app.BundleID, version: v}
+						}
+					}
+					if needRN {
+						ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+						isRN := coord.DetectReactNative(ctx, dev, app)
+						cancel()
+						if isRN {
+							ch <- appReactNativeMsg{deviceID: dev.ID, bundleID: app.BundleID, isRN: true}
+						}
+					}
+				}
+			}()
+		}
+
+		for _, a := range apps {
+			jobs <- a
+		}
+		close(jobs)
+		wg.Wait()
+	}()
+
+	return waitForAppEnrichCmd(ch)
+}
+
+// waitForAppEnrichCmd blocks for the next result from an enrichAppsCmd
+// worker pool. Returns nil (no message) once ch is drained and closed.
+func waitForAppEnrichCmd(ch <-chan tea.Msg) tea.Cmd {
+	return func() tea.Msg {
+		msg, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return appEnrichMsg{msg: msg, ch: ch}
 	}
 }
 

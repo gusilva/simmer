@@ -12,10 +12,12 @@ import (
 	"strings"
 
 	ios "github.com/danielpaulus/go-ios/ios"
+	"github.com/danielpaulus/go-ios/ios/afc"
 	"github.com/danielpaulus/go-ios/ios/house_arrest"
 	"github.com/danielpaulus/go-ios/ios/installationproxy"
 	"github.com/danielpaulus/go-ios/ios/syslog"
 	"github.com/danielpaulus/go-ios/ios/zipconduit"
+	"howett.net/plist"
 
 	"simmer/internal/logging"
 )
@@ -103,14 +105,15 @@ func (m *physicalIOSManager) ListApps(_ context.Context, id string) ([]App, erro
 		if v, ok := info[installationproxy.CFBundleDisplayName].(string); ok {
 			displayName = v
 		}
+		// React Native detection needs an AFC round-trip (slow) — run it
+		// lazily via DetectReactNative once the list below is on screen.
 		out = append(out, App{
-			BundleID:      bundleID,
-			DisplayName:   displayName,
-			Name:          info.CFBundleName(),
-			ShortVersion:  info.CFBundleShortVersionString(),
-			Path:          info.Path(),
-			Type:          "User",
-			IsReactNative: isReactNativeBundlePhysical(entry, bundleID),
+			BundleID:     bundleID,
+			DisplayName:  displayName,
+			Name:         info.CFBundleName(),
+			ShortVersion: info.CFBundleShortVersionString(),
+			Path:         info.Path(),
+			Type:         "User",
 		})
 	}
 
@@ -124,11 +127,33 @@ func (m *physicalIOSManager) ListApps(_ context.Context, id string) ([]App, erro
 	return out, nil
 }
 
-// isReactNativeBundlePhysical is a best-effort React Native check for
-// physical iOS devices, via the house_arrest AFC service. house_arrest only
-// vends the app's data container (Documents/Library), not its bundle
-// container where main.jsbundle/hermes.framework actually live, so this
-// commonly finds nothing and returns false — that is expected, not an error.
+// DetectReactNative implements ReactNativeDetector for physical iOS devices.
+func (m *physicalIOSManager) DetectReactNative(_ context.Context, id string, app App) bool {
+	entry, err := goIOSDevice(id)
+	if err != nil {
+		return false
+	}
+	return isReactNativeBundlePhysical(entry, app.BundleID)
+}
+
+// isReactNativeBundlePhysical is a React Native check for physical iOS
+// devices via the house_arrest AFC service. house_arrest only vends the
+// app's data container (Documents/Library), never its bundle container —
+// so main.jsbundle/hermes.framework, which live in the bundle container,
+// are never visible this way (verified against a real device: AFC error
+// code 8, object not found, for both). Checking those directly always
+// returns false and was silently dead code.
+//
+// Instead this reads the app's own NSUserDefaults plist
+// (Library/Preferences/<bundleID>.plist), which *is* in the data container.
+// React Native's native iOS modules write several "RCT"-prefixed keys there
+// — RCTI18nUtil's RTL-flip flag is set on every launch regardless of build
+// config, RCTDevMenu once the app has run in dev mode — and no non-RN app
+// plausibly has keys under that namespace, so their presence is a reliable
+// signal. (Also verified: house_arrest's VendContainer only succeeds for
+// dev-signed apps at all — every App Store-signed app on the test device
+// got InstallationLookupFailed — which happens to match this tool's actual
+// audience: apps someone is actively developing.)
 func isReactNativeBundlePhysical(entry ios.DeviceEntry, bundleID string) bool {
 	client, err := house_arrest.New(entry, bundleID)
 	if err != nil {
@@ -136,11 +161,25 @@ func isReactNativeBundlePhysical(entry ios.DeviceEntry, bundleID string) bool {
 	}
 	defer client.Close()
 
-	if _, err := client.Stat("/main.jsbundle"); err == nil {
-		return true
+	f, err := client.Open("/Library/Preferences/"+bundleID+".plist", afc.READ_ONLY)
+	if err != nil {
+		return false
 	}
-	if _, err := client.Stat("/Frameworks/hermes.framework"); err == nil {
-		return true
+	defer f.Close()
+
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return false
+	}
+
+	var prefs map[string]any
+	if _, err := plist.Unmarshal(data, &prefs); err != nil {
+		return false
+	}
+	for key := range prefs {
+		if strings.HasPrefix(key, "RCT") {
+			return true
+		}
 	}
 	return false
 }

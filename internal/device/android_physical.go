@@ -138,16 +138,16 @@ func (m *physicalAndroidManager) ListApps(_ context.Context, id string) ([]App, 
 		return nil, nil
 	}
 
-	versions := androidFetchVersions(m.logger, d, byID)
-
+	// Version names and React Native status are fetched separately
+	// (FetchAppVersions, DetectReactNative) — both need an extra device
+	// round-trip, so this list returns the moment `pm list packages` itself
+	// is parsed instead of blocking on them too.
 	apps := make([]App, 0, len(byID))
 	for bundleID, e := range byID {
 		apps = append(apps, App{
-			BundleID:      bundleID,
-			Path:          e.path,
-			Type:          "User",
-			ShortVersion:  versions[bundleID],
-			IsReactNative: detectReactNativeApp(m.logger, d, bundleID, e.path),
+			BundleID: bundleID,
+			Path:     e.path,
+			Type:     "User",
 		})
 	}
 
@@ -159,6 +159,24 @@ func (m *physicalAndroidManager) ListApps(_ context.Context, id string) ([]App, 
 		return a < b
 	})
 	return apps, nil
+}
+
+// FetchAppVersions implements AppVersionFetcher for physical Android devices.
+func (m *physicalAndroidManager) FetchAppVersions(_ context.Context, id string, bundleIDs []string) map[string]string {
+	d, err := gadbDevice(id)
+	if err != nil {
+		return nil
+	}
+	return androidFetchVersions(m.logger, d, bundleIDs)
+}
+
+// DetectReactNative implements ReactNativeDetector for physical Android devices.
+func (m *physicalAndroidManager) DetectReactNative(_ context.Context, id string, app App) bool {
+	d, err := gadbDevice(id)
+	if err != nil {
+		return false
+	}
+	return detectReactNativeApp(m.logger, d, app.BundleID, app.Path)
 }
 
 // DeleteApp uninstalls an app from a physical Android device via gadb.

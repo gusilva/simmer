@@ -704,9 +704,11 @@ func (m *androidManager) getRunningDevices(ctx context.Context) (map[string]bool
 	return running, nil
 }
 
-// ListApps implements AppLister for Android emulators. It fetches user-installed
-// packages via `pm list packages -3 -f`, then enriches version info from
-// `dumpsys package packages` in a single additional adb call.
+// ListApps implements AppLister for Android emulators. It fetches
+// user-installed packages via `pm list packages -3 -f` and returns
+// immediately — version names and React Native status are fetched
+// separately (FetchAppVersions, DetectReactNative) so this call is a single
+// adb round-trip.
 func (m *androidManager) ListApps(ctx context.Context, id string) ([]App, error) {
 	serial, err := findAndroidSerial(ctx, id)
 	if err != nil {
@@ -750,16 +752,16 @@ func (m *androidManager) ListApps(ctx context.Context, id string) ([]App, error)
 		return nil, nil
 	}
 
-	versions := androidFetchVersions(m.logger, d, byID)
-
+	// Version names are fetched separately via FetchAppVersions, and React
+	// Native status via DetectReactNative — both need an extra device
+	// round-trip, so this list returns the moment `pm list packages` itself
+	// is parsed instead of blocking on them too.
 	apps := make([]App, 0, len(byID))
 	for bundleID, e := range byID {
 		apps = append(apps, App{
-			BundleID:      bundleID,
-			Path:          e.path,
-			Type:          "User",
-			ShortVersion:  versions[bundleID],
-			IsReactNative: detectReactNativeApp(m.logger, d, bundleID, e.path),
+			BundleID: bundleID,
+			Path:     e.path,
+			Type:     "User",
 		})
 	}
 
@@ -771,6 +773,32 @@ func (m *androidManager) ListApps(ctx context.Context, id string) ([]App, error)
 		return a < b
 	})
 	return apps, nil
+}
+
+// FetchAppVersions implements AppVersionFetcher for Android emulators.
+func (m *androidManager) FetchAppVersions(ctx context.Context, id string, bundleIDs []string) map[string]string {
+	serial, err := findAndroidSerial(ctx, id)
+	if err != nil {
+		return nil
+	}
+	d, err := gadbDevice(serial)
+	if err != nil {
+		return nil
+	}
+	return androidFetchVersions(m.logger, d, bundleIDs)
+}
+
+// DetectReactNative implements ReactNativeDetector for Android emulators.
+func (m *androidManager) DetectReactNative(ctx context.Context, id string, app App) bool {
+	serial, err := findAndroidSerial(ctx, id)
+	if err != nil {
+		return false
+	}
+	d, err := gadbDevice(serial)
+	if err != nil {
+		return false
+	}
+	return detectReactNativeApp(m.logger, d, app.BundleID, app.Path)
 }
 
 // detectReactNativeApp reports whether the APK at apkPath is a React Native
@@ -817,7 +845,11 @@ func probeReactNativeAPK(logger *logging.Logger, d gadb.Device, apkPath string) 
 		return false
 	}
 	for _, f := range zr.File {
-		if f.Name == "assets/index.android.bundle" {
+		// Default Metro output is assets/index.android.bundle, but Expo and
+		// custom entry-file configs ship the JS bundle under a different or
+		// hashed name — still always under assets/ with a .bundle
+		// extension, so match on that shape rather than the exact default.
+		if strings.HasPrefix(f.Name, "assets/") && strings.HasSuffix(f.Name, ".bundle") {
 			return true
 		}
 		if lower := strings.ToLower(f.Name); strings.HasPrefix(f.Name, "lib/") &&
@@ -828,40 +860,43 @@ func probeReactNativeAPK(logger *logging.Logger, d gadb.Device, apkPath string) 
 	return false
 }
 
-// androidFetchVersions returns a bundleID→versionName map by parsing a
-// single `dumpsys package packages` call, skipping lines for packages not
-// in byID.
-func androidFetchVersions[E any](logger *logging.Logger, d gadb.Device, byID map[string]E) map[string]string {
-	out, err := d.RunShellCommand("dumpsys", "package", "packages")
-	logger.LogExec("adb shell", []string{"dumpsys", "package", "packages"}, out, err)
-	if err != nil {
-		return map[string]string{}
-	}
-
-	versions := make(map[string]string, len(byID))
-	cur := ""
-	for line := range strings.SplitSeq(string(out), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if after, ok := strings.CutPrefix(trimmed, "Package ["); ok {
-			if before, _, ok0 := strings.Cut(after, "]"); ok0 {
-				// Clone breaks the reference to the large dumpsys backing array.
-				cur = strings.Clone(before)
-			}
+// androidFetchVersions returns a bundleID→versionName map, one
+// `dumpsys package <id>` call per bundle ID. A single scrape of `dumpsys
+// package packages` (the whole device) used to back this, but its output
+// format varies enough across Android versions/vendor skins (observed
+// missing versionName for a subset of packages on a real MIUI/Android 11
+// device) that it silently dropped entries; scoping the dump to one package
+// at a time is what `adb shell dumpsys package <id>` is meant for and is
+// far smaller, so nothing gets lost or truncated. Callers already bound
+// concurrency across apps (see model.enrichAppsCmd), so this runs
+// sequentially.
+func androidFetchVersions(logger *logging.Logger, d gadb.Device, bundleIDs []string) map[string]string {
+	versions := make(map[string]string, len(bundleIDs))
+	for _, id := range bundleIDs {
+		out, err := d.RunShellCommand("dumpsys", "package", id)
+		logger.LogExec("adb shell", []string{"dumpsys", "package", id}, out, err)
+		if err != nil {
 			continue
 		}
-		if cur == "" {
-			continue
-		}
-		if _, want := byID[cur]; !want {
-			continue
-		}
-		if after, ok := strings.CutPrefix(trimmed, "versionName="); ok {
-			if parts := strings.Fields(after); len(parts) > 0 {
-				versions[cur] = strings.Clone(parts[0])
-			}
+		if v := parseDumpsysVersionName(out); v != "" {
+			versions[id] = v
 		}
 	}
 	return versions
+}
+
+// parseDumpsysVersionName extracts the first "versionName=" value from a
+// `dumpsys package <id>` block.
+func parseDumpsysVersionName(out string) string {
+	for line := range strings.SplitSeq(out, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if after, ok := strings.CutPrefix(trimmed, "versionName="); ok {
+			if parts := strings.Fields(after); len(parts) > 0 {
+				return parts[0]
+			}
+		}
+	}
+	return ""
 }
 
 // StreamLogs implements LogStreamer for Android emulators. It launches the app

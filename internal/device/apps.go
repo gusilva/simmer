@@ -52,6 +52,61 @@ type AppDeleter interface {
 	DeleteApp(ctx context.Context, deviceID, bundleID string) error
 }
 
+// AppVersionFetcher is an optional interface a Manager may implement when
+// version names come from a separate device round-trip, so ListApps can
+// return the bare app list first and the caller fetches versions after.
+// Android needs this (dumpsys is a second adb call); iOS does not — listapps
+// / BrowseUserApps already include version info in the one call ListApps
+// makes.
+type AppVersionFetcher interface {
+	Platform() Platform
+	FetchAppVersions(ctx context.Context, deviceID string, bundleIDs []string) map[string]string
+}
+
+// FetchAppVersions routes to the Manager that implements AppVersionFetcher
+// for the device's Platform and Kind. Returns nil if none matches.
+func (c *Coordinator) FetchAppVersions(ctx context.Context, dev Device, bundleIDs []string) map[string]string {
+	for _, m := range c.Managers {
+		f, ok := m.(AppVersionFetcher)
+		if !ok || f.Platform() != dev.Platform {
+			continue
+		}
+		k, isKinded := m.(KindedManager)
+		if !isKinded || k.Kind() != dev.Kind {
+			continue
+		}
+		return f.FetchAppVersions(ctx, dev.ID, bundleIDs)
+	}
+	return nil
+}
+
+// ReactNativeDetector is an optional interface a Manager may implement when
+// its React Native check needs a device round-trip (APK pull, AFC lookup)
+// too slow to run inline in ListApps. Callers run it asynchronously per app
+// after the app list is already showing. Simulator ListApps checks the
+// local bundle directly and never needs this.
+type ReactNativeDetector interface {
+	Platform() Platform
+	DetectReactNative(ctx context.Context, deviceID string, app App) bool
+}
+
+// DetectReactNative routes to the Manager that implements ReactNativeDetector
+// for the device's Platform and Kind. Returns false if none matches.
+func (c *Coordinator) DetectReactNative(ctx context.Context, dev Device, app App) bool {
+	for _, m := range c.Managers {
+		rd, ok := m.(ReactNativeDetector)
+		if !ok || rd.Platform() != dev.Platform {
+			continue
+		}
+		k, isKinded := m.(KindedManager)
+		if !isKinded || k.Kind() != dev.Kind {
+			continue
+		}
+		return rd.DetectReactNative(ctx, dev.ID, app)
+	}
+	return false
+}
+
 // AppInstaller is an optional interface a Manager may implement to install an
 // application onto a device. path is platform-specific (see iosManager and
 // androidManager). scheme is the Xcode build scheme; Android ignores it.

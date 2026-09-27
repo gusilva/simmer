@@ -1,6 +1,10 @@
 package app
 
-import "simmer/internal/device"
+import (
+	"simmer/internal/device"
+
+	tea "charm.land/bubbletea/v2"
+)
 
 type buildStartedMsg struct {
 	device device.Device
@@ -113,6 +117,32 @@ type appsListMsg struct {
 	device device.Device
 	apps   []device.App
 	err    error
+}
+
+// appReactNativeMsg carries a single app's background React Native detection
+// result (see model.enrichAppsCmd).
+type appReactNativeMsg struct {
+	deviceID string
+	bundleID string
+	isRN     bool
+}
+
+// appVersionMsg carries a single app's version name, fetched in the
+// background after the bare app list is already on screen (see
+// model.enrichAppsCmd).
+type appVersionMsg struct {
+	deviceID string
+	bundleID string
+	version  string
+}
+
+// appEnrichMsg wraps one streamed result from model.enrichAppsCmd's worker
+// pool (either appVersionMsg or appReactNativeMsg) along with the channel it
+// came from, so Update can re-arm the listener and keep draining until the
+// pool finishes and closes ch.
+type appEnrichMsg struct {
+	msg tea.Msg
+	ch  <-chan tea.Msg
 }
 
 type infoMsg struct {
