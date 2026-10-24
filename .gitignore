@@ -40,3 +40,7 @@ go.work
 
 # Planning tools
 .planning/
+*.prof
+trace.out
+perf/*.prof
+perf/*.trace
