@@ -212,6 +212,9 @@ Both flags can be combined:
 go run ./cmd/simmer --pprof localhost:6060 --heap-out /tmp/simmer-heap
 ```
 
+For CPU profiles (`--cpu-out`), execution traces (`--trace-out`), benchmarks and recording
+before/after results, see [docs/architecture/performance.md](docs/architecture/performance.md).
+
 ### Reading the output
 
 | pprof type | What it measures |

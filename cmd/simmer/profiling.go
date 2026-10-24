@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime/pprof"
+	"runtime/trace"
 	"syscall"
 	"time"
 )
@@ -19,7 +20,35 @@ var (
 	heapOut   = flag.String("heap-out", "", "write heap profiles to this path prefix on SIGUSR1 and on exit (e.g. /tmp/simmer-heap)")
 )
 
+var (
+	cpuOut   = flag.String("cpu-out", "", "write a CPU profile to this file (covers the whole run)")
+	traceOut = flag.String("trace-out", "", "write a runtime execution trace to this file (view with `go tool trace`)")
+
+	cpuFile   *os.File
+	traceFile *os.File
+)
+
 func startProfiling() {
+	if *cpuOut != "" {
+		if f, err := os.Create(*cpuOut); err != nil {
+			fmt.Fprintf(os.Stderr, "cpu profile: %v\n", err)
+		} else if err := pprof.StartCPUProfile(f); err != nil {
+			fmt.Fprintf(os.Stderr, "cpu profile: %v\n", err)
+			f.Close()
+		} else {
+			cpuFile = f
+		}
+	}
+	if *traceOut != "" {
+		if f, err := os.Create(*traceOut); err != nil {
+			fmt.Fprintf(os.Stderr, "trace: %v\n", err)
+		} else if err := trace.Start(f); err != nil {
+			fmt.Fprintf(os.Stderr, "trace: %v\n", err)
+			f.Close()
+		} else {
+			traceFile = f
+		}
+	}
 	if *pprofAddr != "" {
 		go func() {
 			if err := http.ListenAndServe(*pprofAddr, nil); err != nil {
@@ -33,6 +62,14 @@ func startProfiling() {
 }
 
 func stopProfiling() {
+	if cpuFile != nil {
+		pprof.StopCPUProfile()
+		cpuFile.Close()
+	}
+	if traceFile != nil {
+		trace.Stop()
+		traceFile.Close()
+	}
 	if *heapOut != "" {
 		writeHeapDump(*heapOut)
 	}
