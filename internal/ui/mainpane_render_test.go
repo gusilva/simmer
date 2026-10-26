@@ -715,7 +715,30 @@ func TestRenderTreeRow_Selected(t *testing.T) {
 	}
 }
 
+func TestRenderTreeRow_UnlistedDir(t *testing.T) {
+	// A directory with no children has usually not been listed yet rather
+	// than being empty: the first listing is depth-capped. It is marked as
+	// expandable, not as empty.
+	m := newPaneWithDevice()
+	root := &device.FileNode{Path: "/", Name: "/", IsDir: true,
+		Children: []device.FileNode{
+			{Path: "/maybe", Name: "maybe", IsDir: true},
+		},
+	}
+	m.SetTree(root)
+
+	got := m.renderTreeRow(m.flattenTree()[0], 60, false)
+	if !strings.Contains(got, "·") {
+		t.Errorf("expected · for a directory that has not been listed, got %q", got)
+	}
+	if strings.Contains(got, "—") {
+		t.Error("an unlisted directory must not be shown as empty")
+	}
+}
+
 func TestRenderTreeRow_EmptyDir(t *testing.T) {
+	// Once listed and found empty, it is shown as empty and never fetched
+	// again.
 	m := newPaneWithDevice()
 	root := &device.FileNode{Path: "/", Name: "/", IsDir: true,
 		Children: []device.FileNode{
@@ -723,11 +746,36 @@ func TestRenderTreeRow_EmptyDir(t *testing.T) {
 		},
 	}
 	m.SetTree(root)
-	rows := m.flattenTree()
-	got := m.renderTreeRow(rows[0], 60, false)
-	// Empty dir shows "—" as meta.
+	m.MergeSubtree("/empty", device.FileNode{Path: "/empty", Name: "empty", IsDir: true})
+
+	got := m.renderTreeRow(m.flattenTree()[0], 60, false)
 	if !strings.Contains(got, "—") {
-		t.Error("expected — for empty directory")
+		t.Errorf("expected — for a listed, empty directory, got %q", got)
+	}
+}
+
+func TestRenderTreeRow_LoadingDir(t *testing.T) {
+	m := newPaneWithDevice()
+	root := &device.FileNode{Path: "/", Name: "/", IsDir: true,
+		Children: []device.FileNode{
+			{Path: "/busy", Name: "busy", IsDir: true},
+		},
+	}
+	m.SetTree(root)
+
+	// Expanding an unlisted directory starts a fetch.
+	m.treeIdx = 0
+	cmd := m.ActivateTreeRow()
+	if cmd == nil {
+		t.Fatal("expanding an unlisted directory should request its entries")
+	}
+	if msg, ok := cmd().(RequestSubtreeMsg); !ok || msg.Path != "/busy" {
+		t.Fatalf("got %#v, want RequestSubtreeMsg for /busy", cmd())
+	}
+
+	got := m.renderTreeRow(m.flattenTree()[0], 60, false)
+	if !strings.Contains(got, "…") {
+		t.Errorf("expected … while listing, got %q", got)
 	}
 }
 

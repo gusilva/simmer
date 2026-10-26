@@ -140,7 +140,7 @@ func (m *MainPane) HandleClick(x, y int) {
 		if m.treeIdx >= visibleH {
 			offset = m.treeIdx - visibleH + 1
 		}
-		if idx := offset + block - 1; idx < len(m.flattenTree()) {
+		if idx := offset + block - 1; idx < len(m.visibleTreeRows()) {
 			m.treeIdx = idx
 		}
 	}
@@ -268,9 +268,17 @@ func (m MainPane) renderPanelLabel(p mainPanel, innerW, treeW int, withSep bool)
 	}
 
 	left := text
-	if p == panelFiles && m.tree != nil && m.tree.Path != "" {
+	if p == panelFiles && m.panel == panelFiles && (m.filesFiltering || m.filesFilter != "" || m.fileSearch.active) {
+		bar := m.renderFilesFilterBar()
+		gap := max(leftW-textW-lipgloss.Width(bar)-1, 1)
+		left = text + bg.Render(strings.Repeat(" ", gap)) + bar + bg.Render(" ")
+	} else if p == panelFiles && m.tree != nil && (m.tree.Path != "" || m.tree.Name != "") {
 		avail := max(leftW-textW-2, 0)
-		path := truncPathLeft(m.tree.Path, avail)
+		label := m.tree.Path
+		if label == "" {
+			label = m.tree.Name // an app's storage is a label, not a path
+		}
+		path := truncPathLeft(label, avail)
 		if lipgloss.Width(path) > 0 {
 			gap := max(leftW-textW-lipgloss.Width(path)-1, 1)
 			left = text + bg.Render(strings.Repeat(" ", gap)) + pathStyle.Render(path) + bg.Render(" ")

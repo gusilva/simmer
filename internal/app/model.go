@@ -8,6 +8,7 @@ import (
 
 	"simmer/internal/device"
 	"simmer/internal/logging"
+	"simmer/internal/session"
 	"simmer/internal/ui"
 	"simmer/internal/ui/dbviewer"
 
@@ -30,6 +31,7 @@ type model struct {
 	mainPane     ui.MainPane
 	focus        appFocus
 	layout       *appLayout
+	sess         *session.Session
 	coordinator  *device.Coordinator
 	logger       *logging.Logger
 	loading      bool
@@ -44,6 +46,9 @@ type model struct {
 	lastRefresh  time.Time
 	appVersion   string
 	launchDir    string
+
+	// stopAppEnrich abandons the in-flight app-enrichment pool, if any.
+	stopAppEnrich func()
 
 	logStream   *device.LogStream
 	logBundleID string
@@ -69,7 +74,6 @@ type model struct {
 	installing      bool
 	booting         bool
 	installSpinner  spinner.Model
-	sqliteModal     *ui.SQLiteModal
 	dbViewerModal   *dbviewer.Modal
 	actionMenu      *ui.ActionMenuModal
 	rnOptionsModal  *ui.RNOptionsModal
@@ -95,18 +99,21 @@ type model struct {
 }
 
 func initialModel(version string, logger *logging.Logger, launchDir string) model {
-	coord := device.NewCoordinator(
-		device.NewIOSManager(logger),
-		device.NewPhysicalIOSManager(logger),
-		device.NewAndroidManager(logger),
-		device.NewPhysicalAndroidManager(logger),
-	)
+	// The Session owns device orchestration, deadlines and configuration;
+	// the TUI is one adapter over it. Verbs not yet migrated still reach the
+	// coordinator directly, which is the same one the Session uses.
+	sess, cfgErr := session.NewDefault(logger)
+	coord := sess.Coordinator()
+	if cfgErr != nil {
+		logger.LogError("load config", cfgErr)
+	}
 
 	m := model{
 		sidebar:          ui.NewSidebar(),
 		mainPane:         ui.NewMainPane(),
 		focus:            focusSidebar,
 		layout:           &appLayout{},
+		sess:             sess,
 		coordinator:      coord,
 		logger:           logger,
 		loading:          true,
@@ -194,6 +201,7 @@ func Run(version string, logger *logging.Logger, launchDir string) error {
 	// close already done on the quit-key path is harmless here.
 	if fm, ok := final.(model); ok {
 		fm.closeLogFile()
+		fm.stopEnrichment()
 	}
 
 	if err != nil {
@@ -221,4 +229,13 @@ func textPreview(s string, max int) string {
 	}
 	r := []rune(s)
 	return string(r[:max-1]) + "…"
+}
+
+// stopEnrichment abandons any in-flight app-enrichment pool. Safe to call
+// when none is running.
+func (m *model) stopEnrichment() {
+	if m.stopAppEnrich != nil {
+		m.stopAppEnrich()
+		m.stopAppEnrich = nil
+	}
 }

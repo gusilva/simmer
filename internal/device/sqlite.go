@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/danielpaulus/go-ios/ios/afc"
 	"github.com/danielpaulus/go-ios/ios/house_arrest"
@@ -27,7 +28,7 @@ func QuerySQLite(ctx context.Context, logger *logging.Logger, dev Device, packag
 		if dev.Kind == KindPhysical {
 			return querySQLiteIOSPhysical(ctx, logger, dev, packageID, dbPath, query)
 		}
-		return querySQLiteIOS(ctx, logger, dbPath, query)
+		return querySQLiteLocal(ctx, logger, dbPath, query)
 	case PlatformAndroid:
 		return querySQLiteAndroid(ctx, logger, dev, packageID, dbPath, query)
 	default:
@@ -35,7 +36,7 @@ func QuerySQLite(ctx context.Context, logger *logging.Logger, dev Device, packag
 	}
 }
 
-func querySQLiteIOS(ctx context.Context, logger *logging.Logger, dbPath, query string) ([][]string, error) {
+func querySQLiteLocal(ctx context.Context, logger *logging.Logger, dbPath, query string) ([][]string, error) {
 	args := []string{"-csv", "-header", dbPath, query}
 	var stderr strings.Builder
 	cmd := exec.CommandContext(ctx, "sqlite3", args...)
@@ -102,25 +103,47 @@ func querySQLiteIOSPhysical(ctx context.Context, logger *logging.Logger, dev Dev
 		}
 	}
 
-	return querySQLiteIOS(ctx, logger, tmpDB, query)
+	return querySQLiteLocal(ctx, logger, tmpDB, query)
 }
 
+// androidSQLiteOnDevice remembers, per adb serial, whether the device has a
+// usable sqlite3 binary. Android system images stopped shipping one around
+// Android 9, and the dbviewer issues many queries per session — probing once
+// is enough.
+var androidSQLiteOnDevice sync.Map // map[string]bool
+
 func querySQLiteAndroid(ctx context.Context, logger *logging.Logger, dev Device, packageID, dbPath, query string) ([][]string, error) {
-	serial, err := findAndroidSerial(ctx, dev.ID)
+	serial, err := resolveAndroidSerial(ctx, dev.ID)
 	if err != nil {
 		return nil, fmt.Errorf("find serial: %w", err)
 	}
 
-	// When packageID is empty we are browsing as root; run sqlite3 directly.
-	var shellCmd string
-	if packageID == "" {
-		shellCmd = "sqlite3 -csv -header " +
-			sqSingleQuote(dbPath) + " " + sqSingleQuote(query)
-	} else {
-		shellCmd = "run-as " + sqSingleQuote(packageID) +
-			" sqlite3 -csv -header " +
-			sqSingleQuote(dbPath) + " " + sqSingleQuote(query)
+	if onDevice, known := androidSQLiteOnDevice.Load(serial); known && !onDevice.(bool) {
+		return queryAndroidViaCopy(ctx, logger, serial, dbPath, query)
 	}
+
+	rows, err := queryAndroidOnDevice(ctx, logger, serial, dbPath, query)
+	if err == nil {
+		androidSQLiteOnDevice.Store(serial, true)
+		return rows, nil
+	}
+	if !isMissingSQLite3(err) {
+		return nil, err
+	}
+
+	// No sqlite3 on the device: copy the database to this machine and use the
+	// host's, the same approach physical iOS already takes.
+	androidSQLiteOnDevice.Store(serial, false)
+	logger.LogError("sqlite3 unavailable on "+serial+", querying a local copy", err)
+
+	return queryAndroidViaCopy(ctx, logger, serial, dbPath, query)
+}
+
+// queryAndroidOnDevice runs the query with the device's own sqlite3 binary,
+// as the app that owns the path when that path is private.
+func queryAndroidOnDevice(ctx context.Context, logger *logging.Logger, serial, dbPath, query string) ([][]string, error) {
+	shellCmd := androidRunAsForPath(dbPath) +
+		"sqlite3 -csv -header " + sqSingleQuote(dbPath) + " " + sqSingleQuote(query)
 
 	args := []string{"-s", serial, "shell", shellCmd}
 	var stderr strings.Builder
@@ -135,7 +158,100 @@ func querySQLiteAndroid(ctx context.Context, logger *logging.Logger, dev Device,
 		}
 		return nil, fmt.Errorf("sqlite3: %w", err)
 	}
+
+	// adb shell reports the remote command's failure in its output, not in
+	// its exit status, so a missing binary arrives as a successful run whose
+	// text is a shell error.
+	if msg := strings.TrimSpace(string(out)); isMissingSQLite3Text(msg) {
+		return nil, fmt.Errorf("%s", msg)
+	}
+
 	return parseSQLiteCSV(out)
+}
+
+// queryAndroidViaCopy streams the database (and its WAL/SHM sidecars) off the
+// device into a temp directory and queries it with the host's sqlite3.
+//
+// The copy is a snapshot: a write statement changes only the local file and
+// never reaches the device. Each query takes a fresh copy, so reads are
+// current.
+func queryAndroidViaCopy(ctx context.Context, logger *logging.Logger, serial, dbPath, query string) ([][]string, error) {
+	// A temp directory, not a temp file, so the sidecars can sit beside the
+	// database: sqlite3 needs all three co-located to read a WAL-mode file.
+	tmpDir, err := os.MkdirTemp("", "simmer-sqlite-*")
+	if err != nil {
+		return nil, fmt.Errorf("create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	tmpDB := filepath.Join(tmpDir, filepath.Base(dbPath))
+	if err := copyDeviceFile(ctx, logger, serial, dbPath, tmpDB); err != nil {
+		return nil, err
+	}
+
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := copyDeviceFile(ctx, logger, serial, dbPath+suffix, tmpDB+suffix); err != nil {
+			// Sidecars are optional; a database not in WAL mode has none.
+			_ = os.Remove(tmpDB + suffix)
+		}
+	}
+
+	return querySQLiteLocal(ctx, logger, tmpDB, query)
+}
+
+// copyDeviceFile streams one file off the device into dst, reading it as the
+// owning app when the path calls for it. exec-out is used because it does not
+// translate the bytes in transit.
+func copyDeviceFile(ctx context.Context, logger *logging.Logger, serial, src, dst string) error {
+	shellCmd := androidRunAsForPath(src) + "cat " + sqSingleQuote(src)
+
+	args := []string{"-s", serial, "exec-out", shellCmd}
+	var stderr strings.Builder
+	cmd := exec.CommandContext(ctx, "adb", args...)
+	cmd.Stderr = &stderr
+
+	out, err := cmd.Output()
+	logger.LogExec("adb exec-out", args, fmt.Sprintf("%d bytes", len(out)), err)
+	if err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return fmt.Errorf("read %s: %s", src, msg)
+		}
+		return fmt.Errorf("read %s: %w", src, err)
+	}
+	if len(out) == 0 {
+		return fmt.Errorf("read %s: empty", src)
+	}
+	// A refused `cat` reports on stdout on some devices, so the refusal
+	// would otherwise be written into the copy and reach sqlite3 as "file
+	// is not a database".
+	if msg := string(out); len(msg) < 512 && (strings.Contains(msg, "Permission denied") ||
+		strings.Contains(msg, "No such file") ||
+		strings.Contains(msg, "run-as:")) {
+		return fmt.Errorf("read %s: %s", src, strings.TrimSpace(msg))
+	}
+
+	if err := os.WriteFile(dst, out, 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", dst, err)
+	}
+	return nil
+}
+
+// isMissingSQLite3 reports whether err is the device telling us it has no
+// usable sqlite3 binary, rather than a problem with the query or the file.
+func isMissingSQLite3(err error) bool {
+	return err != nil && isMissingSQLite3Text(err.Error())
+}
+
+func isMissingSQLite3Text(msg string) bool {
+	lower := strings.ToLower(msg)
+	if !strings.Contains(lower, "sqlite3") {
+		return false
+	}
+	return strings.Contains(lower, "not found") ||
+		strings.Contains(lower, "exec failed") ||
+		strings.Contains(lower, "no such file") ||
+		strings.Contains(lower, "permission denied") ||
+		strings.Contains(lower, "inaccessible or not found")
 }
 
 func parseSQLiteCSV(data []byte) ([][]string, error) {
@@ -276,7 +392,7 @@ func sqliteVersionIOS(ctx context.Context, logger *logging.Logger) (string, erro
 }
 
 func sqliteVersionAndroid(ctx context.Context, logger *logging.Logger, dev Device, packageID string) (string, error) {
-	serial, err := findAndroidSerial(ctx, dev.ID)
+	serial, err := resolveAndroidSerial(ctx, dev.ID)
 	if err != nil {
 		return "", fmt.Errorf("find serial: %w", err)
 	}
@@ -291,13 +407,15 @@ func sqliteVersionAndroid(ctx context.Context, logger *logging.Logger, dev Devic
 	args := []string{"-s", serial, "shell", shellCmd}
 	out, err := exec.CommandContext(ctx, "adb", args...).Output()
 	logger.LogExec("adb", args, string(out), err)
-	if err != nil {
-		return "", fmt.Errorf("adb sqlite3 --version: %w", err)
-	}
 
-	parts := strings.Fields(strings.TrimSpace(string(out)))
-	if len(parts) == 0 {
-		return "", fmt.Errorf("adb sqlite3: empty version output")
+	text := strings.TrimSpace(string(out))
+	parts := strings.Fields(text)
+
+	// A device with no sqlite3 binary is served by the host's instead (see
+	// queryAndroidViaCopy), so report the engine that actually answers the
+	// queries rather than an error.
+	if err != nil || len(parts) == 0 || isMissingSQLite3Text(text) {
+		return sqliteVersionIOS(ctx, logger)
 	}
 
 	return parts[0], nil

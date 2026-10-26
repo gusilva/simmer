@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 
 	"simmer/internal/app"
+	"simmer/internal/cli"
 	"simmer/internal/logging"
 
 	"github.com/sirupsen/logrus"
@@ -18,6 +20,19 @@ func main() {
 	logEnabled := flag.Bool("log", false, "enable structured command logging")
 	logLevel := flag.String("log-level", "INFO", "logging level: ERROR, WARN, INFO, TRACE")
 
+	// Help is answered before flag parsing so that `simmer --help` prints to
+	// stdout and exits 0, rather than being rejected as an unknown global
+	// flag. Only the first argument counts, so a "help" inside a SQL
+	// statement or a flag value is left alone.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "-h", "--help", "help":
+			cli.Usage(os.Stdout)
+			return
+		}
+	}
+
+	flag.Usage = func() { cli.Usage(os.Stderr) }
 	flag.Parse()
 	startProfiling()
 
@@ -44,6 +59,14 @@ func main() {
 		logrus.SetOutput(w)
 	} else {
 		logrus.SetOutput(io.Discard)
+	}
+
+	// A command word selects headless mode; bare "simmer" opens the TUI.
+	// Both modes share the global logging flags parsed above.
+	if args := flag.Args(); len(args) > 0 {
+		code := cli.Run(context.Background(), args, logger, cli.Streams{Out: os.Stdout, Err: os.Stderr})
+		stopProfiling()
+		os.Exit(code)
 	}
 
 	// Capture the launch directory once: app-log files (Apps tab, "l") are

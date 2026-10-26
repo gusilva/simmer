@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"strings"
+
 	"simmer/internal/device"
 
 	"charm.land/bubbles/v2/help"
@@ -22,28 +24,43 @@ const (
 // It is a pure UI component: callers pass in the active device and a loaded
 // filesystem tree via SetDevice.
 type MainPane struct {
-	active        *device.Device    // Which device is selected (nil = none)
-	panel         mainPanel         // Which panel is expanded: Files (default) or Apps
-	tree          *device.FileNode  // Filesystem tree for the Files panel
-	expanded      map[string]bool   // Which dirs are open in the tree
-	treeIdx       int               // Cursor row in the tree
-	apps          []device.App      // List of installed apps
-	appsLoading   bool              // Apps list requested but not yet arrived
-	appsIdx       int               // Cursor row in the filtered apps list
-	appsFilter    string            // Active fuzzy filter for apps
-	appsFiltering bool              // Whether filter input is active
-	selectedApp   *device.App       // App pinned (via space) for Files sandbox browsing
-	info          device.DeviceInfo // Device info fields (rendered by the info overlay)
-	infoOpen      bool              // Whether the device-info overlay is open (hides the header hint)
-	loggingBundle string            // Bundle id whose logs are currently written to file ("" = none)
-	focused       bool              // Does this pane have keyboard focus?
-	width         int               // Outer width available to the pane (including borders)
-	height        int               // Outer height available to the pane (including borders)
+	active         *device.Device    // Which device is selected (nil = none)
+	panel          mainPanel         // Which panel is expanded: Files (default) or Apps
+	tree           *device.FileNode  // Filesystem tree for the Files panel
+	expanded       map[string]bool   // Which dirs are open in the tree
+	treeIdx        int               // Cursor row in the tree
+	apps           []device.App      // List of installed apps
+	appsLoading    bool              // Apps list requested but not yet arrived
+	appsIdx        int               // Cursor row in the filtered apps list
+	appsFilter     string            // Active fuzzy filter for apps
+	appsFiltering  bool              // Whether filter input is active
+	selectedApp    *device.App       // App pinned (via space) for Files sandbox browsing
+	info           device.DeviceInfo // Device info fields (rendered by the info overlay)
+	infoOpen       bool              // Whether the device-info overlay is open (hides the header hint)
+	loggingBundle  string            // Bundle id whose logs are currently written to file ("" = none)
+	focused        bool              // Does this pane have keyboard focus?
+	filesFilter    string            // Narrows the loaded tree rows
+	filesFiltering bool              // Filter input is capturing keys
+	fileSearch     fileSearchState   // Device-search results, when open
+
+	// loadingPaths marks directories whose entries are being fetched, so a
+	// second Enter on the same row does not fire a second request.
+	loadingPaths map[string]bool
+	// loadedPaths marks directories already fetched, so an empty directory
+	// is distinguishable from one that has never been listed.
+	loadedPaths map[string]bool
+
+	width  int // Outer width available to the pane (including borders)
+	height int // Outer height available to the pane (including borders)
 }
 
 // NewMainPane returns an empty main pane.
 func NewMainPane() MainPane {
-	return MainPane{expanded: map[string]bool{}}
+	return MainPane{
+		expanded:     map[string]bool{},
+		loadingPaths: map[string]bool{},
+		loadedPaths:  map[string]bool{},
+	}
 }
 
 // SetSize sets the outer width/height available to the pane.
@@ -63,7 +80,12 @@ func (m *MainPane) SetDevice(d *device.Device, root *device.FileNode) {
 	m.panel = panelApps
 	m.tree = root
 	m.expanded = map[string]bool{}
+	m.loadingPaths = map[string]bool{}
+	m.loadedPaths = map[string]bool{}
 	m.treeIdx = 0
+	m.filesFilter = ""
+	m.filesFiltering = false
+	m.fileSearch = fileSearchState{}
 	m.apps = nil
 	m.appsLoading = d != nil
 	m.appsIdx = 0
@@ -76,9 +98,10 @@ func (m *MainPane) SetDevice(d *device.Device, root *device.FileNode) {
 
 	if root != nil {
 		m.expanded[root.Path] = true
+		markLoaded(*root, m.loadedPaths)
 
 		for _, c := range root.Children {
-			if c.IsDir {
+			if c.IsDir && len(c.Children) > 0 {
 				m.expanded[c.Path] = true
 			}
 		}
@@ -112,15 +135,78 @@ func (m *MainPane) SyncActiveDevice(devs []device.Device) {
 func (m *MainPane) SetTree(root *device.FileNode) {
 	m.tree = root
 	m.expanded = map[string]bool{}
+	m.loadingPaths = map[string]bool{}
+	m.loadedPaths = map[string]bool{}
 	m.treeIdx = 0
+	m.filesFilter = ""
+	m.filesFiltering = false
+	m.fileSearch = fileSearchState{}
 	if root != nil {
 		m.expanded[root.Path] = true
+		markLoaded(*root, m.loadedPaths)
 		for _, c := range root.Children {
-			if c.IsDir {
+			if c.IsDir && len(c.Children) > 0 {
 				m.expanded[c.Path] = true
 			}
 		}
 	}
+}
+
+// markLoaded records every directory that arrived with children, so only the
+// ones that were never listed trigger a fetch when expanded.
+func markLoaded(n device.FileNode, loaded map[string]bool) {
+	if !n.IsDir {
+		return
+	}
+	if len(n.Children) > 0 {
+		loaded[n.Path] = true
+	}
+	for _, c := range n.Children {
+		markLoaded(c, loaded)
+	}
+}
+
+// MergeSubtree attaches freshly listed entries to the directory at path and
+// marks it listed. A directory that turns out to be empty stays empty rather
+// than asking again on every expansion.
+func (m *MainPane) MergeSubtree(path string, node device.FileNode) {
+	delete(m.loadingPaths, path)
+	m.loadedPaths[path] = true
+
+	target := findNode(m.tree, path)
+	if target == nil {
+		return
+	}
+	target.Children = node.Children
+	target.IsDir = true
+
+	markLoaded(*target, m.loadedPaths)
+}
+
+// SubtreeFailed clears the in-flight mark for a directory whose listing
+// failed, so the user can retry by expanding it again.
+func (m *MainPane) SubtreeFailed(path string) {
+	delete(m.loadingPaths, path)
+}
+
+// findNode locates the node at an absolute path. Paths are absolute, so the
+// search only descends where the target can be.
+func findNode(n *device.FileNode, path string) *device.FileNode {
+	if n == nil {
+		return nil
+	}
+	if n.Path == path {
+		return n
+	}
+	for i := range n.Children {
+		c := &n.Children[i]
+		if c.Path == path || strings.HasPrefix(path, c.Path+"/") {
+			if found := findNode(c, path); found != nil {
+				return found
+			}
+		}
+	}
+	return nil
 }
 
 // SetApps replaces the list of installed apps shown in the Apps tab.
@@ -202,7 +288,7 @@ func (m MainPane) SelectedApp() *device.App {
 // IsDatabaseFile reports whether name looks like a SQLite database, by
 // extension — the same rule the Files panel uses to offer its SQLite
 // viewer.
-func IsDatabaseFile(name string) bool { return isDatabaseFile(name) }
+func IsDatabaseFile(name string) bool { return device.IsDatabaseFile(name) }
 
 // IsFilesPanel reports whether the Files panel is currently expanded (as
 // opposed to Apps).
@@ -211,7 +297,7 @@ func (m MainPane) IsFilesPanel() bool { return m.panel == panelFiles }
 // SelectedTreeNode returns the file/dir node currently highlighted in the
 // Files tab, or nil.
 func (m MainPane) SelectedTreeNode() *device.FileNode {
-	rows := m.flattenTree()
+	rows := m.visibleTreeRows()
 	if m.treeIdx < 0 || m.treeIdx >= len(rows) {
 		return nil
 	}
@@ -261,6 +347,14 @@ type ShowRNOptionsMsg struct {
 // when no app is selected, in which case the parent should load the root tree.
 type RequestFileTreeMsg struct {
 	App *device.App
+}
+
+// RequestSubtreeMsg is dispatched when the user expands a directory whose
+// entries have not been listed yet. The parent lists Path and hands the
+// result back with MergeSubtree, which is what lets the tree reach shared
+// storage and anything else below the depth the first listing covered.
+type RequestSubtreeMsg struct {
+	Path string
 }
 
 // AppFocusedMsg is dispatched whenever the cursor lands on an app row in the

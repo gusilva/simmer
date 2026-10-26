@@ -23,6 +23,8 @@
 - **Real-time Status:** Instantly see if a device is `Running` or `Shutdown`.
 - **Fast Discovery:** Parallelized scanning using `xcrun simctl` and `adb`.
 - **Filtering:** Quickly find devices by name or OS version using built-in fuzzy search.
+- **File Browser:** Walk a device's filesystem or an app's own storage — on Android that spans both the private data dir and external app storage. Directories load as you expand them, so shared storage (`/storage/emulated/0/...`) is reachable to any depth, and pressing enter on a `.db` file opens it in the viewer.
+- **Find Files:** `/` narrows the rows already on screen; `ctrl+f` takes the same query to the device and searches every root the tree covers, so a file in a directory you never opened is still found. Enter on a result opens a database or moves the tree to it.
 - **Database Viewer:** Full-screen SQLite inspector — browse tables/views/indexes/triggers, write and run SQL queries, and view results in a scrollable table. Supports custom table-list queries and persists settings to `~/.config/simmer/config.toml`.
 - **Modern UI:** Built with the latest Charm v2 terminal stack.
 
@@ -70,9 +72,32 @@ go install github.com/gusilva/simmer@latest
 go run ./cmd/simmer
 ```
 
+### Headless commands
+
+Running `simmer` with no command opens the TUI. Naming a command runs it headlessly and prints to stdout,
+so device data can be piped into other tools:
+
+```bash
+simmer devices                                    # every simulator, emulator and phone
+simmer apps --device "iPhone 16 Pro"              # apps installed on one device
+simmer db ls --device booted --app com.acme.app   # SQLite databases in an app's storage
+simmer db ls --device booted --path /storage/emulated/0/Download  # …or under any directory
+simmer db query --device booted --app com.acme.app \
+  --db /data/data/com.acme.app/databases/rooms.db "select count(*) from rooms"
+```
+
+A `--device` reference is a UDID or adb serial, a device name, an unambiguous fragment of a name, or
+`booted`. Omit it and the only running device is used; a reference matching several devices is reported
+with the candidates rather than resolved arbitrarily.
+
+Every command takes `--json` for machine-readable output. `apps` additionally takes `--fast` (skip all
+per-app lookups) and `--react-native=false` (keep version names, skip React Native detection). Exit
+status is `1` for a failed operation and `2` for a command-line error.
+
 ### Keybindings
 - `↑/↓/k/j`: Navigate list
-- `/`: Search/Filter
+- `/`: Search/Filter (in Files: narrows the loaded tree)
+- `ctrl+f`: Search the device's files (Files panel)
 - `r`: Refresh device list
 - `q/ctrl+c`: Quit
 - `enter`: (Future) Launch selected device
@@ -233,8 +258,10 @@ go tool pprof -alloc_space heap.out
 
 ## 🏗 Project Structure
 
-- `cmd/simmer/main.go`: CLI entry point.
-- `internal/app/`: Bubble Tea app model/update/view orchestration.
+- `cmd/simmer/main.go`: Process entry point; dispatches to the TUI or a headless command.
+- `internal/session/`: Device orchestration shared by both modes — discovery roster, device reference resolution, app enrichment, database access, operation deadlines. Imports no UI library.
+- `internal/cli/`: Headless adapter — argv to session calls, table and JSON output.
+- `internal/app/`: Bubble Tea app model/update/view orchestration (the TUI adapter over the session).
 - `internal/ui/`: TUI components (sidebar, main pane, overlays, styles).
 - `internal/ui/dbviewer/`: Self-contained SQLite database viewer overlay (explorer, query editor, results pane, settings form).
 - `internal/device/`: Device domain contracts, coordinator, and platform integrations.
@@ -242,6 +269,8 @@ go tool pprof -alloc_space heap.out
 
 ## 📚 Documentation
 
+- **Guides**
+  - [Headless mode: every command, with examples](docs/headless.md)
 - **Architecture**
   - [App model/update/view flow](docs/architecture/app-model-update-view.md)
   - [Device layer design](docs/architecture/device-layer.md)

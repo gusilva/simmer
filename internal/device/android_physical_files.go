@@ -95,3 +95,28 @@ func buildGadbTree(ctx context.Context, logger *logging.Logger, d gadb.Device, p
 
 	return node, nil
 }
+
+// FileSystemFor returns the physical-Android FileSystem serving scope.
+//
+// An app sandbox is read exactly as on an emulator: run-as needs the package
+// to be debuggable, not the device to be rooted, and the sandbox FileSystem
+// already returns whichever of the two storage areas it can read.
+//
+// There is deliberately no fallback to external storage here. It used to
+// fire when both areas were refused and answer "this app's sandbox" with the
+// whole of /storage/emulated/0 — a wrong tree that surfaced as an empty
+// result, which reads as "this app has no databases".
+func (m *physicalAndroidManager) FileSystemFor(scope FileScope, target string) FileSystem {
+	switch {
+	case scope == ScopeAppSandbox && target != "":
+		return NewAndroidFileSystem(target, m.logger)
+	case scope == ScopePath && target != "":
+		return NewAndroidPathFileSystem(target, m.logger)
+	case scope == ScopeDirectory && target != "":
+		return NewAndroidDirFileSystem(target, m.logger)
+	default:
+		// Shared storage is what a physical device's root listing can
+		// reach without root.
+		return NewAndroidPhysicalFileSystem(m.logger)
+	}
+}

@@ -2,6 +2,7 @@ package device
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -25,56 +26,57 @@ type FileSystem interface {
 	Tree(ctx context.Context, dev Device) (FileNode, error)
 }
 
-// MockFileSystem returns a hardcoded fixture tree useful for UI development
-// before real device-filesystem access is wired up.
-type MockFileSystem struct{}
+// FileScope selects which part of a device's filesystem a tree walk covers.
+type FileScope int
 
-// NewMockFileSystem returns a FileSystem backed by static fixture data.
-func NewMockFileSystem() FileSystem { return &MockFileSystem{} }
+const (
+	// ScopeDeviceRoot walks the device's own filesystem from its root.
+	ScopeDeviceRoot FileScope = iota
+	// ScopeAppSandbox walks one app's own storage, identified by its bundle
+	// id / package name. Managers that cannot reach a private container
+	// (physical Android with a release-signed app) fall back to the storage
+	// they can read.
+	ScopeAppSandbox
+	// ScopePath walks an arbitrary directory on the device, identified by
+	// its absolute path. Shared storage lives outside any app's sandbox, so
+	// a path is the only way to name it.
+	ScopePath
+	// ScopeDirectory lists one directory's entries without descending into
+	// them. This is what an interactive tree expands with: a walk would cost
+	// an unbounded listing to show one level.
+	ScopeDirectory
+)
 
-// Tree returns a fixed iOS-shaped tree rooted at /private/var/mobile.
-func (m *MockFileSystem) Tree(_ context.Context, _ Device) (FileNode, error) {
-	mod := time.Date(2026, 4, 27, 14, 18, 2, 0, time.UTC)
+// FileSystemProvider is an optional interface a Manager may implement to
+// supply the FileSystem that serves a given scope. The manager picks the
+// adapter because only it knows which transport its devices support
+// (simctl paths, AFC, adb run-as, …).
+//
+// target names what the scope leaves open: a bundle id for ScopeAppSandbox,
+// an absolute device path for ScopePath, and nothing for ScopeDeviceRoot.
+type FileSystemProvider interface {
+	Platform() Platform
+	FileSystemFor(scope FileScope, target string) FileSystem
+}
 
-	file := func(name string, size int64) FileNode {
-		return FileNode{
-			Name:        name,
-			Path:        name,
-			IsDir:       false,
-			Size:        size,
-			Modified:    mod,
-			Permissions: "-rw-r--r--",
-		}
+// FileTree walks dev's filesystem at the given scope and returns the root
+// node. target is a bundle id for ScopeAppSandbox, an absolute path for
+// ScopePath, and ignored for ScopeDeviceRoot. Routing prefers a
+// KindedManager whose Kind matches dev.Kind.
+func (c *Coordinator) FileTree(ctx context.Context, dev Device, scope FileScope, target string) (FileNode, error) {
+	p, err := pickCapability[FileSystemProvider](c.Managers, dev.Platform, dev.Kind, "file system provider")
+	if err != nil {
+		return FileNode{}, err
 	}
-	dir := func(name string, children ...FileNode) FileNode {
-		return FileNode{
-			Name:        name,
-			Path:        name,
-			IsDir:       true,
-			Modified:    mod,
-			Permissions: "drwxr-xr-x",
-			Children:    children,
-		}
-	}
+	return p.FileSystemFor(scope, target).Tree(ctx, dev)
+}
 
-	return dir("/private/var/mobile",
-		dir("Applications",
-			dir("com.acme.fieldkit",
-				file("FieldKit.app", 24_800_000),
-				dir("Documents",
-					file("cache.sqlite", 1_200_000),
-					file("sync.log", 482_000),
-					file("workorders.json", 88_000),
-				),
-				dir("Library"),
-				dir("tmp"),
-			),
-			dir("com.acme.dispatch"),
-			dir("com.example.notes"),
-		),
-		dir("Library"),
-		dir("Media"),
-		dir("tmp"),
-		dir("var"),
-	), nil
+// IsDatabaseFile reports whether name looks like a SQLite database by
+// extension. Used to decide which files in a device file tree can be opened
+// in the SQLite viewer or queried headlessly.
+func IsDatabaseFile(name string) bool {
+	lname := strings.ToLower(name)
+	return strings.HasSuffix(lname, ".db") ||
+		strings.HasSuffix(lname, ".sqlite") ||
+		strings.HasSuffix(lname, ".sqlite3")
 }

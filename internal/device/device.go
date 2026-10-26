@@ -38,12 +38,19 @@ const (
 
 // Device represents a specific simulator or emulator instance.
 type Device struct {
-	ID       string     // Unique identifier (UDID for iOS, Serial/Name for Android)
+	ID       string     // Unique identifier (UDID for iOS, serial or AVD name for Android)
 	Name     string     // Human-readable name
 	Platform Platform   // iOS or Android
 	Version  string     // OS Version
 	Status   Status     // Running or Shutdown
 	Kind     DeviceKind // Physical or Virtual (zero value = KindVirtual)
+
+	// Serial is the adb serial when it differs from ID: a running emulator
+	// is identified here by its AVD name, but `adb devices` and anything
+	// built on it report "emulator-5554". Both have to be usable as a
+	// reference, so the alternative name travels with the device. Empty
+	// when ID is already the serial, and on iOS.
+	Serial string
 }
 
 // Manager defines the contract for discovering devices on a specific platform.

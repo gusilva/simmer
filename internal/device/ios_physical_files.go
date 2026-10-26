@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	gopath "path"
 	"sort"
 	"strings"
 
@@ -85,12 +86,12 @@ func (f *IOSPhysicalAppFileSystem) Tree(ctx context.Context, dev Device) (FileNo
 func buildAFCTree(ctx context.Context, client *afc.Client, path string, depth, maxDepth int) (FileNode, error) {
 	names, err := client.List(path)
 	if err != nil {
-		return FileNode{Name: afcBase(path), Path: path, IsDir: true},
+		return FileNode{Name: gopath.Base(path), Path: path, IsDir: true},
 			fmt.Errorf("list %s: %w", path, err)
 	}
 
 	node := FileNode{
-		Name:  afcBase(path),
+		Name:  gopath.Base(path),
 		Path:  path,
 		IsDir: true,
 	}
@@ -131,13 +132,50 @@ func buildAFCTree(ctx context.Context, client *afc.Client, path string, depth, m
 	return node, nil
 }
 
-// afcBase returns the last path component, treating "/" as its own name.
-func afcBase(path string) string {
-	if path == "/" {
-		return "/"
+// FileSystemFor returns the physical-iOS FileSystem serving scope: the app's
+// house_arrest container for ScopeAppSandbox, AFC media otherwise.
+func (m *physicalIOSManager) FileSystemFor(scope FileScope, target string) FileSystem {
+	switch {
+	case scope == ScopeAppSandbox && target != "":
+		return NewIOSPhysicalAppFileSystem(target, m.logger)
+	case scope == ScopePath && target != "":
+		return &IOSPhysicalPathFileSystem{Path: target, MaxDepth: 6, logger: m.logger}
+	case scope == ScopeDirectory && target != "":
+		return &IOSPhysicalPathFileSystem{Path: target, MaxDepth: 1, logger: m.logger}
+	default:
+		return NewIOSPhysicalFileSystem(m.logger)
 	}
-	if i := strings.LastIndex(path, "/"); i >= 0 {
-		return path[i+1:]
+}
+
+// IOSPhysicalPathFileSystem walks a named directory of the media partition
+// over AFC. Only what AFC vends is reachable: there is no shell on a
+// non-jailbroken device, so a path outside the media partition cannot be
+// listed whatever its permissions.
+type IOSPhysicalPathFileSystem struct {
+	Path     string
+	MaxDepth int
+	logger   *logging.Logger
+}
+
+func (f *IOSPhysicalPathFileSystem) Tree(ctx context.Context, dev Device) (FileNode, error) {
+	entry, err := goIOSDevice(dev.ID)
+	if err != nil {
+		return FileNode{}, err
 	}
-	return path
+	client, err := afc.New(entry)
+	f.logger.LogExec("go-ios", []string{"afc", "connect"}, "", err)
+	if err != nil {
+		return FileNode{}, fmt.Errorf("afc: %w", err)
+	}
+	defer func() { _ = client.Close() }()
+
+	maxDepth := f.MaxDepth
+	if maxDepth <= 0 {
+		maxDepth = 6
+	}
+	root, err := buildAFCTree(ctx, client, f.Path, 0, maxDepth)
+	if err != nil {
+		return FileNode{}, fmt.Errorf("%s: %w", f.Path, err)
+	}
+	return root, nil
 }

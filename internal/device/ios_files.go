@@ -11,57 +11,6 @@ import (
 	"strings"
 )
 
-// IOSFileSystem reads the local CoreSimulator data directory for a booted
-// iOS simulator. The root path is:
-//
-//	~/Library/Developer/CoreSimulator/Devices/<UDID>/data/Containers
-//
-// MaxDepth caps recursion to keep large simulators responsive.
-type IOSFileSystem struct {
-	MaxDepth int
-}
-
-// NewIOSFileSystem returns a FileSystem implementation for iOS simulators
-// with a sensible default walk depth.
-func NewIOSFileSystem() FileSystem {
-	return &IOSFileSystem{MaxDepth: 4}
-}
-
-// Tree walks the simulator's Containers directory and returns the populated
-// root node. Returns an error if the device is non-iOS or the path is missing.
-func (f *IOSFileSystem) Tree(ctx context.Context, dev Device) (FileNode, error) {
-	if dev.Platform != PlatformIOS {
-		return FileNode{}, fmt.Errorf("ios filesystem: unsupported platform %s", dev.Platform)
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return FileNode{}, fmt.Errorf("user home: %w", err)
-	}
-	root := filepath.Join(home,
-		"Library", "Developer", "CoreSimulator",
-		"Devices", dev.ID, "data", "Containers",
-	)
-
-	info, err := os.Stat(root)
-	if err != nil {
-		return FileNode{}, fmt.Errorf("stat %s: %w", root, err)
-	}
-
-	maxDepth := f.MaxDepth
-	if maxDepth <= 0 {
-		maxDepth = 4
-	}
-	node, err := walkNode(ctx, root, info, 0, maxDepth)
-	if err != nil {
-		return FileNode{}, err
-	}
-	// Override the leaf name so the breadcrumb shows the full path while the
-	// tree itself starts at "Containers".
-	node.Name = "Containers"
-	node.Path = root
-	return node, nil
-}
-
 // walkNode walks the filesystem at path, returning a FileNode tree pruned at
 // maxDepth. Permission errors on a directory are swallowed (the dir is
 // returned with no children) so an unreadable subtree doesn't fail the whole
@@ -159,8 +108,8 @@ func (f *IOSRootFileSystem) Tree(ctx context.Context, dev Device) (FileNode, err
 }
 
 // IOSAppFileSystem resolves a single app's data container via
-// `xcrun simctl get_app_container` and walks it locally — the same host-side
-// walk used by IOSFileSystem, scoped to one bundle.
+// `xcrun simctl get_app_container` and walks it locally, scoped to one
+// bundle.
 type IOSAppFileSystem struct {
 	BundleID string
 	MaxDepth int
@@ -200,4 +149,40 @@ func (f *IOSAppFileSystem) Tree(ctx context.Context, dev Device) (FileNode, erro
 	}
 	node.Name = f.BundleID
 	return node, nil
+}
+
+// FileSystemFor returns the simulator FileSystem serving scope: the app's
+// local container for ScopeAppSandbox, the simulator's data root otherwise.
+func (m *iosManager) FileSystemFor(scope FileScope, target string) FileSystem {
+	switch {
+	case scope == ScopeAppSandbox && target != "":
+		return NewIOSAppFileSystem(target)
+	case scope == ScopePath && target != "":
+		return NewIOSPathFileSystem(target)
+	case scope == ScopeDirectory && target != "":
+		return &IOSPathFileSystem{Path: target, MaxDepth: 1}
+	default:
+		return NewIOSRootFileSystem()
+	}
+}
+
+// IOSPathFileSystem walks a named directory of a simulator. A simulator's
+// storage is a directory on this Mac, so the path is a host path.
+type IOSPathFileSystem struct {
+	Path     string
+	MaxDepth int
+}
+
+// NewIOSPathFileSystem returns a FileSystem rooted at a host path.
+func NewIOSPathFileSystem(path string) FileSystem {
+	return &IOSPathFileSystem{Path: path, MaxDepth: 6}
+}
+
+func (f *IOSPathFileSystem) Tree(ctx context.Context, _ Device) (FileNode, error) {
+	path := expandPath(f.Path)
+	info, err := os.Stat(path)
+	if err != nil {
+		return FileNode{}, fmt.Errorf("stat %s: %w", path, err)
+	}
+	return walkNode(ctx, path, info, 0, f.MaxDepth)
 }
