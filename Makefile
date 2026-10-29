@@ -3,9 +3,9 @@
 
 GO ?= go
 BINARY ?= simmer
-DEADCODE ?= golang.org/x/tools/cmd/deadcode@latest
+DEADCODE ?= golang.org/x/tools/cmd/deadcode@v0.52.0
 
-.PHONY: build run test test-race lint fmt-check vet deadcode exclusions check check-device tidy clean
+.PHONY: build run test test-race lint lint-new fmt-check vet deadcode exclusions check check-device tidy clean
 
 ## build: compile the CLI
 build:
@@ -31,8 +31,15 @@ vet:
 	$(GO) vet ./...
 
 ## lint: golangci-lint over the whole tree
+#
+# Reports a backlog that predates the CI job; CI only gates new code.
 lint:
 	golangci-lint run
+
+## lint-new: exactly what CI lints - code that differs from the base branch
+LINT_BASE ?= origin/main
+lint-new:
+	golangci-lint run --new-from-rev=$(LINT_BASE) --timeout=5m
 
 ## fmt-check: fail when anything is unformatted
 fmt-check:

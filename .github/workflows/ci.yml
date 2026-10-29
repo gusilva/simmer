@@ -67,7 +67,13 @@ jobs:
       # Scoped to the diff: the tree carries a backlog of findings that
       # predates this job, and failing every PR on them would train people to
       # ignore it. New code is held to the full standard.
+      #
+      # The version is pinned and must be built with a Go at least as new as
+      # go.mod targets, or it refuses to load the config. action@v6 defaulted
+      # to golangci-lint 1.64 (built with go1.24) against a go1.25 module.
+      # Keep this in step with the version developers run locally.
       - name: golangci-lint (new code)
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v8
         with:
+          version: v2.14.0
           args: --new-from-rev=origin/${{ github.base_ref || 'main' }} --timeout=5m
