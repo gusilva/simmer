@@ -352,15 +352,19 @@ func TestMainPane(t *testing.T) {
 	}
 	m.SetTree(root)
 
-	// Move down and expand
-	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // Select "data"
+	// Move down and expand. Neither directory arrived with entries, so
+	// neither is expanded until the user says so.
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // Select "System"
 	if m.treeIdx != 1 {
 		t.Errorf("expected treeIdx 1, got %d", m.treeIdx)
 	}
 
-	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}) // Toggle "data"
-	if !m.expanded["/data"] {
-		t.Error("expected /data to be expanded")
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}) // Toggle "System"
+	if !m.expanded["/System"] {
+		t.Error("expected /System to be expanded")
+	}
+	if m.expanded["/data"] {
+		t.Error("expected /data to be untouched")
 	}
 
 	// 6. App logging toggle

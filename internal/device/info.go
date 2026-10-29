@@ -25,32 +25,13 @@ type InfoLister interface {
 	Info(ctx context.Context, dev Device) (DeviceInfo, error)
 }
 
-// Info routes to the Manager that implements InfoLister for the device's
-// platform, preferring a KindedManager whose Kind matches dev.Kind.
-// Returns an error if no InfoLister is registered.
+// Info reports the detailed facts about a device.
 func (c *Coordinator) Info(ctx context.Context, dev Device) (DeviceInfo, error) {
-	for _, m := range c.Managers {
-		l, ok := m.(InfoLister)
-		if !ok || l.Platform() != dev.Platform {
-			continue
-		}
-		k, isKinded := m.(KindedManager)
-		if !isKinded || k.Kind() != dev.Kind {
-			continue
-		}
-		return l.Info(ctx, dev)
+	l, err := pickCapability[InfoLister](c.Managers, dev.Platform, dev.Kind, "info lister")
+	if err != nil {
+		return DeviceInfo{}, err
 	}
-	for _, m := range c.Managers {
-		l, ok := m.(InfoLister)
-		if !ok || l.Platform() != dev.Platform {
-			continue
-		}
-		if _, isKinded := m.(KindedManager); isKinded {
-			continue
-		}
-		return l.Info(ctx, dev)
-	}
-	return DeviceInfo{}, fmt.Errorf("no info lister registered for platform %s", dev.Platform)
+	return l.Info(ctx, dev)
 }
 
 // formatBytes renders a byte count with a 1024-based unit suffix.

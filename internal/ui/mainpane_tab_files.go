@@ -45,11 +45,6 @@ func (m MainPane) renderFiles(innerW, innerH int) string {
 
 // isDatabaseFile reports whether name looks like a SQLite database, by
 // extension.
-func isDatabaseFile(name string) bool {
-	lname := strings.ToLower(name)
-	return strings.HasSuffix(lname, ".db") || strings.HasSuffix(lname, ".sqlite") || strings.HasSuffix(lname, ".sqlite3")
-}
-
 type treeRow struct {
 	node  *device.FileNode
 	depth int
@@ -60,7 +55,7 @@ type treeRow struct {
 // the SQLite viewer for a recognized database file. Shared by the "enter"
 // key and the double-click action menu.
 func (m *MainPane) ActivateTreeRow() tea.Cmd {
-	rows := m.flattenTree()
+	rows := m.visibleTreeRows()
 	if m.treeIdx < 0 || m.treeIdx >= len(rows) {
 		return nil
 	}
@@ -69,7 +64,7 @@ func (m *MainPane) ActivateTreeRow() tea.Cmd {
 		if m.active == nil {
 			return nil
 		}
-		if !isDatabaseFile(n.Name) {
+		if !device.IsDatabaseFile(n.Name) {
 			return nil
 		}
 		dev := *m.active
@@ -90,14 +85,35 @@ func (m *MainPane) ActivateTreeRow() tea.Cmd {
 	}
 
 	m.expanded[n.Path] = !m.expanded[n.Path]
-	rows = m.flattenTree()
+
+	// A directory that has never been listed is listed now: the first
+	// listing is depth-capped, so everything below it arrives this way.
+	var cmd tea.Cmd
+	if m.expanded[n.Path] && m.needsListing(n) {
+		m.loadingPaths[n.Path] = true
+		path := n.Path
+		cmd = func() tea.Msg { return RequestSubtreeMsg{Path: path} }
+	}
+
+	rows = m.visibleTreeRows()
 	if m.treeIdx >= len(rows) {
 		m.treeIdx = len(rows) - 1
 	}
 	if m.treeIdx < 0 {
 		m.treeIdx = 0
 	}
-	return nil
+
+	return cmd
+}
+
+// needsListing reports whether a directory's entries still have to be
+// fetched: it has none, nobody is fetching them, and it has never been
+// listed (an empty directory must not be asked for twice).
+func (m MainPane) needsListing(n *device.FileNode) bool {
+	return n.IsDir &&
+		len(n.Children) == 0 &&
+		!m.loadingPaths[n.Path] &&
+		!m.loadedPaths[n.Path]
 }
 
 func (m MainPane) flattenTree() []treeRow {
@@ -122,6 +138,10 @@ func (m MainPane) flattenTree() []treeRow {
 }
 
 func (m MainPane) renderTreePane(w, h int) []string {
+	if m.fileSearch.active {
+		return m.renderSearchPane(w, h)
+	}
+
 	// The path now rides on the "[3] Files" label row (renderPanelLabel); keep
 	// one blank line so the tree doesn't butt against the header.
 	lines := []string{padBg(w)}
@@ -141,7 +161,7 @@ func (m MainPane) renderTreePane(w, h int) []string {
 	}
 
 	visibleH := max(h-len(lines), 1)
-	rows := m.flattenTree()
+	rows := m.visibleTreeRows()
 
 	// Window the slice so the cursor is always visible.
 	offset := 0
@@ -174,10 +194,17 @@ func (m MainPane) renderTreeRow(r treeRow, w int, selected bool) string {
 	}
 
 	meta := ""
-	if !r.node.IsDir {
+	switch {
+	case !r.node.IsDir:
 		meta = formatSize(r.node.Size)
-	} else if len(r.node.Children) == 0 {
-		meta = "—"
+	case m.loadingPaths[r.node.Path]:
+		meta = "…"
+	case len(r.node.Children) > 0:
+		meta = ""
+	case m.loadedPaths[r.node.Path]:
+		meta = "—" // listed, genuinely empty
+	default:
+		meta = "·" // not listed yet; expanding fetches it
 	}
 
 	// Layout: " " + indent + caret(1) + " " + name + GAP + meta + " "
@@ -211,7 +238,11 @@ func (m MainPane) renderTreeRow(r treeRow, w int, selected bool) string {
 // ── Files: preview pane ────────────────────────────────────────────────
 
 func (m MainPane) renderPreviewPane(w, h int) []string {
-	rows := m.flattenTree()
+	if m.fileSearch.active {
+		return m.renderSearchPreview(w, h)
+	}
+
+	rows := m.visibleTreeRows()
 	var sel *device.FileNode
 	if m.treeIdx >= 0 && m.treeIdx < len(rows) {
 		sel = rows[m.treeIdx].node
@@ -255,7 +286,7 @@ func (m MainPane) renderPreviewPane(w, h int) []string {
 		}
 		// SQLite viewer hint
 		if !sel.IsDir && m.active != nil {
-			if isDatabaseFile(sel.Name) {
+			if device.IsDatabaseFile(sel.Name) {
 				lines = append(lines, padBg(w))
 				lines = append(lines, " "+lipgloss.NewStyle().
 					Foreground(ColorAccent).
@@ -302,7 +333,7 @@ func previewContent(n *device.FileNode) []string {
 	if n.IsDir {
 		return []string{fmt.Sprintf("(directory — %d entries)", len(n.Children))}
 	}
-	if isDatabaseFile(n.Name) {
+	if device.IsDatabaseFile(n.Name) {
 		return []string{
 			"SQLite database",
 			formatSize(n.Size),

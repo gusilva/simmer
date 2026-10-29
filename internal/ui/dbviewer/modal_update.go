@@ -3,8 +3,6 @@ package dbviewer
 import (
 	"time"
 
-	"simmer/internal/config"
-
 	tea "charm.land/bubbletea/v2"
 )
 
@@ -13,8 +11,10 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 	if sm, ok := msg.(SettingsSavedMsg); ok {
 		m.settingsOpen = false
 		if sm.Err == nil {
-			cfg, _ := config.Load()
-			m.tablesQuery = cfg.EffectiveTablesQuery()
+			// The form persisted a file; the Session has to re-read it
+			// before the next tables query uses the new value.
+			_ = m.sess.ReloadConfig()
+			cfg := m.sess.Config()
 			m.scriptDir = cfg.ScriptPath
 			if qp, ok := m.panes[paneQuery].(queryPaneAdapter); ok {
 				m.panes[paneQuery] = queryPaneAdapter{qp.inner.withScriptDir(cfg.ScriptPath)}

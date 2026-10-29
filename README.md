@@ -1,10 +1,8 @@
-
 <div align="center">
   <img alt="simmer logo" src="./docs/simmer-logo.PNG" width="300" style="vertical-align: middle;" /> 
 </div>
 
 > A lightweight, modern TUI for managing iOS Simulators and Android Emulators on macOS.
-
 
 [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![CI](https://github.com/gusilva/simmer/actions/workflows/ci.yml/badge.svg)](https://github.com/gusilva/simmer/actions/workflows/ci.yml)
@@ -14,7 +12,7 @@
 ---
 
 <p align="center">
-  <img src="./app.gif" width="100%" alt="Simulight Demo">
+  <img src="./docs/ui/app.gif" width="100%" alt="Simmer demo: device list, app inspector, file browser and SQLite viewer">
 </p>
 
 ## 🚀 Features
@@ -23,6 +21,10 @@
 - **Real-time Status:** Instantly see if a device is `Running` or `Shutdown`.
 - **Fast Discovery:** Parallelized scanning using `xcrun simctl` and `adb`.
 - **Filtering:** Quickly find devices by name or OS version using built-in fuzzy search.
+- **Headless Mode:** The same device data without the TUI — `simmer devices`, `simmer apps`,
+  `simmer db ls`, `simmer db query`, each with `--json` for scripting.
+- **File Browser:** Walk a device's filesystem or an app's own storage — on Android that spans both the private data dir and external app storage. Directories load as you expand them, so shared storage (`/storage/emulated/0/...`) is reachable to any depth, and pressing enter on a `.db` file opens it in the viewer.
+- **Find Files:** `/` narrows the rows already on screen; `ctrl+f` takes the same query to the device and searches every root the tree covers, so a file in a directory you never opened is still found. Enter on a result opens a database or moves the tree to it.
 - **Database Viewer:** Full-screen SQLite inspector — browse tables/views/indexes/triggers, write and run SQL queries, and view results in a scrollable table. Supports custom table-list queries and persists settings to `~/.config/simmer/config.toml`.
 - **Modern UI:** Built with the latest Charm v2 terminal stack.
 
@@ -62,22 +64,60 @@ go install github.com/gusilva/simmer@latest
 - **macOS** (Required for iOS simulators).
 - **Xcode** with Command Line Tools installed.
 - **Android SDK** with `adb` and `emulator` in your `PATH`.
+- **`sqlite3` on your Mac**, for the database features. Android images have shipped without it
+  since Android 9, so Simmer copies a database off the device and queries it locally when the
+  device cannot. Reads are current; writes reach only the copy.
 
 ## 📖 Usage Guide
 
 ### Running locally
+
 ```bash
-go run ./cmd/simmer
+make run
 ```
 
+### Headless commands
+
+Running `simmer` with no command opens the TUI. Naming a command runs it headlessly and prints to stdout,
+so device data can be piped into other tools:
+
+```bash
+simmer devices                                    # every simulator, emulator and phone
+simmer apps --device "iPhone 16 Pro"              # apps installed on one device
+simmer db ls --device booted --app com.acme.app   # SQLite databases in an app's storage
+simmer db ls --device booted --path /storage/emulated/0/Download  # …or under any directory
+simmer db query --device booted --app com.acme.app \
+  --db /data/data/com.acme.app/databases/rooms.db "select count(*) from rooms"
+```
+
+A `--device` reference is a UDID or adb serial, a device name, an unambiguous fragment of a name, or
+`booted`. Omit it and the only running device is used; a reference matching several devices is reported
+with the candidates rather than resolved arbitrarily.
+
+Every command takes `--json` for machine-readable output. `apps` additionally takes `--fast` (skip all
+per-app lookups) and `--react-native=false` (keep version names, skip React Native detection). Exit
+status is `1` for a failed operation and `2` for a command-line error.
+
 ### Keybindings
-- `↑/↓/k/j`: Navigate list
-- `/`: Search/Filter
-- `r`: Refresh device list
-- `q/ctrl+c`: Quit
-- `enter`: (Future) Launch selected device
+
+`?` opens a help overlay listing the keys for whatever has focus. The essentials:
+
+| Key         | Sidebar        | Apps panel       | Files panel                      |
+| ----------- | -------------- | ---------------- | -------------------------------- |
+| `↑/↓` `k/j` | move           | move             | move                             |
+| `enter`     | collapse group | launch app       | expand directory / open database |
+| `/`         | filter devices | filter apps      | filter loaded rows               |
+| `ctrl+f`    | —              | —                | search the whole device          |
+| `space`     | load device    | browse app files | —                                |
+| `2` / `3`   | —              | focus Apps       | focus Files                      |
+
+Device actions live on the sidebar: `b` boot, `s` shutdown, `a` add, `d` delete, `r` refresh, `i`
+device info. App actions live on the Apps panel: `a` install, `d` uninstall, `c` close, `l` log to
+file, `r` rebuild and reinstall, `m` more. `ctrl+d` opens the SQLite viewer from anywhere, and
+`q` or `ctrl+c` quits.
 
 ### Building for production
+
 ```bash
 go build -tags release -o simmer ./cmd/simmer
 ```
@@ -91,47 +131,64 @@ Dev builds (no tag) include profiling support by default.
 Release binaries embed the git tag as the app version (for example, `v1.2.3`), injected at build time by the release workflow.
 Local builds default to `dev` unless you set the linker variable manually.
 
-### Running Tests
+### Running checks
+
+`make check` runs what CI runs — build, vet, tests, formatting, and two gates worth knowing about:
+
+- **Build exclusions.** A file named `search_android.go` or `sqlite_ios_test.go` is excluded from
+  the build by its own name, on every machine, with no error from `go build`, `go vet` or
+  `go test`. `scripts/check-build-exclusions.sh` fails on one.
+- **Dead code.** Code unreachable from both the binary and the tests fails the build rather than
+  accumulating.
+
 ```bash
-go test ./... -v
+make check         # everything CI enforces, lint included
+make check-device  # integration tests against attached devices (skipped without hardware)
 ```
+
+Lint is scoped to code that differs from `origin/main`, exactly as the CI job is, so the tree's
+pre-existing findings do not fail every change. `make lint` reports the whole tree.
 
 ## 📝 Logging
 
-Simmer can write a structured JSON log of every command it runs against the iOS and Android toolchains.
+Simmer can log every command it runs against the iOS and Android toolchains — which is how to find
+out what a device actually answered when a listing comes back empty or a query fails.
 
 Logging is **off by default**. Pass `--log` to enable it:
 
 ```bash
-go run ./cmd/simmer --log
+simmer --log            # TUI
+simmer --log devices    # or any headless command
 ```
 
-Logs are appended to `$HOME/.config/simmer/log.json`. Each entry is a single JSON line:
+Logs are appended to `simmer.log` in the working directory, one line per command:
 
-```json
-{"time":"2026-05-22T10:00:00Z","level":"INFO","cmd":"xcrun simctl boot ABC-123"}
-{"time":"2026-05-22T10:00:01Z","level":"ERROR","cmd":"adb devices","msg":"exit status 1"}
-{"time":"2026-05-22T10:00:02Z","level":"TRACE","cmd":"emulator -list-avds","output":"Pixel_7\nPixel_8"}
+```
+2026-10-29T21:07:12+01:00 INFO exec emulator [-list-avds] err=<nil>
+2026-10-29T21:07:13+01:00 INFO exec xcrun [simctl list devices available --json] err=<nil>
+2026-10-29T21:07:14+01:00 ERROR read external storage for com.acme.app err=ls: … Permission denied
 ```
 
 ### Log levels
 
 Control verbosity with `--log-level` (default: `INFO`):
 
-| Level | What is recorded |
-|-------|-----------------|
-| `ERROR` | Commands that returned an error |
-| `WARN` | Commands that produced output (potential warnings) + errors |
-| `INFO` | Every command executed (default) |
-| `TRACE` | Every command with its full combined output |
+| Level   | What is recorded                                            |
+| ------- | ----------------------------------------------------------- |
+| `ERROR` | Commands that returned an error                             |
+| `WARN`  | Commands that produced output (potential warnings) + errors |
+| `INFO`  | Every command executed (default)                            |
+| `TRACE` | Every command with its full combined output                 |
 
 ```bash
 # Capture everything — command + full output
-go run ./cmd/simmer --log --log-level TRACE
+simmer --log --log-level TRACE
 
 # Only see what failed
-go run ./cmd/simmer --log --log-level ERROR
+simmer --log --log-level ERROR
 ```
+
+Global flags go before the command: `simmer --log devices`, not `simmer devices --log`.
 
 ## 🔬 Profiling & Heap Analysis
 
@@ -217,9 +274,9 @@ before/after results, see [docs/architecture/performance.md](docs/architecture/p
 
 ### Reading the output
 
-| pprof type | What it measures |
-|---|---|
-| `inuse_space` (default) | Bytes currently live on the heap |
+| pprof type                     | What it measures                        |
+| ------------------------------ | --------------------------------------- |
+| `inuse_space` (default)        | Bytes currently live on the heap        |
 | `alloc_space` (`-alloc_space`) | Total bytes ever allocated (ignores GC) |
 
 `inuse_space` is the right view for leak hunting — if a symbol shows up here after you expect it to be freed,
@@ -233,15 +290,22 @@ go tool pprof -alloc_space heap.out
 
 ## 🏗 Project Structure
 
-- `cmd/simmer/main.go`: CLI entry point.
-- `internal/app/`: Bubble Tea app model/update/view orchestration.
+- `cmd/simmer/main.go`: Process entry point; dispatches to the TUI or a headless command.
+- `internal/session/`: Device orchestration shared by both modes — discovery roster, device reference resolution, app enrichment, database access, operation deadlines. Imports no UI library.
+- `internal/cli/`: Headless adapter — argv to session calls, table and JSON output.
+- `internal/app/`: Bubble Tea app model/update/view orchestration (the TUI adapter over the session).
 - `internal/ui/`: TUI components (sidebar, main pane, overlays, styles).
 - `internal/ui/dbviewer/`: Self-contained SQLite database viewer overlay (explorer, query editor, results pane, settings form).
-- `internal/device/`: Device domain contracts, coordinator, and platform integrations.
+- `internal/device/`: Device domain contracts, capability routing, and platform integrations
+  (simctl, go-ios, adb/gadb) — the only package that knows how a given device is reached.
 - `internal/config/`: User settings persistence (`~/.config/simmer/config.toml`).
 
 ## 📚 Documentation
 
+- **Guides**
+  - [Headless mode: every command, with examples](docs/headless.md)
+- **Working on Simmer**
+  - [AGENTS.md](AGENTS.md) — commands, device tests, domain terms
 - **Architecture**
   - [App model/update/view flow](docs/architecture/app-model-update-view.md)
   - [Device layer design](docs/architecture/device-layer.md)

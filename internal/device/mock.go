@@ -28,11 +28,6 @@ type MockManager struct {
 	LaunchBundleID string
 }
 
-// NewMockManager creates a mock manager for the given platform.
-func NewMockManager(p Platform) *MockManager {
-	return &MockManager{PlatformVal: p}
-}
-
 func (m *MockManager) ListDevices(ctx context.Context) ([]Device, error) {
 	if m.ErrorVal != nil {
 		return nil, m.ErrorVal

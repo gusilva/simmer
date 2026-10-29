@@ -171,12 +171,12 @@ func (m *physicalAndroidManager) FetchAppVersions(_ context.Context, id string, 
 }
 
 // DetectReactNative implements ReactNativeDetector for physical Android devices.
-func (m *physicalAndroidManager) DetectReactNative(_ context.Context, id string, app App) bool {
+func (m *physicalAndroidManager) DetectReactNative(ctx context.Context, id string, app App) bool {
 	d, err := gadbDevice(id)
 	if err != nil {
 		return false
 	}
-	return detectReactNativeApp(m.logger, d, app.BundleID, app.Path)
+	return detectReactNativeApp(ctx, m.logger, d, app.BundleID, app.Path)
 }
 
 // DeleteApp uninstalls an app from a physical Android device via gadb.

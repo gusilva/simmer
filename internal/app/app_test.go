@@ -1,6 +1,10 @@
 package app
 
 import (
+	"simmer/internal/config"
+	"simmer/internal/session"
+	"strings"
+
 	"testing"
 
 	"simmer/internal/device"
@@ -91,6 +95,7 @@ func newTestModel() model {
 		layout:       &appLayout{},
 		toolVersions: make(map[device.Platform]string),
 		rebuildPaths: make(map[string]string),
+		sess:         session.New(device.NewCoordinator(), nil, config.Default()),
 	}
 }
 
@@ -197,7 +202,7 @@ func TestUpdate_KeyCtrlD_OpensDBViewer(t *testing.T) {
 
 func TestUpdate_KeyCtrlD_ClosesDBViewer(t *testing.T) {
 	m := newTestModel()
-	modal := dbviewer.New(func() tea.Msg { return ui.CancelOverlayMsg{} })
+	modal := dbviewer.New(func() tea.Msg { return ui.CancelOverlayMsg{} }, session.New(nil, nil, config.Default()))
 	m.dbViewerModal = &modal
 	result, _ := m.Update(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
 	m2 := result.(model)
@@ -540,13 +545,6 @@ func TestUpdate_AutoRefreshMsg(t *testing.T) {
 	_ = m2
 }
 
-func TestUpdate_SQLiteResultMsg_NoModal(t *testing.T) {
-	m := newTestModel()
-	result, _ := m.Update(ui.SQLiteResultMsg{Rows: [][]string{{"a"}}})
-	m2 := result.(model)
-	_ = m2
-}
-
 func TestUpdate_ConfirmPlatformPickerMsg_IOS(t *testing.T) {
 	m := newTestModel()
 	p := ui.NewPlatformPickerModal()
@@ -877,5 +875,138 @@ func TestUpdate_StopAppLoggingMsg_WithActiveStream(t *testing.T) {
 	}
 	if m2.logBundleID != "" || m2.logDeviceID != "" {
 		t.Error("log bundle/device IDs must be cleared")
+	}
+}
+
+func TestUpdate_RequestSubtreeMsg_LoadsWhenDeviceSelected(t *testing.T) {
+	m := newTestModel()
+
+	// No device selected: nothing to list against.
+	_, cmd := m.Update(ui.RequestSubtreeMsg{Path: "/storage/emulated/0/Android"})
+	if cmd != nil {
+		t.Error("expected no command without a selected device")
+	}
+
+	// Select a device: the online pane's first row is its platform header,
+	// so the cursor has to move onto the device itself.
+	m.sidebar.SetDevices([]device.Device{{ID: "X", Name: "Pixel", Platform: device.PlatformAndroid, Status: device.StatusRunning}})
+	m.sidebar, _ = m.sidebar.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if m.sidebar.SelectedDevice() == nil {
+		t.Fatal("test setup: no device selected")
+	}
+
+	_, cmd = m.Update(ui.RequestSubtreeMsg{Path: "/storage/emulated/0/Android"})
+	if cmd == nil {
+		t.Error("expected a listing command for the selected device")
+	}
+}
+
+func TestUpdate_SubtreeMsg_SuccessIsSilent(t *testing.T) {
+	m := newTestModel()
+	root := device.FileNode{Path: "/storage/emulated/0", Name: "0", IsDir: true,
+		Children: []device.FileNode{{Path: "/storage/emulated/0/Android", Name: "Android", IsDir: true}},
+	}
+	m.mainPane.SetTree(&root)
+
+	result, _ := m.Update(subtreeMsg{
+		path: "/storage/emulated/0/Android",
+		node: device.FileNode{Path: "/storage/emulated/0/Android", Name: "Android", IsDir: true,
+			Children: []device.FileNode{{Path: "/storage/emulated/0/Android/data", Name: "data", IsDir: true}},
+		},
+	})
+	m2 := result.(model)
+
+	// Expanding a directory is routine: it must not raise a status message
+	// or record an error. The merge itself is covered in internal/ui.
+	if m2.status != "" {
+		t.Errorf("status = %q, want none", m2.status)
+	}
+	if len(m2.errs) != 0 {
+		t.Errorf("errors = %v, want none", m2.errs)
+	}
+}
+
+func TestUpdate_SubtreeMsg_ErrorSetsStatus(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 100, 40
+
+	result, _ := m.Update(subtreeMsg{path: "/storage/emulated/0/Android", err: errorString("permission denied")})
+	m2 := result.(model)
+
+	if m2.statusKind != ui.StatusErr {
+		t.Errorf("status kind = %v, want an error", m2.statusKind)
+	}
+	if !strings.Contains(m2.status, "/storage/emulated/0/Android") {
+		t.Errorf("status %q does not name the directory", m2.status)
+	}
+	if len(m2.errs) == 0 {
+		t.Error("the failure should be recorded")
+	}
+}
+
+func TestUpdate_RequestFileSearchMsg_NeedsADevice(t *testing.T) {
+	m := newTestModel()
+
+	_, cmd := m.Update(ui.RequestFileSearchMsg{Target: device.Directory("/storage/emulated/0"), Query: "rooms"})
+	if cmd != nil {
+		t.Error("no device selected: nothing to search")
+	}
+
+	m.sidebar.SetDevices([]device.Device{{ID: "X", Name: "Pixel", Platform: device.PlatformAndroid, Status: device.StatusRunning}})
+	m.sidebar, _ = m.sidebar.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+
+	_, cmd = m.Update(ui.RequestFileSearchMsg{Target: device.Directory("/storage/emulated/0"), Query: "rooms"})
+	if cmd == nil {
+		t.Error("expected a search command")
+	}
+}
+
+func TestUpdate_FileSearchMsg_ShowsResults(t *testing.T) {
+	m := newTestModel()
+
+	result, _ := m.Update(fileSearchMsg{
+		query:   "rooms",
+		matches: []device.FileMatch{{Name: "rooms.db", Path: "/storage/emulated/0/rooms.db"}},
+	})
+	m2 := result.(model)
+
+	if !m2.mainPane.SearchActive() {
+		t.Error("results should be showing")
+	}
+	if match := m2.mainPane.SelectedMatch(); match == nil || match.Name != "rooms.db" {
+		t.Errorf("selected match = %+v", match)
+	}
+}
+
+func TestUpdate_FileSearchMsg_FailureStaysOnScreen(t *testing.T) {
+	m := newTestModel()
+
+	result, _ := m.Update(fileSearchMsg{query: "rooms", err: errorString("permission denied")})
+	m2 := result.(model)
+
+	// The mode stays open so the message is visible rather than vanishing
+	// back to the tree.
+	if !m2.mainPane.SearchActive() {
+		t.Error("a failed search should still be on screen")
+	}
+	if len(m2.errs) == 0 {
+		t.Error("the failure should be recorded")
+	}
+}
+
+func TestUpdate_RequestFileTreeAtMsg_LeavesSearchAndReroots(t *testing.T) {
+	m := newTestModel()
+	m.mainPane.SetFileSearchResults("rooms", []device.FileMatch{{Name: "rooms", Path: "/storage/emulated/0/rooms", IsDir: true}})
+	m.sidebar.SetDevices([]device.Device{{ID: "X", Name: "Pixel", Platform: device.PlatformAndroid, Status: device.StatusRunning}})
+	m.sidebar, _ = m.sidebar.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+
+	result, cmd := m.Update(ui.RequestFileTreeAtMsg{Path: "/storage/emulated/0/rooms"})
+	m2 := result.(model)
+
+	if cmd == nil {
+		t.Error("expected the tree to be loaded at the new root")
+	}
+	if m2.mainPane.SearchActive() {
+		t.Error("picking a result should leave the result list")
 	}
 }

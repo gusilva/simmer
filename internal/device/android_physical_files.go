@@ -95,3 +95,20 @@ func buildGadbTree(ctx context.Context, logger *logging.Logger, d gadb.Device, p
 
 	return node, nil
 }
+
+// FileSystemFor returns the physical-Android FileSystem serving a target.
+//
+// An app's storage is read exactly as on an emulator: run-as needs the app
+// to be debuggable, not the device to be rooted. There is deliberately no
+// fallback to shared storage when both of an app's areas are refused — that
+// answered "this app's files" with the whole sdcard, which surfaced as an
+// empty result.
+func (m *physicalAndroidManager) FileSystemFor(t FileTarget, d Depth) FileSystem {
+	return androidFileSystemFor(t, d, NewAndroidPhysicalFileSystem(m.logger), m.logger)
+}
+
+// StorageRoots reports the directories a target covers. A physical device's
+// own filesystem is only reachable as shared storage without root.
+func (m *physicalAndroidManager) StorageRoots(_ context.Context, _ Device, t FileTarget) ([]string, error) {
+	return androidStorageRoots(t, "/storage/emulated/0")
+}

@@ -5,9 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"simmer/internal/config"
 	"simmer/internal/device"
-	"simmer/internal/logging"
+	"simmer/internal/session"
 	"simmer/internal/theme"
 
 	tea "charm.land/bubbletea/v2"
@@ -43,9 +42,8 @@ type Modal struct {
 	dbPath        string
 	dbName        string
 	sqliteVersion string
-	tablesQuery   string // from config; used by fetchTablesCmd
 	scriptDir     string // from config; used by fetchScriptsCmd
-	logger        *logging.Logger
+	sess          *session.Session
 
 	lastStats      queryStats
 	queryStartedAt time.Time
@@ -59,13 +57,14 @@ type Modal struct {
 
 // New creates a Modal. onClose is called when the user dismisses the overlay;
 // it should return the appropriate close message for the parent application.
-func New(onClose func() tea.Msg) Modal {
+func New(onClose func() tea.Msg, sess *session.Session) Modal {
 	return Modal{
+		sess:   sess,
 		focus:  paneSidebar,
 		styles: newViewerStyles(),
 		panes: [paneCount]pane{
 			paneSidebar: newExplorer().asPane(),
-			paneQuery:   newQueryPane().asPane(),
+			paneQuery:   newQueryPane(sess.Config()).asPane(),
 			paneResults: newResultsPane().asPane(),
 		},
 		onClose: onClose,
@@ -74,17 +73,14 @@ func New(onClose func() tea.Msg) Modal {
 
 // SetFile attaches a database file and its owning device to the viewer and
 // returns a Cmd that asynchronously fetches the SQLite version and table list.
-func (m *Modal) SetFile(dev device.Device, packageID, dbPath, dbName string, logger *logging.Logger) tea.Cmd {
-	m.logger = logger
+func (m *Modal) SetFile(dev device.Device, packageID, dbPath, dbName string) tea.Cmd {
 	m.device = dev
 	m.packageID = packageID
 	m.dbPath = dbPath
 	m.dbName = dbName
 	m.sqliteVersion = ""
 
-	cfg, _ := config.Load()
-	dbcfg := cfg.ForDB(dbName)
-	m.tablesQuery = dbcfg.EffectiveTablesQuery()
+	dbcfg := m.sess.Config().ForDB(dbName)
 	m.scriptDir = dbcfg.ScriptPath
 
 	if qp, ok := m.panes[paneQuery].(queryPaneAdapter); ok {
@@ -132,17 +128,6 @@ func (m Modal) setQueryText(sql string) Modal {
 	return m
 }
 
-// injectQuery sets the query editor content and moves focus to the query pane.
-func (m Modal) injectQuery(sql string) (Modal, tea.Cmd) {
-	qp, ok := m.panes[paneQuery].(queryPaneAdapter)
-	if !ok {
-		return m, nil
-	}
-	qp.inner = qp.inner.SetQuery(sql)
-	m.panes[paneQuery] = qp
-	return m.setFocus(paneQuery)
-}
-
 // sidebarSQL returns the SQL string to inject for the currently selected
 // sidebar node, and true when the node is a table or column.
 func (m Modal) sidebarSQL() (string, bool) {
@@ -185,8 +170,7 @@ func (m Modal) sidebarScript() (path, name string, ok bool) {
 
 // openSettings loads the persisted config and opens the settings form for the current database.
 func (m Modal) openSettings() Modal {
-	cfg, _ := config.Load()
-	m.settings = newSettings(cfg, m.dbName)
+	m.settings = newSettings(m.sess.Config(), m.dbName)
 	m.settingsOpen = true
 	m.settings.picker.SetHeight(m.pickerBodyH())
 	return m

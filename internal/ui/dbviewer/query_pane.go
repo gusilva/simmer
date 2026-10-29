@@ -41,7 +41,7 @@ type QueryPane struct {
 	state        fileState
 }
 
-func newQueryPane() QueryPane {
+func newQueryPane(cfg config.Config) QueryPane {
 	ta := textarea.New()
 	ta.Placeholder = "Write SQL here…"
 	ta.ShowLineNumbers = true
@@ -65,7 +65,6 @@ func newQueryPane() QueryPane {
 	s.Blurred.EndOfBuffer = lipgloss.NewStyle().Foreground(theme.ColorFgFaint).Background(theme.ColorBg)
 	ta.SetStyles(s)
 
-	cfg, _ := config.Load()
 	scriptDir := cfg.ScriptPath
 
 	state := fileStateNew

@@ -2,8 +2,7 @@ package app
 
 import (
 	"simmer/internal/device"
-
-	tea "charm.land/bubbletea/v2"
+	"simmer/internal/session"
 )
 
 type buildStartedMsg struct {
@@ -113,36 +112,41 @@ type fileTreeMsg struct {
 	err    error
 }
 
-type appsListMsg struct {
+// appsListMsg carries the bare app list for a device, plus the channel the
+// Session streams later refinements on (nil when the platform needs none).
+// fileSearchMsg carries the result of a device file search.
+type fileSearchMsg struct {
+	query   string
+	matches []device.FileMatch
+	err     error
+}
+
+// subtreeMsg carries the entries of one expanded directory.
+type subtreeMsg struct {
 	device device.Device
-	apps   []device.App
+	path   string
+	node   device.FileNode
 	err    error
 }
 
-// appReactNativeMsg carries a single app's background React Native detection
-// result (see model.enrichAppsCmd).
-type appReactNativeMsg struct {
-	deviceID string
-	bundleID string
-	isRN     bool
+type appsListMsg struct {
+	device  device.Device
+	apps    []device.App
+	updates <-chan session.AppUpdate
+	// stop abandons the enrichment pool behind updates. Without it a
+	// device switch leaves the previous pool running against the same USB
+	// connection, which is the contention the worker limit exists to avoid.
+	stop func()
+	err  error
 }
 
-// appVersionMsg carries a single app's version name, fetched in the
-// background after the bare app list is already on screen (see
-// model.enrichAppsCmd).
-type appVersionMsg struct {
-	deviceID string
-	bundleID string
-	version  string
-}
-
-// appEnrichMsg wraps one streamed result from model.enrichAppsCmd's worker
-// pool (either appVersionMsg or appReactNativeMsg) along with the channel it
-// came from, so Update can re-arm the listener and keep draining until the
-// pool finishes and closes ch.
-type appEnrichMsg struct {
-	msg tea.Msg
-	ch  <-chan tea.Msg
+// appUpdateMsg wraps one refinement from the Session's enrichment pool (a
+// version name, or React Native status) along with the channel it came from,
+// so Update can re-arm the listener and keep draining until the pool
+// finishes and closes ch.
+type appUpdateMsg struct {
+	update session.AppUpdate
+	ch     <-chan session.AppUpdate
 }
 
 type infoMsg struct {

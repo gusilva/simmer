@@ -34,9 +34,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		mainW := max(m.width-(ui.DefaultSidebarWidth+2)-1, 0)
 
 		m.mainPane.SetSize(mainW, bodyH)
-		if m.sqliteModal != nil {
-			m.sqliteModal.SetSize(m.width, m.height)
-		}
 		if m.dbViewerModal != nil {
 			m.dbViewerModal.SetSize(m.width, m.height)
 		}
@@ -72,8 +69,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.dbViewerModal = nil
 				return m, nil
 			}
-			if m.actionMenu == nil && m.platformPicker == nil && m.createIOSModal == nil && m.createAndModal == nil && m.deleteAlert == nil && m.deleteAppAlert == nil && m.installAppModal == nil && m.sqliteModal == nil && m.rnOptionsModal == nil && m.textPromptModal == nil {
-				modal := dbviewer.New(func() tea.Msg { return ui.CancelOverlayMsg{} })
+			if m.actionMenu == nil && m.platformPicker == nil && m.createIOSModal == nil && m.createAndModal == nil && m.deleteAlert == nil && m.deleteAppAlert == nil && m.installAppModal == nil && m.rnOptionsModal == nil && m.textPromptModal == nil {
+				modal := dbviewer.New(func() tea.Msg { return ui.CancelOverlayMsg{} }, m.sess)
 				modal.SetSize(m.width, m.height)
 				m.dbViewerModal = &modal
 			}
@@ -119,11 +116,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.installAppModal != nil {
 			updated, cmd := m.installAppModal.Update(msg)
 			m.installAppModal = &updated
-			return m, cmd
-		}
-		if m.sqliteModal != nil {
-			updated, cmd := m.sqliteModal.Update(msg)
-			m.sqliteModal = &updated
 			return m, cmd
 		}
 		if m.rnOptionsModal != nil {
@@ -197,11 +189,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.dbViewerModal != nil {
 			updated, cmd := m.dbViewerModal.Update(msg)
 			m.dbViewerModal = &updated
-			return m, cmd
-		}
-		if m.sqliteModal != nil {
-			updated, cmd := m.sqliteModal.Update(msg)
-			m.sqliteModal = &updated
 			return m, cmd
 		}
 		return m, nil
@@ -308,6 +295,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case appsListMsg:
+		// A previous device's pool is still running until told otherwise.
+		m.stopEnrichment()
+		m.stopAppEnrich = msg.stop
+
 		if msg.err != nil {
 			m.errs = append(m.errs, msg.err)
 
@@ -323,19 +314,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// instead of blocking on them or firing one tea.Cmd per app (which
 		// starves a single-device adb/USB connection). Simulator apps are
 		// already correct: ListApps checks the local bundle inline.
-		return m, m.enrichAppsCmd(msg.device, msg.apps)
+		return m, waitForAppUpdateCmd(msg.updates)
 
-	case appEnrichMsg:
-		switch inner := msg.msg.(type) {
-		case appVersionMsg:
-			m.mainPane.SetAppVersion(inner.deviceID, inner.bundleID, inner.version)
-		case appReactNativeMsg:
-			if inner.isRN {
-				m.mainPane.SetAppReactNative(inner.deviceID, inner.bundleID, true)
-			}
+	case appUpdateMsg:
+		if msg.update.Version != "" {
+			m.mainPane.SetAppVersion(msg.update.DeviceID, msg.update.BundleID, msg.update.Version)
+		}
+		if msg.update.ReactNative {
+			m.mainPane.SetAppReactNative(msg.update.DeviceID, msg.update.BundleID, true)
 		}
 
-		return m, waitForAppEnrichCmd(msg.ch)
+		return m, waitForAppUpdateCmd(msg.ch)
 
 	case infoMsg:
 		if msg.err != nil {
@@ -371,43 +360,71 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, nil
 
+	case ui.RequestFileSearchMsg:
+		sel := m.sidebar.SelectedDevice()
+		if sel == nil {
+			return m, nil
+		}
+
+		return m, m.searchFilesCmd(*sel, msg.Target, msg.Query)
+
+	case fileSearchMsg:
+		if msg.err != nil {
+			m.mainPane.SetFileSearchError(msg.query, errPreview(msg.err))
+			m.errs = append(m.errs, msg.err)
+
+			return m, nil
+		}
+
+		m.mainPane.SetFileSearchResults(msg.query, msg.matches)
+
+		return m, nil
+
+	case ui.RequestFileTreeAtMsg:
+		sel := m.sidebar.SelectedDevice()
+		if sel == nil {
+			return m, nil
+		}
+		m.mainPane.ExitFileSearch()
+		m.mainPane.SetTreeTarget(device.Directory(msg.Path))
+
+		return m, m.loadTreeAtCmd(*sel, msg.Path)
+
+	case ui.RequestSubtreeMsg:
+		sel := m.sidebar.SelectedDevice()
+		if sel == nil {
+			return m, nil
+		}
+
+		return m, m.loadSubtreeCmd(*sel, msg.Path)
+
+	case subtreeMsg:
+		if msg.err != nil {
+			m.mainPane.SubtreeFailed(msg.path)
+			m.errs = append(m.errs, msg.err)
+
+			return m, m.setStatus("open "+msg.path+" failed: "+errPreview(msg.err), ui.StatusErr)
+		}
+
+		m.mainPane.MergeSubtree(msg.path, msg.node)
+
+		return m, nil
+
 	case ui.RequestFileTreeMsg:
 		sel := m.sidebar.SelectedDevice()
 		if sel == nil {
 			return m, nil
 		}
 
-		if msg.App == nil {
-			switch sel.Platform {
-			case device.PlatformIOS:
-				if sel.Kind == device.KindPhysical {
-					return m, m.loadIOSPhysicalFileTreeCmd(*sel)
-				}
-				return m, m.loadIOSRootFileTreeCmd(*sel)
-			case device.PlatformAndroid:
-				if sel.Kind == device.KindPhysical {
-					return m, m.loadAndroidPhysicalFileTreeCmd(*sel)
-				}
-				return m, m.loadAndroidRootFileTreeCmd(*sel)
-			}
-			return m, nil
+		// A target, not an adapter: which storage areas an app owns, and how
+		// each is reached, belongs to the device layer.
+		target := device.DeviceRoot()
+		if msg.App != nil {
+			target = device.AppStorage(msg.App.BundleID)
 		}
+		m.mainPane.SetTreeTarget(target)
 
-		switch sel.Platform {
-		case device.PlatformIOS:
-			if sel.Kind == device.KindPhysical {
-				return m, m.loadIOSPhysicalAppFileTreeCmd(*sel, *msg.App)
-			}
-			return m, m.loadIOSAppFileTreeCmd(*sel, *msg.App)
-		case device.PlatformAndroid:
-			if sel.Kind == device.KindPhysical {
-				// Physical Android: show external storage (no run-as access without root)
-				return m, m.loadAndroidPhysicalFileTreeCmd(*sel)
-			}
-			return m, m.loadAndroidFileTreeCmd(*sel, *msg.App)
-		}
-
-		return m, nil
+		return m, m.loadFileTreeCmd(*sel, target)
 
 	case ui.StopAppLoggingMsg:
 		m.teardownAppLogging()
@@ -731,21 +748,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.startRebuildCmd(msg.Device, msg.App, msg.Path, msg.Scheme)
 
 	case ui.ShowSQLiteViewerMsg:
-		modal := dbviewer.New(func() tea.Msg { return ui.CancelOverlayMsg{} })
+		modal := dbviewer.New(func() tea.Msg { return ui.CancelOverlayMsg{} }, m.sess)
 		modal.SetSize(m.width, m.height)
 
-		fileCmd := modal.SetFile(msg.Device, msg.PackageID, msg.DBPath, msg.DBName, m.logger)
+		fileCmd := modal.SetFile(msg.Device, msg.PackageID, msg.DBPath, msg.DBName)
 
 		m.dbViewerModal = &modal
-		m.sqliteModal = nil
 
 		return m, fileCmd
-
-	case ui.SQLiteResultMsg:
-		if m.sqliteModal != nil {
-			m.sqliteModal.SetResult(msg.Rows, msg.Err)
-		}
-		return m, nil
 
 	case dbviewer.SQLiteVersionMsg, dbviewer.TablesLoadedMsg, dbviewer.ColumnsLoadedMsg, dbviewer.FileSavedMsg, dbviewer.QueryResultMsg, dbviewer.SettingsSavedMsg, dbviewer.SettingsCancelMsg, dbviewer.ScriptsLoadedMsg, dbviewer.ScriptLoadedMsg:
 		if m.dbViewerModal != nil {
@@ -780,7 +790,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Complex modals swallow all clicks — same overlays that intercept
 		// every key in the tea.KeyPressMsg case above.
 		if m.actionMenu != nil || m.platformPicker != nil || m.createIOSModal != nil || m.createAndModal != nil ||
-			m.installAppModal != nil || m.sqliteModal != nil || m.rnOptionsModal != nil || m.textPromptModal != nil ||
+			m.installAppModal != nil || m.rnOptionsModal != nil || m.textPromptModal != nil ||
 			m.infoOverlay != nil || m.helpOverlay != nil {
 			return m, nil
 		}
@@ -830,7 +840,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case dbviewer.ShowMsg:
-		modal := dbviewer.New(func() tea.Msg { return ui.CancelOverlayMsg{} })
+		modal := dbviewer.New(func() tea.Msg { return ui.CancelOverlayMsg{} }, m.sess)
 		modal.SetSize(m.width, m.height)
 		m.dbViewerModal = &modal
 		return m, nil
@@ -844,7 +854,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.deleteAppAlert = nil
 		m.closeAppAlert = nil
 		m.installAppModal = nil
-		m.sqliteModal = nil
 		m.dbViewerModal = nil
 		m.rnOptionsModal = nil
 		m.textPromptModal = nil

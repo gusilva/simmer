@@ -1,6 +1,9 @@
 package dbviewer
 
 import (
+	"simmer/internal/config"
+	"simmer/internal/session"
+
 	"testing"
 
 	"simmer/internal/device"
@@ -12,7 +15,7 @@ import (
 // SetSize is always called with the app's own full width/height) with three
 // tables loaded into the explorer sidebar.
 func newTestModalWithTables() Modal {
-	m := New(func() tea.Msg { return nil })
+	m := New(func() tea.Msg { return nil }, session.New(nil, nil, config.Default()))
 	m.SetSize(120, 40)
 
 	ep := m.panes[paneSidebar].(explorerPane)

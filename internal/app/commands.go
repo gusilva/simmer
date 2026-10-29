@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"simmer/internal/device"
+	"simmer/internal/session"
 	"simmer/internal/ui"
 
 	tea "charm.land/bubbletea/v2"
@@ -56,11 +56,9 @@ func validateHostPort(s string) error {
 }
 
 func (m model) fetchDevicesCmd() tea.Cmd {
-	coord := m.coordinator
+	sess := m.sess
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		return discoveryMsg(coord.Discover(ctx))
+		return discoveryMsg(sess.ListDevices(context.Background()))
 	}
 }
 
@@ -152,77 +150,46 @@ func (m model) shutdownDeviceCmd(dev device.Device) tea.Cmd {
 	}
 }
 
-func (m model) loadIOSAppFileTreeCmd(dev device.Device, app device.App) tea.Cmd {
+// searchFilesCmd searches the device under the tree's roots. The tree only
+// knows the directories that have been expanded, so this is what finds a
+// file nobody has navigated to.
+func (m model) searchFilesCmd(dev device.Device, target device.FileTarget, query string) tea.Cmd {
+	sess := m.sess
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		fs := device.NewIOSAppFileSystem(app.BundleID)
-		root, err := fs.Tree(ctx, dev)
+		matches, err := sess.SearchFiles(context.Background(), dev, target, query)
+		return fileSearchMsg{query: query, matches: matches, err: err}
+	}
+}
+
+// loadTreeAtCmd re-roots the Files tree at a directory, which is how a
+// search result turns back into something browsable.
+func (m model) loadTreeAtCmd(dev device.Device, path string) tea.Cmd {
+	sess := m.sess
+	return func() tea.Msg {
+		root, err := sess.FileTree(context.Background(), dev, device.Directory(path), device.OneLevel)
 		return fileTreeMsg{device: dev, root: root, err: err}
 	}
 }
 
-func (m model) loadIOSRootFileTreeCmd(dev device.Device) tea.Cmd {
+// loadSubtreeCmd lists one directory's entries, for a tree node the user
+// expanded. Listing one level keeps an expansion cheap no matter how large
+// the subtree below it is.
+func (m model) loadSubtreeCmd(dev device.Device, path string) tea.Cmd {
+	sess := m.sess
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		fs := device.NewIOSRootFileSystem()
-		root, err := fs.Tree(ctx, dev)
-		return fileTreeMsg{device: dev, root: root, err: err}
+		node, err := sess.FileTree(context.Background(), dev, device.Directory(path), device.OneLevel)
+		return subtreeMsg{device: dev, path: path, node: node, err: err}
 	}
 }
 
-func (m model) loadAndroidFileTreeCmd(dev device.Device, app device.App) tea.Cmd {
-	logger := m.logger
+// loadFileTreeCmd reads a device's filesystem at the given target. The
+// Session picks the adapter for the device's platform and kind, so this
+// command no longer needs to know that physical iOS goes over AFC or that a
+// package's private data dir needs run-as.
+func (m model) loadFileTreeCmd(dev device.Device, target device.FileTarget) tea.Cmd {
+	sess := m.sess
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		fs := device.NewAndroidFileSystem(app.BundleID, logger)
-		root, err := fs.Tree(ctx, dev)
-		return fileTreeMsg{device: dev, root: root, err: err}
-	}
-}
-
-func (m model) loadAndroidRootFileTreeCmd(dev device.Device) tea.Cmd {
-	logger := m.logger
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		fs := device.NewAndroidRootFileSystem(logger)
-		root, err := fs.Tree(ctx, dev)
-		return fileTreeMsg{device: dev, root: root, err: err}
-	}
-}
-
-func (m model) loadIOSPhysicalFileTreeCmd(dev device.Device) tea.Cmd {
-	logger := m.logger
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		fs := device.NewIOSPhysicalFileSystem(logger)
-		root, err := fs.Tree(ctx, dev)
-		return fileTreeMsg{device: dev, root: root, err: err}
-	}
-}
-
-func (m model) loadIOSPhysicalAppFileTreeCmd(dev device.Device, app device.App) tea.Cmd {
-	logger := m.logger
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		fs := device.NewIOSPhysicalAppFileSystem(app.BundleID, logger)
-		root, err := fs.Tree(ctx, dev)
-		return fileTreeMsg{device: dev, root: root, err: err}
-	}
-}
-
-func (m model) loadAndroidPhysicalFileTreeCmd(dev device.Device) tea.Cmd {
-	logger := m.logger
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		fs := device.NewAndroidPhysicalFileSystem(logger)
-		root, err := fs.Tree(ctx, dev)
+		root, err := sess.FileTree(context.Background(), dev, target, device.FullDepth)
 		return fileTreeMsg{device: dev, root: root, err: err}
 	}
 }
@@ -347,108 +314,37 @@ func (m model) closeAppCmd(dev device.Device, app device.App) tea.Cmd {
 }
 
 func (m model) loadAppsCmd(dev device.Device) tea.Cmd {
-	coord := m.coordinator
+	sess := m.sess
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		apps, err := coord.ListApps(ctx, dev)
-		return appsListMsg{device: dev, apps: apps, err: err}
+		cat, err := sess.Apps(context.Background(), dev, session.EnrichOptions{})
+		if err != nil {
+			return appsListMsg{device: dev, err: err}
+		}
+		return appsListMsg{device: dev, apps: cat.Apps, updates: cat.Updates, stop: cat.Stop}
 	}
 }
 
-// enrichAppsCmd fetches each app's version name and/or React Native status
-// in the background, after the bare app list (see loadAppsCmd) is already
-// on screen. Work is spread across a small bounded worker pool rather than
-// one Cmd per app: for a physical device, firing all apps at once as
-// concurrent tea.Cmds means that many simultaneous APK pulls over the same
-// single USB adb connection, which starves or times out most of them. A
-// pool of workers streams results back one at a time via appEnrichMsg,
-// updating the list progressively as each app finishes — the caller
-// re-arms the listener each time (see waitForAppEnrichCmd) until the pool
-// finishes and closes the channel.
-//
-// Returns nil if this platform/kind needs neither (iOS simulator: ListApps
-// already checks the local bundle inline and returns full data).
-func (m model) enrichAppsCmd(dev device.Device, apps []device.App) tea.Cmd {
-	needVersions := dev.Platform == device.PlatformAndroid
-	needRN := dev.Platform == device.PlatformAndroid ||
-		(dev.Platform == device.PlatformIOS && dev.Kind == device.KindPhysical)
-	if len(apps) == 0 || (!needVersions && !needRN) {
+// waitForAppUpdateCmd blocks for the next refinement the Session's
+// enrichment pool produces (a version name, or React Native status) and
+// re-arms itself, so the Apps panel fills in progressively. Returns no
+// message once the channel is drained and closed.
+func waitForAppUpdateCmd(ch <-chan session.AppUpdate) tea.Cmd {
+	if ch == nil {
 		return nil
 	}
-
-	coord := m.coordinator
-	ch := make(chan tea.Msg, len(apps))
-
-	go func() {
-		defer close(ch)
-		// Physical devices tolerate far less concurrent adb/AFC traffic than
-		// an emulator (local loopback): the shell/pull calls above raced
-		// each other over a single USB transport in testing, failing
-		// silently and unpredictably (some apps' version/RN data would just
-		// be missing, no pattern) rather than erroring loudly. One worker at
-		// a time is slower in total but each result still streams in as it
-		// completes, and nothing gets dropped.
-		workers := 4
-		if dev.Kind == device.KindPhysical {
-			workers = 1
-		}
-		jobs := make(chan device.App)
-
-		var wg sync.WaitGroup
-		for range workers {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for app := range jobs {
-					if needVersions {
-						ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-						versions := coord.FetchAppVersions(ctx, dev, []string{app.BundleID})
-						cancel()
-						if v := versions[app.BundleID]; v != "" {
-							ch <- appVersionMsg{deviceID: dev.ID, bundleID: app.BundleID, version: v}
-						}
-					}
-					if needRN {
-						ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-						isRN := coord.DetectReactNative(ctx, dev, app)
-						cancel()
-						if isRN {
-							ch <- appReactNativeMsg{deviceID: dev.ID, bundleID: app.BundleID, isRN: true}
-						}
-					}
-				}
-			}()
-		}
-
-		for _, a := range apps {
-			jobs <- a
-		}
-		close(jobs)
-		wg.Wait()
-	}()
-
-	return waitForAppEnrichCmd(ch)
-}
-
-// waitForAppEnrichCmd blocks for the next result from an enrichAppsCmd
-// worker pool. Returns nil (no message) once ch is drained and closed.
-func waitForAppEnrichCmd(ch <-chan tea.Msg) tea.Cmd {
 	return func() tea.Msg {
-		msg, ok := <-ch
+		update, ok := <-ch
 		if !ok {
 			return nil
 		}
-		return appEnrichMsg{msg: msg, ch: ch}
+		return appUpdateMsg{update: update, ch: ch}
 	}
 }
 
 func (m model) loadInfoCmd(dev device.Device) tea.Cmd {
-	coord := m.coordinator
+	sess := m.sess
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		info, err := coord.Info(ctx, dev)
+		info, err := sess.Info(context.Background(), dev)
 		return infoMsg{device: dev, info: info, err: err}
 	}
 }

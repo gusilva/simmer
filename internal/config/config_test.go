@@ -170,9 +170,9 @@ func TestConfig_WithDB_NilMap(t *testing.T) {
 
 func TestParseDBSectionHeader(t *testing.T) {
 	tests := []struct {
-		line    string
-		wantDB  string
-		wantOK  bool
+		line   string
+		wantDB string
+		wantOK bool
 	}{
 		{`[db."app.db"]`, "app.db", true},
 		{`[db."my database"]`, "my database", true},

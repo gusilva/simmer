@@ -1,7 +1,6 @@
 package device
 
 import (
-	"archive/zip"
 	"bufio"
 	"context"
 	"encoding/base64"
@@ -63,7 +62,7 @@ func (m *androidManager) Boot(_ context.Context, id string) error {
 // id. It maps the AVD name back to an adb serial via `adb -s <serial> emu avd
 // name`, then issues `adb -s <serial> emu kill`.
 func (m *androidManager) Shutdown(ctx context.Context, id string) error {
-	serial, err := findAndroidSerial(ctx, id)
+	serial, err := resolveAndroidSerial(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -103,12 +102,18 @@ func gadbDevice(serial string) (gadb.Device, error) {
 	return gadb.Device{}, fmt.Errorf("device %s not found or offline", serial)
 }
 
-// findAndroidSerial returns the adb serial (e.g. "emulator-5554") for the
-// running emulator whose AVD name matches avdName. Uses gadb to list devices
-// so no `adb devices` subprocess is spawned; the emu console command still
-// needs a subprocess since gadb does not implement the emulator protocol.
-// Package-level so both androidManager and AndroidFileSystem can use it.
-func findAndroidSerial(ctx context.Context, avdName string) (string, error) {
+// resolveAndroidSerial returns the adb serial for an Android device id,
+// which is the serial itself for physical hardware and an AVD name for an
+// emulator (resolved by asking each running emulator its name).
+//
+// Both forms have to work here: every Android capability — app lists,
+// file trees, SQLite queries — reaches the device through this, so an
+// emulator-only lookup silently excluded physical devices from all of them.
+//
+// Uses gadb to list devices so no `adb devices` subprocess is spawned; the
+// emu console command still needs a subprocess since gadb does not implement
+// the emulator protocol.
+func resolveAndroidSerial(ctx context.Context, deviceID string) (string, error) {
 	client, err := gadb.NewClient()
 	if err != nil {
 		return "", fmt.Errorf("adb server unavailable: %w", err)
@@ -117,6 +122,16 @@ func findAndroidSerial(ctx context.Context, avdName string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("adb list devices: %w", err)
 	}
+
+	// A physical device is identified by its serial already. An emulator is
+	// identified by its AVD name, which is never a connected serial, so an
+	// exact match here cannot shadow the lookup below.
+	for _, serial := range serials {
+		if serial == deviceID {
+			return serial, nil
+		}
+	}
+
 	for _, serial := range serials {
 		if !strings.HasPrefix(serial, "emulator-") {
 			continue
@@ -127,11 +142,11 @@ func findAndroidSerial(ctx context.Context, avdName string) (string, error) {
 		}
 		// Output is "<name>\nOK\n" — take first line only.
 		firstLine := strings.TrimSpace(strings.SplitN(string(nameOut), "\n", 2)[0])
-		if firstLine == avdName {
+		if firstLine == deviceID {
 			return serial, nil
 		}
 	}
-	return "", fmt.Errorf("no running emulator found for AVD %q", avdName)
+	return "", fmt.Errorf("no connected device or running emulator matches %q", deviceID)
 }
 
 // ToolVersion returns the adb version string (e.g. "1.0.41").
@@ -187,7 +202,7 @@ func (m *androidManager) Delete(ctx context.Context, id string) error {
 // a gradle project root, where `./gradlew assembleDebug` is run first.
 func (m *androidManager) InstallApp(ctx context.Context, deviceID, path, _ string) error {
 	p := expandPath(path)
-	serial, err := findAndroidSerial(ctx, deviceID)
+	serial, err := resolveAndroidSerial(ctx, deviceID)
 	if err != nil {
 		return fmt.Errorf("find android serial: %w", err)
 	}
@@ -269,7 +284,7 @@ func findAPKInOutputs(projectDir string) (string, error) {
 // TerminateApp stops a running app via `adb shell am force-stop`. Best-effort:
 // callers typically ignore the error since the app may not be running.
 func (m *androidManager) TerminateApp(ctx context.Context, deviceID, bundleID string) error {
-	serial, err := findAndroidSerial(ctx, deviceID)
+	serial, err := resolveAndroidSerial(ctx, deviceID)
 	if err != nil {
 		return fmt.Errorf("find android serial: %w", err)
 	}
@@ -286,7 +301,7 @@ func (m *androidManager) TerminateApp(ctx context.Context, deviceID, bundleID st
 // package name (BundleID), not an activity, so the launcher activity is
 // resolved first via `cmd package resolve-activity`.
 func (m *androidManager) LaunchApp(ctx context.Context, deviceID, bundleID string) error {
-	serial, err := findAndroidSerial(ctx, deviceID)
+	serial, err := resolveAndroidSerial(ctx, deviceID)
 	if err != nil {
 		return fmt.Errorf("find android serial: %w", err)
 	}
@@ -308,7 +323,7 @@ func (m *androidManager) LaunchApp(ctx context.Context, deviceID, bundleID strin
 // debug_http_host key React Native reads for the Metro bundler address, then
 // force-stops and relaunches the app so it picks up the change.
 func (m *androidManager) SetBundlerLocation(ctx context.Context, deviceID, bundleID, hostPort string) error {
-	serial, err := findAndroidSerial(ctx, deviceID)
+	serial, err := resolveAndroidSerial(ctx, deviceID)
 	if err != nil {
 		return fmt.Errorf("find android serial: %w", err)
 	}
@@ -327,7 +342,7 @@ func (m *androidManager) SetBundlerLocation(ctx context.Context, deviceID, bundl
 // TriggerDevMenu opens the React Native dev menu via the hardware Menu key
 // (KEYCODE_MENU), the standard emulator/device dev-menu shortcut.
 func (m *androidManager) TriggerDevMenu(ctx context.Context, deviceID, _ string) error {
-	serial, err := findAndroidSerial(ctx, deviceID)
+	serial, err := resolveAndroidSerial(ctx, deviceID)
 	if err != nil {
 		return fmt.Errorf("find android serial: %w", err)
 	}
@@ -419,7 +434,7 @@ func parseLauncherActivity(out, bundleID string) (string, error) {
 
 // DeleteApp uninstalls an app from an Android emulator via pm uninstall.
 func (m *androidManager) DeleteApp(ctx context.Context, deviceID, bundleID string) error {
-	serial, err := findAndroidSerial(ctx, deviceID)
+	serial, err := resolveAndroidSerial(ctx, deviceID)
 	if err != nil {
 		return fmt.Errorf("find android serial: %w", err)
 	}
@@ -452,7 +467,7 @@ func (m *androidManager) StartInstall(dev Device, path, _ string) (*BuildStream,
 
 		p := expandPath(path)
 
-		serial, err := findAndroidSerial(ctx, dev.ID)
+		serial, err := resolveAndroidSerial(ctx, dev.ID)
 		if err != nil {
 			done <- fmt.Errorf("find android serial: %w", err)
 			return
@@ -716,19 +731,18 @@ func (m *androidManager) ListDevices(ctx context.Context) ([]Device, error) {
 		return nil, err
 	}
 
-	// 2. Get running devices via adb
+	// 2. Get running devices via adb, keyed by AVD name
 	running, err := m.getRunningDevices(ctx)
 	if err != nil {
 		// If adb fails, we still return the AVDs with "Shutdown" status
-		running = make(map[string]bool)
+		running = make(map[string]string)
 	}
 
 	var devices []Device
 	for _, name := range avds {
 		status := StatusOff
-		// Note: matching AVD name to adb device name can be tricky
-		// Usually emulator-5554 style, but we'll do a simple check
-		if running[name] {
+		serial, isRunning := running[name]
+		if isRunning {
 			status = StatusRunning
 		}
 
@@ -738,6 +752,7 @@ func (m *androidManager) ListDevices(ctx context.Context) ([]Device, error) {
 			Platform: PlatformAndroid,
 			Version:  avdAPILevel(name), // AVD list doesn't easily give version without more commands
 			Status:   status,
+			Serial:   serial,
 		})
 	}
 
@@ -766,7 +781,11 @@ func parseAVDs(output []byte) []string {
 	return avds
 }
 
-func (m *androidManager) getRunningDevices(ctx context.Context) (map[string]bool, error) {
+// getRunningDevices returns the adb serial of every running emulator, keyed
+// by the AVD name it reports. The serial is kept, not just the fact that the
+// AVD is running: it is the name `adb devices` shows, so a user or a script
+// will reasonably use it to refer to the device.
+func (m *androidManager) getRunningDevices(ctx context.Context) (map[string]string, error) {
 	client, err := gadb.NewClient()
 	if err != nil {
 		return nil, fmt.Errorf("adb server unavailable: %w", err)
@@ -776,7 +795,7 @@ func (m *androidManager) getRunningDevices(ctx context.Context) (map[string]bool
 		return nil, fmt.Errorf("adb list devices: %w", err)
 	}
 
-	running := make(map[string]bool)
+	running := make(map[string]string)
 	for _, serial := range serials {
 		if !strings.HasPrefix(serial, "emulator-") {
 			continue
@@ -786,11 +805,11 @@ func (m *androidManager) getRunningDevices(ctx context.Context) (map[string]bool
 			// Output is "<name>\nOK\n" — take first line only.
 			firstLine := strings.TrimSpace(strings.SplitN(string(nameOut), "\n", 2)[0])
 			if firstLine != "" {
-				running[firstLine] = true
+				running[firstLine] = serial
 				continue
 			}
 		}
-		running[serial] = true
+		running[serial] = serial
 	}
 	return running, nil
 }
@@ -801,7 +820,7 @@ func (m *androidManager) getRunningDevices(ctx context.Context) (map[string]bool
 // separately (FetchAppVersions, DetectReactNative) so this call is a single
 // adb round-trip.
 func (m *androidManager) ListApps(ctx context.Context, id string) ([]App, error) {
-	serial, err := findAndroidSerial(ctx, id)
+	serial, err := resolveAndroidSerial(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("find serial for %s: %w", id, err)
 	}
@@ -868,7 +887,7 @@ func (m *androidManager) ListApps(ctx context.Context, id string) ([]App, error)
 
 // FetchAppVersions implements AppVersionFetcher for Android emulators.
 func (m *androidManager) FetchAppVersions(ctx context.Context, id string, bundleIDs []string) map[string]string {
-	serial, err := findAndroidSerial(ctx, id)
+	serial, err := resolveAndroidSerial(ctx, id)
 	if err != nil {
 		return nil
 	}
@@ -881,7 +900,7 @@ func (m *androidManager) FetchAppVersions(ctx context.Context, id string, bundle
 
 // DetectReactNative implements ReactNativeDetector for Android emulators.
 func (m *androidManager) DetectReactNative(ctx context.Context, id string, app App) bool {
-	serial, err := findAndroidSerial(ctx, id)
+	serial, err := resolveAndroidSerial(ctx, id)
 	if err != nil {
 		return false
 	}
@@ -889,18 +908,21 @@ func (m *androidManager) DetectReactNative(ctx context.Context, id string, app A
 	if err != nil {
 		return false
 	}
-	return detectReactNativeApp(m.logger, d, app.BundleID, app.Path)
+	return detectReactNativeApp(ctx, m.logger, d, app.BundleID, app.Path)
 }
 
 // detectReactNativeApp reports whether the APK at apkPath is a React Native
-// app. It pulls the APK once (cached in rnDetectCache, keyed by bundleID and
-// apkPath so a reinstall/update invalidates it) and inspects its zip
-// directory locally — checking legacyNativeLibraryDir or shelling out to
-// `unzip` both proved unreliable: modern React Native builds set
-// extractNativeLibs="false" (AGP default), so their .so files are read
-// straight out of the APK and never extracted to disk, and `unzip` isn't
-// guaranteed to be symlinked into the on-device toybox.
-func detectReactNativeApp(logger *logging.Logger, d gadb.Device, bundleID, apkPath string) bool {
+// app. It reads the APK's entry list straight off the device (see apk.go)
+// and looks for a JS bundle or a React/Hermes native library; the result is
+// cached in rnDetectCache, keyed by bundleID and apkPath so a reinstall or
+// update invalidates it.
+//
+// Checking legacyNativeLibraryDir or shelling out to `unzip` both proved
+// unreliable: modern React Native builds set extractNativeLibs="false" (the
+// AGP default), so their .so files are read straight out of the APK and
+// never extracted to disk, and `unzip` is not guaranteed to be symlinked
+// into the on-device toybox.
+func detectReactNativeApp(ctx context.Context, logger *logging.Logger, d gadb.Device, bundleID, apkPath string) bool {
 	if apkPath == "" {
 		return false
 	}
@@ -908,43 +930,22 @@ func detectReactNativeApp(logger *logging.Logger, d gadb.Device, bundleID, apkPa
 	if v, ok := rnDetectCache.Load(key); ok {
 		return v.(bool)
 	}
-	isRN := probeReactNativeAPK(logger, d, apkPath)
+	isRN := probeReactNativeAPK(ctx, logger, d.Serial(), apkPath)
 	rnDetectCache.Store(key, isRN)
 	return isRN
 }
 
-func probeReactNativeAPK(logger *logging.Logger, d gadb.Device, apkPath string) bool {
-	tmp, err := os.CreateTemp("", "simmer-rn-*.apk")
+// probeReactNativeAPK inspects one APK's entry names on the device. A read
+// failure is reported as "not React Native": the mark is a convenience, and
+// a missing badge is better than a failed app list.
+func probeReactNativeAPK(ctx context.Context, logger *logging.Logger, serial, apkPath string) bool {
+	names, err := apkEntryNames(ctx, logger, serial, apkPath)
 	if err != nil {
+		logger.LogError("read apk entries for "+apkPath, err)
 		return false
 	}
-	defer os.Remove(tmp.Name())
-	defer tmp.Close()
-
-	err = d.Pull(apkPath, tmp)
-	logger.LogExec("adb pull", []string{apkPath}, "", err)
-	if err != nil {
-		return false
-	}
-
-	info, err := tmp.Stat()
-	if err != nil {
-		return false
-	}
-	zr, err := zip.NewReader(tmp, info.Size())
-	if err != nil {
-		return false
-	}
-	for _, f := range zr.File {
-		// Default Metro output is assets/index.android.bundle, but Expo and
-		// custom entry-file configs ship the JS bundle under a different or
-		// hashed name — still always under assets/ with a .bundle
-		// extension, so match on that shape rather than the exact default.
-		if strings.HasPrefix(f.Name, "assets/") && strings.HasSuffix(f.Name, ".bundle") {
-			return true
-		}
-		if lower := strings.ToLower(f.Name); strings.HasPrefix(f.Name, "lib/") &&
-			(strings.Contains(lower, "hermes") || strings.Contains(lower, "reactnativejni") || strings.Contains(lower, "jscexecutor")) {
+	for _, name := range names {
+		if isReactNativeEntryName(name) {
 			return true
 		}
 	}
@@ -997,7 +998,7 @@ func parseDumpsysVersionName(out string) string {
 func (m *androidManager) StreamLogs(parent context.Context, dev Device, app App) (*LogStream, error) {
 	ctx, cancel := context.WithCancel(parent)
 
-	serial, err := findAndroidSerial(ctx, dev.ID)
+	serial, err := resolveAndroidSerial(ctx, dev.ID)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("find serial for %s: %w", dev.ID, err)
@@ -1118,7 +1119,7 @@ func (m *androidManager) Info(ctx context.Context, dev Device) (DeviceInfo, erro
 
 	// Live properties — only when the emulator is running.
 	if dev.Status == StatusRunning {
-		if serial, err := findAndroidSerial(ctx, dev.ID); err == nil {
+		if serial, err := resolveAndroidSerial(ctx, dev.ID); err == nil {
 			if d, err := gadbDevice(serial); err == nil {
 				props := adbProps(m.logger, d, []string{
 					"ro.build.version.release",

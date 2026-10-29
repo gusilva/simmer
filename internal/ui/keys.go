@@ -114,8 +114,10 @@ type MainPaneKeyMap struct {
 	Close   key.Binding
 	More    key.Binding
 	// Files panel
-	Expand key.Binding
-	Help   key.Binding
+	Expand      key.Binding
+	FilterFiles key.Binding
+	SearchFiles key.Binding
+	Help        key.Binding
 }
 
 func (k MainPaneKeyMap) ShortHelp() []key.Binding {
@@ -157,7 +159,7 @@ type filesPaneHelp struct{}
 
 func (filesPaneHelp) ShortHelp() []key.Binding {
 	k := MainPaneKeys
-	return []key.Binding{k.Up, k.Panel, k.Expand, k.Info, k.Help}
+	return []key.Binding{k.Up, k.Expand, k.FilterFiles, k.SearchFiles, k.Help}
 }
 
 func (filesPaneHelp) FullHelp() [][]key.Binding {
@@ -165,7 +167,7 @@ func (filesPaneHelp) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Home, k.End},
 		{k.Panel, k.Back, k.Info},
-		{k.Expand},
+		{k.Expand, k.FilterFiles, k.SearchFiles},
 		{k.Help},
 	}
 }
@@ -178,24 +180,26 @@ var (
 
 // MainPaneKeys is the main pane key map singleton.
 var MainPaneKeys = MainPaneKeyMap{
-	Up:      key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
-	Down:    key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
-	Home:    key.NewBinding(key.WithKeys("home", "g"), key.WithHelp("g/home", "top")),
-	End:     key.NewBinding(key.WithKeys("end", "G"), key.WithHelp("G/end", "bottom")),
-	Panel:   key.NewBinding(key.WithKeys("2", "3"), key.WithHelp("2/3", "focus apps/files")),
-	Back:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
-	Info:    key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "device info")),
-	Filter:  key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter apps")),
-	Install: key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "install app")),
-	Delete:  key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete app")),
-	PinApp:  key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "browse app files")),
-	Log:     key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "log app to file")),
-	Rebuild: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "rebuild & reinstall")),
-	Launch:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "launch")),
-	Close:   key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "close")),
-	More:    key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "more")),
-	Expand:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "expand dir / open db")),
-	Help:    key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+	Up:          key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
+	Down:        key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+	Home:        key.NewBinding(key.WithKeys("home", "g"), key.WithHelp("g/home", "top")),
+	End:         key.NewBinding(key.WithKeys("end", "G"), key.WithHelp("G/end", "bottom")),
+	Panel:       key.NewBinding(key.WithKeys("2", "3"), key.WithHelp("2/3", "focus apps/files")),
+	Back:        key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+	Info:        key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "device info")),
+	Filter:      key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter apps")),
+	Install:     key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "install app")),
+	Delete:      key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete app")),
+	PinApp:      key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "browse app files")),
+	Log:         key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "log app to file")),
+	Rebuild:     key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "rebuild & reinstall")),
+	Launch:      key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "launch")),
+	Close:       key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "close")),
+	More:        key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "more")),
+	Expand:      key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "expand dir / open db")),
+	FilterFiles: key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter loaded files")),
+	SearchFiles: key.NewBinding(key.WithKeys("ctrl+f"), key.WithHelp("ctrl+f", "search device")),
+	Help:        key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 }
 
 // ── Device-info overlay key map ────────────────────────────────────────────

@@ -160,7 +160,6 @@ func TestComputeLayout_PaneWidthsAddUp(t *testing.T) {
 	}
 }
 
-
 func TestComputeLayout_SmallTerminal(t *testing.T) {
 	// Should not panic or return nonsensical negatives.
 	l := computeLayout(10, 10)

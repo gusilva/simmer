@@ -117,3 +117,12 @@ type LoadDeviceMsg struct{ Device device.Device }
 // RefreshDevicesMsg is emitted when the user requests a device list refresh,
 // either via the sidebar's "r" key or the double-click action menu.
 type RefreshDevicesMsg struct{}
+
+// ShowSQLiteViewerMsg is dispatched when the user opens a database: from a
+// .db file in the Files tree, or from a device-search result.
+type ShowSQLiteViewerMsg struct {
+	Device    device.Device
+	PackageID string
+	DBPath    string
+	DBName    string
+}

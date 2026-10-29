@@ -13,6 +13,57 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 		return m, nil
 	}
 
+	// While the Files filter is being typed, capture keys before anything
+	// else — except the escalation to a device search, which is the whole
+	// point of showing the hint next to the input.
+	if m.panel == panelFiles && m.filesFiltering {
+		switch k.String() {
+		case "esc":
+			m.filesFiltering = false
+			m.filesFilter = ""
+			m.treeIdx = 0
+		case "enter":
+			m.filesFiltering = false
+		case "ctrl+f":
+			m.filesFiltering = false
+			return m, m.startDeviceSearch()
+		case "backspace":
+			if len(m.filesFilter) > 0 {
+				runes := []rune(m.filesFilter)
+				m.filesFilter = string(runes[:len(runes)-1])
+				m.treeIdx = 0
+			}
+		default:
+			if k.Text != "" {
+				m.filesFilter += k.Text
+				m.treeIdx = 0
+			}
+		}
+		return m, nil
+	}
+
+	// Search results replace the tree, so they own the keys while open.
+	if m.panel == panelFiles && m.fileSearch.active {
+		switch k.String() {
+		case "esc":
+			m.ExitFileSearch()
+		case "up", "k":
+			m.moveSearchCursor(-1)
+		case "down", "j":
+			m.moveSearchCursor(1)
+		case "home", "g":
+			m.fileSearch.idx = 0
+		case "end", "G":
+			m.fileSearch.idx = max(len(m.fileSearch.results)-1, 0)
+		case "enter":
+			return m, m.ActivateSearchResult()
+		case "/":
+			m.ExitFileSearch()
+			m.filesFiltering = true
+		}
+		return m, nil
+	}
+
 	// While filter input is active, capture all keys before anything else.
 	if m.panel == panelApps && m.appsFiltering {
 		switch k.String() {
@@ -70,7 +121,7 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 
 	switch m.panel {
 	case panelFiles:
-		rows := m.flattenTree()
+		rows := m.visibleTreeRows()
 		switch k.String() {
 		case "up", "k":
 			if m.treeIdx > 0 {
@@ -88,6 +139,10 @@ func (m MainPane) Update(msg tea.Msg) (MainPane, tea.Cmd) {
 			}
 		case "enter":
 			return m, m.ActivateTreeRow()
+		case "/":
+			m.filesFiltering = true
+		case "ctrl+f":
+			return m, m.startDeviceSearch()
 		}
 	case panelApps:
 		filtered := m.filteredApps()

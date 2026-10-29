@@ -4,55 +4,45 @@ import (
 	"context"
 	"os"
 	"strings"
-	"time"
 
 	"simmer/internal/device"
+	"simmer/internal/session"
 
 	tea "charm.land/bubbletea/v2"
 )
 
+// target identifies the database this modal is attached to, for the Session
+// calls below.
+func (m Modal) target() session.DBTarget {
+	return session.DBTarget{
+		Device:    m.device,
+		PackageID: m.packageID,
+		Path:      m.dbPath,
+		Name:      m.dbName,
+	}
+}
+
 func (m Modal) fetchTablesCmd() tea.Cmd {
-	var (
-		dev    = m.device
-		pkg    = m.packageID
-		path   = m.dbPath
-		query  = m.tablesQuery
-		logger = m.logger
-	)
+	sess, target := m.sess, m.target()
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		objs, err := device.ListSQLiteObjects(ctx, logger, dev, pkg, path, query)
+		objs, err := sess.SchemaObjects(context.Background(), target)
 		return TablesLoadedMsg{Objects: objs, Err: err}
 	}
 }
 
 func (m Modal) fetchSQLiteVersionCmd() tea.Cmd {
-	var (
-		dev    = m.device
-		pkg    = m.packageID
-		logger = m.logger
-	)
+	sess, target := m.sess, m.target()
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		ver, err := device.SQLiteVersion(ctx, logger, dev, pkg)
+		ver, err := sess.SQLiteVersion(context.Background(), target)
 		return SQLiteVersionMsg{Version: ver, Err: err}
 	}
 }
 
 func (m Modal) fetchColumnsCmd(node *explorerNode) tea.Cmd {
-	var (
-		dev    = m.device
-		pkg    = m.packageID
-		path   = m.dbPath
-		table  = node.realNameOrLabel()
-		logger = m.logger
-	)
+	sess, target := m.sess, m.target()
+	table := node.realNameOrLabel()
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		cols, err := device.QueryTableColumns(ctx, logger, dev, pkg, path, table)
+		cols, err := sess.TableColumns(context.Background(), target, table)
 		return ColumnsLoadedMsg{node: node, cols: cols, err: err}
 	}
 }
@@ -145,16 +135,9 @@ func (m Modal) runQuery(query string) tea.Cmd {
 	if query == "" {
 		return nil
 	}
-	var (
-		dev    = m.device
-		pkg    = m.packageID
-		path   = m.dbPath
-		logger = m.logger
-	)
+	sess, target := m.sess, m.target()
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		rows, err := device.QuerySQLite(ctx, logger, dev, pkg, path, query)
+		rows, err := sess.Query(context.Background(), target, query)
 		return QueryResultMsg{Rows: rows, Err: err}
 	}
 }
