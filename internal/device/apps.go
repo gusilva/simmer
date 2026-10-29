@@ -2,7 +2,6 @@ package device
 
 import (
 	"context"
-	"fmt"
 )
 
 // App describes one application installed on a device.
@@ -63,21 +62,15 @@ type AppVersionFetcher interface {
 	FetchAppVersions(ctx context.Context, deviceID string, bundleIDs []string) map[string]string
 }
 
-// FetchAppVersions routes to the Manager that implements AppVersionFetcher
-// for the device's Platform and Kind. Returns nil if none matches.
+// FetchAppVersions returns version names for the given bundle ids, or nil
+// when this device's kind has no fetcher: an emulator's manager must not
+// answer for a phone.
 func (c *Coordinator) FetchAppVersions(ctx context.Context, dev Device, bundleIDs []string) map[string]string {
-	for _, m := range c.Managers {
-		f, ok := m.(AppVersionFetcher)
-		if !ok || f.Platform() != dev.Platform {
-			continue
-		}
-		k, isKinded := m.(KindedManager)
-		if !isKinded || k.Kind() != dev.Kind {
-			continue
-		}
-		return f.FetchAppVersions(ctx, dev.ID, bundleIDs)
+	f, err := pickKinded[AppVersionFetcher](c.Managers, dev.Platform, dev.Kind, "app version fetcher")
+	if err != nil {
+		return nil
 	}
-	return nil
+	return f.FetchAppVersions(ctx, dev.ID, bundleIDs)
 }
 
 // ReactNativeDetector is an optional interface a Manager may implement when
@@ -90,21 +83,14 @@ type ReactNativeDetector interface {
 	DetectReactNative(ctx context.Context, deviceID string, app App) bool
 }
 
-// DetectReactNative routes to the Manager that implements ReactNativeDetector
-// for the device's Platform and Kind. Returns false if none matches.
+// DetectReactNative reports whether an app is a React Native build, or
+// false when this device's kind has no detector.
 func (c *Coordinator) DetectReactNative(ctx context.Context, dev Device, app App) bool {
-	for _, m := range c.Managers {
-		rd, ok := m.(ReactNativeDetector)
-		if !ok || rd.Platform() != dev.Platform {
-			continue
-		}
-		k, isKinded := m.(KindedManager)
-		if !isKinded || k.Kind() != dev.Kind {
-			continue
-		}
-		return rd.DetectReactNative(ctx, dev.ID, app)
+	d, err := pickKinded[ReactNativeDetector](c.Managers, dev.Platform, dev.Kind, "react native detector")
+	if err != nil {
+		return false
 	}
-	return false
+	return d.DetectReactNative(ctx, dev.ID, app)
 }
 
 // AppInstaller is an optional interface a Manager may implement to install an
@@ -115,45 +101,22 @@ type AppInstaller interface {
 	InstallApp(ctx context.Context, deviceID, path, scheme string) error
 }
 
-// ListApps routes to the Manager that implements AppLister for the device's
-// Platform. Prefers a KindedManager whose Kind matches dev.Kind; falls back to
-// any AppLister that does not implement KindedManager.
+// ListApps returns the apps installed on a device.
 func (c *Coordinator) ListApps(ctx context.Context, dev Device) ([]App, error) {
-	for _, m := range c.Managers {
-		a, ok := m.(AppLister)
-		if !ok || a.Platform() != dev.Platform {
-			continue
-		}
-		k, isKinded := m.(KindedManager)
-		if !isKinded || k.Kind() != dev.Kind {
-			continue
-		}
-		return a.ListApps(ctx, dev.ID)
+	a, err := pickCapability[AppLister](c.Managers, dev.Platform, dev.Kind, "app lister")
+	if err != nil {
+		return nil, err
 	}
-	for _, m := range c.Managers {
-		a, ok := m.(AppLister)
-		if !ok || a.Platform() != dev.Platform {
-			continue
-		}
-		if _, isKinded := m.(KindedManager); isKinded {
-			continue
-		}
-		return a.ListApps(ctx, dev.ID)
-	}
-	return nil, fmt.Errorf("no app lister registered for platform %s", dev.Platform)
+	return a.ListApps(ctx, dev.ID)
 }
 
-// InstallApp installs an app onto a device, routing to the Manager that
-// implements AppInstaller for the device's Platform.
+// InstallApp installs an app onto a device.
 func (c *Coordinator) InstallApp(ctx context.Context, dev Device, path, scheme string) error {
-	for _, m := range c.Managers {
-		i, ok := m.(AppInstaller)
-		if !ok || i.Platform() != dev.Platform {
-			continue
-		}
-		return i.InstallApp(ctx, dev.ID, path, scheme)
+	i, err := pickCapability[AppInstaller](c.Managers, dev.Platform, dev.Kind, "app installer")
+	if err != nil {
+		return err
 	}
-	return fmt.Errorf("no app installer registered for platform %s", dev.Platform)
+	return i.InstallApp(ctx, dev.ID, path, scheme)
 }
 
 // AppTerminator is an optional interface a Manager may implement to stop a
@@ -170,60 +133,23 @@ type AppLauncher interface {
 	LaunchApp(ctx context.Context, deviceID, bundleID string) error
 }
 
-// LaunchApp starts an app, routing to the Manager that implements AppLauncher
-// for the device's Platform, preferring a KindedManager match.
+// LaunchApp starts an already-installed app.
 func (c *Coordinator) LaunchApp(ctx context.Context, dev Device, bundleID string) error {
-	for _, m := range c.Managers {
-		l, ok := m.(AppLauncher)
-		if !ok || l.Platform() != dev.Platform {
-			continue
-		}
-		k, isKinded := m.(KindedManager)
-		if !isKinded || k.Kind() != dev.Kind {
-			continue
-		}
-		return l.LaunchApp(ctx, dev.ID, bundleID)
+	l, err := pickCapability[AppLauncher](c.Managers, dev.Platform, dev.Kind, "app launcher")
+	if err != nil {
+		return err
 	}
-	for _, m := range c.Managers {
-		l, ok := m.(AppLauncher)
-		if !ok || l.Platform() != dev.Platform {
-			continue
-		}
-		if _, isKinded := m.(KindedManager); isKinded {
-			continue
-		}
-		return l.LaunchApp(ctx, dev.ID, bundleID)
-	}
-	return fmt.Errorf("no app launcher registered for platform %s", dev.Platform)
+	return l.LaunchApp(ctx, dev.ID, bundleID)
 }
 
-// TerminateApp stops a running app, routing to the Manager that implements
-// AppTerminator for the device's Platform, preferring a KindedManager match.
-// Callers that treat termination as best-effort (the app may simply not be
-// running) may ignore the returned error.
+// TerminateApp stops a running app. Callers that treat termination as
+// best-effort (the app may simply not be running) may ignore the error.
 func (c *Coordinator) TerminateApp(ctx context.Context, dev Device, bundleID string) error {
-	for _, m := range c.Managers {
-		t, ok := m.(AppTerminator)
-		if !ok || t.Platform() != dev.Platform {
-			continue
-		}
-		k, isKinded := m.(KindedManager)
-		if !isKinded || k.Kind() != dev.Kind {
-			continue
-		}
-		return t.TerminateApp(ctx, dev.ID, bundleID)
+	t, err := pickCapability[AppTerminator](c.Managers, dev.Platform, dev.Kind, "app terminator")
+	if err != nil {
+		return err
 	}
-	for _, m := range c.Managers {
-		t, ok := m.(AppTerminator)
-		if !ok || t.Platform() != dev.Platform {
-			continue
-		}
-		if _, isKinded := m.(KindedManager); isKinded {
-			continue
-		}
-		return t.TerminateApp(ctx, dev.ID, bundleID)
-	}
-	return fmt.Errorf("no app terminator registered for platform %s", dev.Platform)
+	return t.TerminateApp(ctx, dev.ID, bundleID)
 }
 
 // BundlerConfigurer is an optional interface a Manager may implement to point
@@ -234,34 +160,13 @@ type BundlerConfigurer interface {
 	SetBundlerLocation(ctx context.Context, deviceID, bundleID, hostPort string) error
 }
 
-// SetBundlerLocation routes to the Manager that implements BundlerConfigurer
-// for the device's Platform, preferring a KindedManager match whose Kind
-// equals dev.Kind; falls back to any BundlerConfigurer that does not
-// implement KindedManager (e.g. iosManager, which serves only simulators and
-// never needs to disambiguate Kind).
+// SetBundlerLocation points an app's JS bundler at hostPort.
 func (c *Coordinator) SetBundlerLocation(ctx context.Context, dev Device, bundleID, hostPort string) error {
-	for _, m := range c.Managers {
-		b, ok := m.(BundlerConfigurer)
-		if !ok || b.Platform() != dev.Platform {
-			continue
-		}
-		k, isKinded := m.(KindedManager)
-		if !isKinded || k.Kind() != dev.Kind {
-			continue
-		}
-		return b.SetBundlerLocation(ctx, dev.ID, bundleID, hostPort)
+	b, err := pickCapability[BundlerConfigurer](c.Managers, dev.Platform, dev.Kind, "bundler configurer")
+	if err != nil {
+		return err
 	}
-	for _, m := range c.Managers {
-		b, ok := m.(BundlerConfigurer)
-		if !ok || b.Platform() != dev.Platform {
-			continue
-		}
-		if _, isKinded := m.(KindedManager); isKinded {
-			continue
-		}
-		return b.SetBundlerLocation(ctx, dev.ID, bundleID, hostPort)
-	}
-	return fmt.Errorf("no bundler configurer registered for platform %s", dev.Platform)
+	return b.SetBundlerLocation(ctx, dev.ID, bundleID, hostPort)
 }
 
 // DevMenuTrigger is an optional interface a Manager may implement to open the
@@ -274,59 +179,20 @@ type DevMenuTrigger interface {
 	TriggerDevMenu(ctx context.Context, deviceID, metroPort string) error
 }
 
-// TriggerDevMenu routes to the Manager that implements DevMenuTrigger for the
-// device's Platform, preferring a KindedManager match whose Kind equals
-// dev.Kind; falls back to any DevMenuTrigger that does not implement
-// KindedManager (e.g. iosManager, which serves only simulators and never
-// needs to disambiguate Kind).
+// TriggerDevMenu opens the React Native dev menu on a device.
 func (c *Coordinator) TriggerDevMenu(ctx context.Context, dev Device, metroPort string) error {
-	for _, m := range c.Managers {
-		t, ok := m.(DevMenuTrigger)
-		if !ok || t.Platform() != dev.Platform {
-			continue
-		}
-		k, isKinded := m.(KindedManager)
-		if !isKinded || k.Kind() != dev.Kind {
-			continue
-		}
-		return t.TriggerDevMenu(ctx, dev.ID, metroPort)
+	t, err := pickCapability[DevMenuTrigger](c.Managers, dev.Platform, dev.Kind, "dev menu trigger")
+	if err != nil {
+		return err
 	}
-	for _, m := range c.Managers {
-		t, ok := m.(DevMenuTrigger)
-		if !ok || t.Platform() != dev.Platform {
-			continue
-		}
-		if _, isKinded := m.(KindedManager); isKinded {
-			continue
-		}
-		return t.TriggerDevMenu(ctx, dev.ID, metroPort)
-	}
-	return fmt.Errorf("no dev menu trigger registered for platform %s", dev.Platform)
+	return t.TriggerDevMenu(ctx, dev.ID, metroPort)
 }
 
-// DeleteApp uninstalls the given app from a device, routing to the Manager that
-// implements AppDeleter for the device's Platform, preferring a KindedManager match.
+// DeleteApp uninstalls an app from a device.
 func (c *Coordinator) DeleteApp(ctx context.Context, dev Device, bundleID string) error {
-	for _, m := range c.Managers {
-		d, ok := m.(AppDeleter)
-		if !ok || d.Platform() != dev.Platform {
-			continue
-		}
-		k, isKinded := m.(KindedManager)
-		if !isKinded || k.Kind() != dev.Kind {
-			continue
-		}
-		return d.DeleteApp(ctx, dev.ID, bundleID)
+	d, err := pickCapability[AppDeleter](c.Managers, dev.Platform, dev.Kind, "app deleter")
+	if err != nil {
+		return err
 	}
-	for _, m := range c.Managers {
-		d, ok := m.(AppDeleter)
-		if !ok || d.Platform() != dev.Platform {
-			continue
-		}
-		if _, isKinded := m.(KindedManager); isKinded {
-			continue
-		}
-		return d.DeleteApp(ctx, dev.ID, bundleID)
-	}
-	return fmt.Errorf("no app deleter registered for platform %s", dev.Platform)
+	return d.DeleteApp(ctx, dev.ID, bundleID)
 }

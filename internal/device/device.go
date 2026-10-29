@@ -3,7 +3,6 @@ package device
 
 import (
 	"context"
-	"fmt"
 )
 
 // DeviceKind distinguishes physical hardware from virtual devices.
@@ -143,38 +142,22 @@ func NewCoordinator(managers ...Manager) *Coordinator {
 	return &Coordinator{Managers: managers}
 }
 
-// Boot starts the given device by routing to a Manager that implements
-// Booter for the device's Platform. Returns an error if no booter is
-// registered for the platform or if the underlying boot command fails.
+// Boot starts the given device.
 func (c *Coordinator) Boot(ctx context.Context, dev Device) error {
-	for _, m := range c.Managers {
-		b, ok := m.(Booter)
-		if !ok {
-			continue
-		}
-		if b.Platform() != dev.Platform {
-			continue
-		}
-		return b.Boot(ctx, dev.ID)
+	b, err := pickCapability[Booter](c.Managers, dev.Platform, dev.Kind, "booter")
+	if err != nil {
+		return err
 	}
-	return fmt.Errorf("no booter registered for platform %s", dev.Platform)
+	return b.Boot(ctx, dev.ID)
 }
 
-// Shutdown stops the given device by routing to a Manager that implements
-// Shutdowner for the device's Platform. Returns an error if no shutdowner is
-// registered for the platform or if the underlying shutdown command fails.
+// Shutdown stops the given device.
 func (c *Coordinator) Shutdown(ctx context.Context, dev Device) error {
-	for _, m := range c.Managers {
-		s, ok := m.(Shutdowner)
-		if !ok {
-			continue
-		}
-		if s.Platform() != dev.Platform {
-			continue
-		}
-		return s.Shutdown(ctx, dev.ID)
+	s, err := pickCapability[Shutdowner](c.Managers, dev.Platform, dev.Kind, "shutdowner")
+	if err != nil {
+		return err
 	}
-	return fmt.Errorf("no shutdowner registered for platform %s", dev.Platform)
+	return s.Shutdown(ctx, dev.ID)
 }
 
 // Discover fetches devices from all registered managers concurrently.
@@ -216,51 +199,40 @@ func (c *Coordinator) Discover(ctx context.Context) DiscoveryResult {
 	return res
 }
 
-// Create creates a new simulator for the given platform, routing to a Manager
-// that implements Creator. Returns the new simulator's UDID.
+// Create creates a new simulator or emulator and returns its id. Creation
+// belongs to a platform's tooling rather than to a device, so it does not
+// route by kind.
 func (c *Coordinator) Create(ctx context.Context, platform Platform, name, deviceTypeID, runtimeID string) (string, error) {
-	for _, m := range c.Managers {
-		cr, ok := m.(Creator)
-		if !ok || cr.Platform() != platform {
-			continue
-		}
-		return cr.Create(ctx, name, deviceTypeID, runtimeID)
+	cr, err := pickPlatform[Creator](c.Managers, platform, "creator")
+	if err != nil {
+		return "", err
 	}
-	return "", fmt.Errorf("no creator registered for platform %s", platform)
+	return cr.Create(ctx, name, deviceTypeID, runtimeID)
 }
 
-// Delete removes the given simulator, routing to a Manager that implements Deleter.
+// Delete removes the given simulator or emulator.
 func (c *Coordinator) Delete(ctx context.Context, dev Device) error {
-	for _, m := range c.Managers {
-		d, ok := m.(Deleter)
-		if !ok || d.Platform() != dev.Platform {
-			continue
-		}
-		return d.Delete(ctx, dev.ID)
+	d, err := pickCapability[Deleter](c.Managers, dev.Platform, dev.Kind, "deleter")
+	if err != nil {
+		return err
 	}
-	return fmt.Errorf("no deleter registered for platform %s", dev.Platform)
+	return d.Delete(ctx, dev.ID)
 }
 
 // ListDeviceTypes returns available device type templates for the given platform.
 func (c *Coordinator) ListDeviceTypes(ctx context.Context, platform Platform) ([]DeviceType, error) {
-	for _, m := range c.Managers {
-		l, ok := m.(DeviceTypeLister)
-		if !ok || l.Platform() != platform {
-			continue
-		}
-		return l.ListDeviceTypes(ctx)
+	l, err := pickPlatform[DeviceTypeLister](c.Managers, platform, "device type lister")
+	if err != nil {
+		return nil, err
 	}
-	return nil, fmt.Errorf("no device type lister for platform %s", platform)
+	return l.ListDeviceTypes(ctx)
 }
 
 // ListRuntimes returns available runtimes for the given platform.
 func (c *Coordinator) ListRuntimes(ctx context.Context, platform Platform) ([]Runtime, error) {
-	for _, m := range c.Managers {
-		l, ok := m.(RuntimeLister)
-		if !ok || l.Platform() != platform {
-			continue
-		}
-		return l.ListRuntimes(ctx)
+	l, err := pickPlatform[RuntimeLister](c.Managers, platform, "runtime lister")
+	if err != nil {
+		return nil, err
 	}
-	return nil, fmt.Errorf("no runtime lister for platform %s", platform)
+	return l.ListRuntimes(ctx)
 }

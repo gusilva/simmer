@@ -186,19 +186,3 @@ func TestSandboxAreasSurviveAMerge(t *testing.T) {
 		t.Errorf("internal area has %d entries after the merge, want 1", n)
 	}
 }
-
-func TestSearchRootsOfAnAppSandboxAreItsAreas(t *testing.T) {
-	m := newPaneWithDevice()
-	m.SetTree(&device.FileNode{
-		Name: "com.acme.app", IsDir: true,
-		Children: []device.FileNode{
-			dirNode("/data/data/com.acme.app", "internal"),
-			dirNode("/storage/emulated/0/Android/data/com.acme.app", "external"),
-		},
-	})
-
-	roots := m.SearchRoots()
-	if len(roots) != 2 || roots[0] != "/data/data/com.acme.app" || roots[1] != "/storage/emulated/0/Android/data/com.acme.app" {
-		t.Errorf("roots = %v, want both areas", roots)
-	}
-}

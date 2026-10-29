@@ -113,12 +113,13 @@ func deviceTimeout(dev device.Device) time.Duration {
 	return localTreeTimeout
 }
 
-// FileTree walks dev's filesystem at the given scope. bundleID is required
-// for device.ScopeAppSandbox and ignored otherwise.
-func (s *Session) FileTree(ctx context.Context, dev device.Device, scope device.FileScope, bundleID string) (device.FileNode, error) {
+// FileTree reads dev's filesystem at the given target: an app's storage,
+// a directory, or the device's own root. Depth decides whether it walks or
+// lists one level.
+func (s *Session) FileTree(ctx context.Context, dev device.Device, t device.FileTarget, d device.Depth) (device.FileNode, error) {
 	ctx, cancel := context.WithTimeout(ctx, deviceTimeout(dev))
 	defer cancel()
-	return s.coord.FileTree(ctx, dev, scope, bundleID)
+	return s.coord.FileTree(ctx, dev, t, d)
 }
 
 // Info returns the detailed facts about a device.

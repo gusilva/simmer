@@ -30,7 +30,7 @@ type DatabaseFile struct {
 // database file in it. This is how a caller learns the paths it can query:
 // a database path is not derivable from a bundle id alone.
 func (s *Session) Databases(ctx context.Context, dev device.Device, bundleID string) ([]DatabaseFile, error) {
-	return s.databasesIn(ctx, dev, device.ScopeAppSandbox, bundleID)
+	return s.databasesIn(ctx, dev, device.AppStorage(bundleID))
 }
 
 // DatabasesAt walks an arbitrary directory on dev and returns every SQLite
@@ -38,11 +38,11 @@ func (s *Session) Databases(ctx context.Context, dev device.Device, bundleID str
 // only way to name it; databases exported to a Downloads folder are reachable
 // this way and through no bundle id.
 func (s *Session) DatabasesAt(ctx context.Context, dev device.Device, path string) ([]DatabaseFile, error) {
-	return s.databasesIn(ctx, dev, device.ScopePath, path)
+	return s.databasesIn(ctx, dev, device.Directory(path))
 }
 
-func (s *Session) databasesIn(ctx context.Context, dev device.Device, scope device.FileScope, target string) ([]DatabaseFile, error) {
-	root, err := s.FileTree(ctx, dev, scope, target)
+func (s *Session) databasesIn(ctx context.Context, dev device.Device, t device.FileTarget) ([]DatabaseFile, error) {
+	root, err := s.FileTree(ctx, dev, t, device.FullDepth)
 	if err != nil {
 		return nil, err
 	}
@@ -97,13 +97,14 @@ func (s *Session) SQLiteVersion(ctx context.Context, t DBTarget) (string, error)
 	return device.SQLiteVersion(ctx, s.logger, t.Device, t.PackageID)
 }
 
-// SearchFiles finds files and directories by name under the given roots.
+// SearchFiles finds files and directories by name under everything the
+// target covers.
 //
 // A tree loads one directory at a time, so filtering what is on screen can
 // only ever match what has already been expanded; this reaches the rest of
 // the device.
-func (s *Session) SearchFiles(ctx context.Context, dev device.Device, roots []string, query string) ([]device.FileMatch, error) {
+func (s *Session) SearchFiles(ctx context.Context, dev device.Device, t device.FileTarget, query string) ([]device.FileMatch, error) {
 	ctx, cancel := context.WithTimeout(ctx, deviceTimeout(dev))
 	defer cancel()
-	return s.coord.SearchFiles(ctx, dev, roots, query, device.DefaultSearchLimit)
+	return s.coord.SearchFiles(ctx, dev, t, query, device.DefaultSearchLimit)
 }

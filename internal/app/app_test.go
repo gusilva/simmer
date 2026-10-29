@@ -947,7 +947,7 @@ func TestUpdate_SubtreeMsg_ErrorSetsStatus(t *testing.T) {
 func TestUpdate_RequestFileSearchMsg_NeedsADevice(t *testing.T) {
 	m := newTestModel()
 
-	_, cmd := m.Update(ui.RequestFileSearchMsg{Roots: []string{"/storage/emulated/0"}, Query: "rooms"})
+	_, cmd := m.Update(ui.RequestFileSearchMsg{Target: device.Directory("/storage/emulated/0"), Query: "rooms"})
 	if cmd != nil {
 		t.Error("no device selected: nothing to search")
 	}
@@ -955,7 +955,7 @@ func TestUpdate_RequestFileSearchMsg_NeedsADevice(t *testing.T) {
 	m.sidebar.SetDevices([]device.Device{{ID: "X", Name: "Pixel", Platform: device.PlatformAndroid, Status: device.StatusRunning}})
 	m.sidebar, _ = m.sidebar.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 
-	_, cmd = m.Update(ui.RequestFileSearchMsg{Roots: []string{"/storage/emulated/0"}, Query: "rooms"})
+	_, cmd = m.Update(ui.RequestFileSearchMsg{Target: device.Directory("/storage/emulated/0"), Query: "rooms"})
 	if cmd == nil {
 		t.Error("expected a search command")
 	}

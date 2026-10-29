@@ -45,13 +45,13 @@ var (
 )
 
 // SearchFiles finds files and directories whose name contains query, under
-// every given root, case-insensitively. Roots are searched in order and
-// results are merged, deduplicated by path, and capped at limit.
+// everything the target covers, case-insensitively. Results are merged,
+// deduplicated by path, and capped at limit.
 //
-// An app's storage spans more than one root on Android, which is why this
-// takes a list: a single root cannot name both the private data dir and the
-// external app directory.
-func (c *Coordinator) SearchFiles(ctx context.Context, dev Device, roots []string, query string, limit int) ([]FileMatch, error) {
+// The target rather than a root list is what callers pass, because an app's
+// storage spans two roots on Android and the caller should not have to know
+// that — the manager reports them.
+func (c *Coordinator) SearchFiles(ctx context.Context, dev Device, t FileTarget, query string, limit int) ([]FileMatch, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil, fmt.Errorf("search needs a query")
@@ -61,6 +61,11 @@ func (c *Coordinator) SearchFiles(ctx context.Context, dev Device, roots []strin
 	}
 
 	s, err := pickCapability[FileSearcher](c.Managers, dev.Platform, dev.Kind, "file searcher")
+	if err != nil {
+		return nil, err
+	}
+
+	roots, err := c.StorageRoots(ctx, dev, t)
 	if err != nil {
 		return nil, err
 	}

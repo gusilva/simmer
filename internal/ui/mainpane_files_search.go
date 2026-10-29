@@ -33,12 +33,11 @@ type fileSearchState struct {
 	err     string
 }
 
-// RequestFileSearchMsg asks the parent to search the device. Roots are the
-// directories the current tree covers — an app's storage spans more than one
-// on Android, so a single root cannot stand for it.
+// RequestFileSearchMsg asks the parent to search the device over whatever
+// the current tree covers.
 type RequestFileSearchMsg struct {
-	Roots []string
-	Query string
+	Target device.FileTarget
+	Query  string
 }
 
 // RequestFileTreeAtMsg asks the parent to re-root the tree at Path. Used
@@ -134,28 +133,6 @@ func treeParents(rows []treeRow) []int {
 func (m MainPane) FilterActive() bool { return m.filesFiltering }
 
 // ── device search ───────────────────────────────────────────────────────
-
-// SearchRoots returns the directories a device search should cover.
-//
-// A tree rooted at a real directory has one. An app's storage spans more
-// than one on Android, and its root is only a label, so the roots are its
-// children.
-func (m MainPane) SearchRoots() []string {
-	if m.tree == nil {
-		return nil
-	}
-	if m.tree.Path != "" {
-		return []string{m.tree.Path}
-	}
-
-	var roots []string
-	for _, c := range m.tree.Children {
-		if c.IsDir && c.Path != "" {
-			roots = append(roots, c.Path)
-		}
-	}
-	return roots
-}
 
 // StartFileSearch enters search mode and marks it in flight.
 func (m *MainPane) StartFileSearch(query string) {
@@ -254,14 +231,14 @@ func (m *MainPane) startDeviceSearch() tea.Cmd {
 	if query == "" {
 		query = m.fileSearch.query
 	}
-	roots := m.SearchRoots()
-	if query == "" || len(roots) == 0 {
+	if query == "" || m.tree == nil {
 		return nil
 	}
 
 	m.StartFileSearch(query)
+	target := m.filesTarget
 
-	return func() tea.Msg { return RequestFileSearchMsg{Roots: roots, Query: query} }
+	return func() tea.Msg { return RequestFileSearchMsg{Target: target, Query: query} }
 }
 
 // ── rendering ───────────────────────────────────────────────────────────

@@ -21,6 +21,15 @@ func (f *fakeSearcher) ListDevices(context.Context) ([]Device, error) { return n
 func (f *fakeSearcher) Platform() Platform                            { return f.platform }
 func (f *fakeSearcher) Kind() DeviceKind                              { return f.kind }
 
+func (f *fakeSearcher) FileSystemFor(FileTarget, Depth) FileSystem { return nil }
+
+func (f *fakeSearcher) StorageRoots(_ context.Context, _ Device, t FileTarget) ([]string, error) {
+	if t.BundleID() != "" {
+		return []string{"/data/data/" + t.BundleID(), "/storage/emulated/0/Android/data/" + t.BundleID()}, nil
+	}
+	return []string{t.Path()}, nil
+}
+
 func (f *fakeSearcher) SearchFiles(_ context.Context, _ Device, root, query string, limit int) ([]FileMatch, error) {
 	f.calls = append(f.calls, root)
 	if f.err != nil {
@@ -52,10 +61,7 @@ func TestSearchFilesMergesRootsAndDeduplicates(t *testing.T) {
 	}}
 	c, dev := searchCoordinator(f)
 
-	got, err := c.SearchFiles(context.Background(), dev, []string{
-		"/data/data/com.acme.app",
-		"/storage/emulated/0/Android/data/com.acme.app",
-	}, "rooms", 0)
+	got, err := c.SearchFiles(context.Background(), dev, AppStorage("com.acme.app"), "rooms", 0)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -78,7 +84,7 @@ func TestSearchFilesOrdersShallowestFirst(t *testing.T) {
 	}}
 	c, dev := searchCoordinator(f)
 
-	got, _ := c.SearchFiles(context.Background(), dev, []string{"/r"}, "rooms", 0)
+	got, _ := c.SearchFiles(context.Background(), dev, Directory("/r"), "rooms", 0)
 
 	var paths []string
 	for _, m := range got {
@@ -94,12 +100,12 @@ func TestSearchFilesOrdersShallowestFirst(t *testing.T) {
 
 func TestSearchFilesRespectsLimitAcrossRoots(t *testing.T) {
 	f := &fakeSearcher{byRoot: map[string][]string{
-		"/a": {"/a/rooms1.db", "/a/rooms2.db", "/a/rooms3.db"},
-		"/b": {"/b/rooms4.db", "/b/rooms5.db"},
+		"/data/data/multi":                       {"/data/data/multi/rooms1.db", "/data/data/multi/rooms2.db", "/data/data/multi/rooms3.db"},
+		"/storage/emulated/0/Android/data/multi": {"/storage/emulated/0/Android/data/multi/rooms4.db", "/storage/emulated/0/Android/data/multi/rooms5.db"},
 	}}
 	c, dev := searchCoordinator(f)
 
-	got, _ := c.SearchFiles(context.Background(), dev, []string{"/a", "/b"}, "rooms", 4)
+	got, _ := c.SearchFiles(context.Background(), dev, AppStorage("multi"), "rooms", 4)
 	if len(got) != 4 {
 		t.Errorf("got %d matches, want the limit of 4", len(got))
 	}
@@ -108,15 +114,17 @@ func TestSearchFilesRespectsLimitAcrossRoots(t *testing.T) {
 func TestSearchFilesSurvivesAnUnreadableRoot(t *testing.T) {
 	// One refused root must not hide what the others found; that is the
 	// normal case for a release-signed app's private storage.
-	f := &failingFirstRoot{ok: map[string][]string{"/b": {"/b/rooms.db"}}}
+	f := &failingFirstRoot{ok: map[string][]string{
+		"/storage/emulated/0/Android/data/multi": {"/storage/emulated/0/Android/data/multi/rooms.db"},
+	}}
 	c := NewCoordinator(f)
 	dev := Device{ID: "X", Platform: PlatformAndroid, Kind: KindVirtual}
 
-	got, err := c.SearchFiles(context.Background(), dev, []string{"/a", "/b"}, "rooms", 0)
+	got, err := c.SearchFiles(context.Background(), dev, AppStorage("multi"), "rooms", 0)
 	if err != nil {
 		t.Fatalf("one failing root must not fail the search: %v", err)
 	}
-	if len(got) != 1 || got[0].Path != "/b/rooms.db" {
+	if len(got) != 1 || got[0].Path != "/storage/emulated/0/Android/data/multi/rooms.db" {
 		t.Errorf("got %+v, want the readable root's match", got)
 	}
 }
@@ -126,6 +134,15 @@ type failingFirstRoot struct{ ok map[string][]string }
 func (f *failingFirstRoot) ListDevices(context.Context) ([]Device, error) { return nil, nil }
 func (f *failingFirstRoot) Platform() Platform                            { return PlatformAndroid }
 func (f *failingFirstRoot) Kind() DeviceKind                              { return KindVirtual }
+func (f *failingFirstRoot) FileSystemFor(FileTarget, Depth) FileSystem    { return nil }
+
+func (f *failingFirstRoot) StorageRoots(_ context.Context, _ Device, t FileTarget) ([]string, error) {
+	if t.BundleID() != "" {
+		return []string{"/data/data/" + t.BundleID(), "/storage/emulated/0/Android/data/" + t.BundleID()}, nil
+	}
+	return []string{t.Path()}, nil
+}
+
 func (f *failingFirstRoot) SearchFiles(_ context.Context, _ Device, root, _ string, _ int) ([]FileMatch, error) {
 	paths, ok := f.ok[root]
 	if !ok {
@@ -142,14 +159,14 @@ func TestSearchFilesReportsFailureWhenNothingIsReadable(t *testing.T) {
 	c := NewCoordinator(&failingFirstRoot{})
 	dev := Device{ID: "X", Platform: PlatformAndroid, Kind: KindVirtual}
 
-	if _, err := c.SearchFiles(context.Background(), dev, []string{"/a"}, "rooms", 0); err == nil {
+	if _, err := c.SearchFiles(context.Background(), dev, Directory("/a"), "rooms", 0); err == nil {
 		t.Error("expected the error when no root could be read")
 	}
 }
 
 func TestSearchFilesRejectsAnEmptyQuery(t *testing.T) {
 	c, dev := searchCoordinator(&fakeSearcher{})
-	if _, err := c.SearchFiles(context.Background(), dev, []string{"/a"}, "  ", 0); err == nil {
+	if _, err := c.SearchFiles(context.Background(), dev, Directory("/a"), "  ", 0); err == nil {
 		t.Error("an empty query would match the whole device")
 	}
 }

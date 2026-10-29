@@ -362,10 +362,14 @@ simmer db ls --device booted --path /storage/emulated/0
 ```
 
 What a path means follows the device: an Android path is a device path (`/storage/emulated/0`,
-`/sdcard`, `/data/local/tmp`); an **iOS simulator** path is a path on your Mac, since that is where
-a simulator's storage lives; a **physical iOS** path is a media-partition path served over AFC
-(`/DCIM`, `/Downloads`), because a non-jailbroken device offers no shell. Relative paths are
-rejected rather than resolved against whatever directory the shell starts in.
+`/sdcard`, `/data/local/tmp`, or an app's own `/data/data/<pkg>/…`); an **iOS simulator** path is a
+path on your Mac, since that is where a simulator's storage lives; a **physical iOS** path is a
+media-partition path served over AFC (`/DCIM`, `/Downloads`), because a non-jailbroken device offers
+no shell. Relative paths are rejected rather than resolved against whatever directory the shell
+starts in.
+
+A path inside an app's private storage is read as that app, with the package taken from the path
+itself — so `--path /data/data/com.acme.app/databases` works without naming the app twice.
 
 ```console
 $ simmer db ls --device booted --app com.acme.fieldkit

@@ -132,18 +132,33 @@ func buildAFCTree(ctx context.Context, client *afc.Client, path string, depth, m
 	return node, nil
 }
 
-// FileSystemFor returns the physical-iOS FileSystem serving scope: the app's
-// house_arrest container for ScopeAppSandbox, AFC media otherwise.
-func (m *physicalIOSManager) FileSystemFor(scope FileScope, target string) FileSystem {
+// FileSystemFor returns the physical-iOS FileSystem serving a target.
+func (m *physicalIOSManager) FileSystemFor(t FileTarget, d Depth) FileSystem {
+	depth := 6
+	if d == OneLevel {
+		depth = 1
+	}
+
 	switch {
-	case scope == ScopeAppSandbox && target != "":
-		return NewIOSPhysicalAppFileSystem(target, m.logger)
-	case scope == ScopePath && target != "":
-		return &IOSPhysicalPathFileSystem{Path: target, MaxDepth: 6, logger: m.logger}
-	case scope == ScopeDirectory && target != "":
-		return &IOSPhysicalPathFileSystem{Path: target, MaxDepth: 1, logger: m.logger}
+	case t.BundleID() != "":
+		return NewIOSPhysicalAppFileSystem(t.BundleID(), m.logger)
+	case t.Path() != "":
+		return &IOSPhysicalPathFileSystem{Path: t.Path(), MaxDepth: depth, logger: m.logger}
 	default:
 		return NewIOSPhysicalFileSystem(m.logger)
+	}
+}
+
+// StorageRoots reports the directories a target covers. house_arrest vends
+// an app's container as its own filesystem, so the root inside it is "/".
+func (m *physicalIOSManager) StorageRoots(_ context.Context, _ Device, t FileTarget) ([]string, error) {
+	switch {
+	case t.BundleID() != "":
+		return []string{"/"}, nil
+	case t.Path() != "":
+		return []string{t.Path()}, nil
+	default:
+		return []string{"/"}, nil
 	}
 }
 

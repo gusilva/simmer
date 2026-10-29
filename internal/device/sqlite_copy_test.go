@@ -50,19 +50,20 @@ func TestPhysicalAndroidSandboxIsReadLikeAnEmulator(t *testing.T) {
 	// storage that an earlier fallback answered with — that fallback turned
 	// "this app's databases" into "whatever is on the sdcard", which
 	// surfaced as an empty list.
-	sandbox, ok := m.FileSystemFor(ScopeAppSandbox, "com.acme.app").(*AndroidFileSystem)
+	sandbox, ok := m.FileSystemFor(AppStorage("com.acme.app"), FullDepth).(*AndroidFileSystem)
 	if !ok {
-		t.Fatalf("sandbox scope returned %T, want the app-storage FileSystem", m.FileSystemFor(ScopeAppSandbox, "com.acme.app"))
+		t.Fatalf("sandbox scope returned %T, want the app-storage FileSystem", m.FileSystemFor(AppStorage("com.acme.app"), FullDepth))
 	}
 	if sandbox.PackageID != "com.acme.app" {
 		t.Errorf("sandbox is scoped to %q", sandbox.PackageID)
 	}
 
-	// Device root, and a sandbox request naming no package, have nothing to
-	// scope to and list shared storage.
+	// The device's own filesystem, and a target naming nothing, list shared
+	// storage — the latter never reaches an adapter in practice because
+	// FileTree rejects it, but the provider must still be total.
 	for _, fs := range []FileSystem{
-		m.FileSystemFor(ScopeDeviceRoot, ""),
-		m.FileSystemFor(ScopeAppSandbox, ""),
+		m.FileSystemFor(DeviceRoot(), FullDepth),
+		m.FileSystemFor(FileTarget{}, FullDepth),
 	} {
 		if _, ok := fs.(*AndroidPhysicalFileSystem); !ok {
 			t.Errorf("got %T, want shared storage", fs)

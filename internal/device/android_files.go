@@ -621,19 +621,43 @@ func buildLsTree(entries []lsEntry, packageID string) FileNode {
 	return assemble("")
 }
 
-// FileSystemFor returns the emulator FileSystem serving scope: the app's own
-// storage for ScopeAppSandbox, a named directory for ScopePath, the device
-// root otherwise.
-func (m *androidManager) FileSystemFor(scope FileScope, target string) FileSystem {
+// FileSystemFor returns the emulator FileSystem serving a target.
+func (m *androidManager) FileSystemFor(t FileTarget, d Depth) FileSystem {
+	return androidFileSystemFor(t, d, NewAndroidRootFileSystem(m.logger), m.logger)
+}
+
+// StorageRoots reports the directories a target covers on an emulator.
+func (m *androidManager) StorageRoots(_ context.Context, _ Device, t FileTarget) ([]string, error) {
+	return androidStorageRoots(t, "/")
+}
+
+// androidFileSystemFor is shared by the emulator and physical managers: an
+// app's storage is read the same way on both, because run-as needs the app
+// to be debuggable rather than the device to be rooted.
+func androidFileSystemFor(t FileTarget, d Depth, deviceRoot FileSystem, logger *logging.Logger) FileSystem {
 	switch {
-	case scope == ScopeAppSandbox && target != "":
-		return NewAndroidFileSystem(target, m.logger)
-	case scope == ScopePath && target != "":
-		return NewAndroidPathFileSystem(target, m.logger)
-	case scope == ScopeDirectory && target != "":
-		return NewAndroidDirFileSystem(target, m.logger)
+	case t.BundleID() != "":
+		return NewAndroidFileSystem(t.BundleID(), logger)
+	case t.Path() != "":
+		if d == OneLevel {
+			return NewAndroidDirFileSystem(t.Path(), logger)
+		}
+		return NewAndroidPathFileSystem(t.Path(), logger)
 	default:
-		return NewAndroidRootFileSystem(m.logger)
+		return deviceRoot
+	}
+}
+
+// androidStorageRoots reports the directories a target covers. An app owns
+// two: its private data dir and its external, app-specific dir.
+func androidStorageRoots(t FileTarget, deviceRoot string) ([]string, error) {
+	switch {
+	case t.BundleID() != "":
+		return []string{"/data/data/" + t.BundleID(), androidExternalRoot(t.BundleID())}, nil
+	case t.Path() != "":
+		return []string{t.Path()}, nil
+	default:
+		return []string{deviceRoot}, nil
 	}
 }
 

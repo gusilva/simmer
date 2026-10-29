@@ -134,30 +134,37 @@ func TestFilterKeysTypeAndClear(t *testing.T) {
 	}
 }
 
-func TestSearchRootsCoverEveryStorageArea(t *testing.T) {
+func TestSearchCoversWhatTheTreeWasLoadedFrom(t *testing.T) {
+	// The pane carries the target it read, rather than reconstructing it
+	// from the paths on screen: which areas an app owns is the device
+	// layer's knowledge, not rendering's.
 	m := sandboxPane()
+	m.SetTreeTarget(device.AppStorage("com.acme.app"))
 
-	roots := m.SearchRoots()
-	want := []string{"/data/data/com.acme.app", "/storage/emulated/0/Android/data/com.acme.app"}
-	if len(roots) != len(want) {
-		t.Fatalf("roots = %v, want both areas", roots)
+	m, _ = m.Update(tea.KeyPressMsg{Text: "/"})
+	for _, r := range "rooms" {
+		m, _ = m.Update(tea.KeyPressMsg{Text: string(r)})
 	}
-	for i := range want {
-		if roots[i] != want[i] {
-			t.Errorf("roots = %v, want %v", roots, want)
-		}
+
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'f', Mod: tea.ModCtrl})
+	if cmd == nil {
+		t.Fatal("ctrl+f should start a device search")
+	}
+
+	msg := cmd().(RequestFileSearchMsg)
+	if msg.Target.BundleID() != "com.acme.app" {
+		t.Errorf("target = %v, want the app whose storage is on screen", msg.Target)
 	}
 }
 
-func TestSearchRootsOfAPlainTree(t *testing.T) {
-	m := newPaneWithDevice()
-	m.SetTree(&device.FileNode{Path: "/storage/emulated/0", Name: "0", IsDir: true,
-		Children: []device.FileNode{{Path: "/storage/emulated/0/Download", Name: "Download", IsDir: true}},
-	})
+func TestSearchOfARerootedTreeCoversThatDirectory(t *testing.T) {
+	m := sandboxPane()
+	m.SetTreeTarget(device.Directory("/storage/emulated/0/Download"))
+	m.filesFilter = "rooms"
 
-	roots := m.SearchRoots()
-	if len(roots) != 1 || roots[0] != "/storage/emulated/0" {
-		t.Errorf("roots = %v, want just the tree root", roots)
+	msg := m.startDeviceSearch()().(RequestFileSearchMsg)
+	if msg.Target.Path() != "/storage/emulated/0/Download" {
+		t.Errorf("target = %v, want the directory the tree was re-rooted at", msg.Target)
 	}
 }
 
@@ -180,9 +187,6 @@ func TestCtrlFEscalatesTheTypedFilter(t *testing.T) {
 	}
 	if msg.Query != "rooms" {
 		t.Errorf("query = %q, want the text already typed", msg.Query)
-	}
-	if len(msg.Roots) != 2 {
-		t.Errorf("roots = %v, want both storage areas", msg.Roots)
 	}
 	if !m.SearchActive() {
 		t.Error("the pane should show the search while it runs")

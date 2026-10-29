@@ -43,6 +43,10 @@ type MainPane struct {
 	filesFiltering bool              // Filter input is capturing keys
 	fileSearch     fileSearchState   // Device-search results, when open
 
+	// filesTarget is what the current tree was read from, so a search can
+	// cover the same ground without reconstructing it from path prefixes.
+	filesTarget device.FileTarget
+
 	// loadingPaths marks directories whose entries are being fetched, so a
 	// second Enter on the same row does not fire a second request.
 	loadingPaths map[string]bool
@@ -129,6 +133,9 @@ func (m *MainPane) SyncActiveDevice(devs []device.Device) {
 	}
 	m.active = nil
 }
+
+// SetTreeTarget records what the next tree will cover.
+func (m *MainPane) SetTreeTarget(t device.FileTarget) { m.filesTarget = t }
 
 // SetTree replaces only the filesystem tree without resetting the rest of the
 // pane state. Use this when the tree loads asynchronously after SetDevice.

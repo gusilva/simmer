@@ -2,7 +2,6 @@ package device
 
 import (
 	"context"
-	"fmt"
 )
 
 // LogStream is a live stream of log lines from a launched app.
@@ -24,33 +23,15 @@ type LogStreamer interface {
 	StreamLogs(ctx context.Context, dev Device, app App) (*LogStream, error)
 }
 
-// StreamLogs routes to the Manager that implements LogStreamer for the
-// device's platform, preferring a KindedManager whose Kind matches dev.Kind.
-// The returned stream's lifetime is independent of ctx once started; callers
-// must invoke Stream.Stop to free resources.
+// StreamLogs starts streaming an app's log output. The returned stream's
+// lifetime is independent of ctx once started; callers must invoke
+// Stream.Stop to free resources.
 func (c *Coordinator) StreamLogs(ctx context.Context, dev Device, app App) (*LogStream, error) {
-	for _, m := range c.Managers {
-		s, ok := m.(LogStreamer)
-		if !ok || s.Platform() != dev.Platform {
-			continue
-		}
-		k, isKinded := m.(KindedManager)
-		if !isKinded || k.Kind() != dev.Kind {
-			continue
-		}
-		return s.StreamLogs(ctx, dev, app)
+	s, err := pickCapability[LogStreamer](c.Managers, dev.Platform, dev.Kind, "log streamer")
+	if err != nil {
+		return nil, err
 	}
-	for _, m := range c.Managers {
-		s, ok := m.(LogStreamer)
-		if !ok || s.Platform() != dev.Platform {
-			continue
-		}
-		if _, isKinded := m.(KindedManager); isKinded {
-			continue
-		}
-		return s.StreamLogs(ctx, dev, app)
-	}
-	return nil, fmt.Errorf("no log streamer registered for platform %s", dev.Platform)
+	return s.StreamLogs(ctx, dev, app)
 }
 
 // ConsoleLogStreamer is an optional interface a Manager may implement to
@@ -74,16 +55,9 @@ type ConsoleLogStreamer interface {
 // StreamConsoleLog routes to the Manager that implements ConsoleLogStreamer
 // for the device's Platform and Kind.
 func (c *Coordinator) StreamConsoleLog(ctx context.Context, dev Device, bundleID, hostPort string) (*LogStream, error) {
-	for _, m := range c.Managers {
-		s, ok := m.(ConsoleLogStreamer)
-		if !ok || s.Platform() != dev.Platform {
-			continue
-		}
-		k, isKinded := m.(KindedManager)
-		if !isKinded || k.Kind() != dev.Kind {
-			continue
-		}
-		return s.StreamConsoleLog(ctx, dev.ID, bundleID, hostPort)
+	s, err := pickKinded[ConsoleLogStreamer](c.Managers, dev.Platform, dev.Kind, "console log streamer")
+	if err != nil {
+		return nil, err
 	}
-	return nil, fmt.Errorf("no console log streamer registered for platform %s", dev.Platform)
+	return s.StreamConsoleLog(ctx, dev.ID, bundleID, hostPort)
 }

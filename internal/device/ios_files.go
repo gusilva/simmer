@@ -77,19 +77,26 @@ func NewIOSRootFileSystem() FileSystem {
 	return &IOSRootFileSystem{MaxDepth: 2}
 }
 
+// simulatorDataRoot returns a simulator's data directory on this Mac, or ""
+// when the home directory cannot be determined.
+func simulatorDataRoot(dev Device) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, "Library", "Developer", "CoreSimulator", "Devices", dev.ID, "data")
+}
+
 // Tree walks the simulator's data directory and returns the root node.
 func (f *IOSRootFileSystem) Tree(ctx context.Context, dev Device) (FileNode, error) {
 	if dev.Platform != PlatformIOS {
 		return FileNode{}, fmt.Errorf("ios filesystem: unsupported platform %s", dev.Platform)
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return FileNode{}, fmt.Errorf("user home: %w", err)
+	root := simulatorDataRoot(dev)
+	if root == "" {
+		return FileNode{}, fmt.Errorf("user home unavailable")
 	}
-	root := filepath.Join(home,
-		"Library", "Developer", "CoreSimulator",
-		"Devices", dev.ID, "data",
-	)
+
 	info, err := os.Stat(root)
 	if err != nil {
 		return FileNode{}, fmt.Errorf("stat %s: %w", root, err)
@@ -121,17 +128,29 @@ func NewIOSAppFileSystem(bundleID string) FileSystem {
 	return &IOSAppFileSystem{BundleID: bundleID, MaxDepth: 4}
 }
 
-// Tree resolves the app's data container path and walks it up to MaxDepth.
-func (f *IOSAppFileSystem) Tree(ctx context.Context, dev Device) (FileNode, error) {
+// iosAppContainer resolves an app's data container on a simulator. The
+// container is a directory on this Mac, but only simctl knows which one.
+func iosAppContainer(ctx context.Context, dev Device, bundleID string) (string, error) {
 	out, err := exec.CommandContext(ctx,
-		"xcrun", "simctl", "get_app_container", dev.ID, f.BundleID, "data",
+		"xcrun", "simctl", "get_app_container", dev.ID, bundleID, "data",
 	).Output()
 	if err != nil {
-		return FileNode{}, fmt.Errorf("get_app_container %s %s: %w", dev.ID, f.BundleID, err)
+		return "", fmt.Errorf("get_app_container %s %s: %w", dev.ID, bundleID, err)
 	}
+
 	root := strings.TrimSpace(string(out))
 	if root == "" {
-		return FileNode{}, fmt.Errorf("get_app_container returned empty path for %s", f.BundleID)
+		return "", fmt.Errorf("get_app_container returned empty path for %s", bundleID)
+	}
+
+	return root, nil
+}
+
+// Tree resolves the app's data container path and walks it up to MaxDepth.
+func (f *IOSAppFileSystem) Tree(ctx context.Context, dev Device) (FileNode, error) {
+	root, err := iosAppContainer(ctx, dev, f.BundleID)
+	if err != nil {
+		return FileNode{}, err
 	}
 
 	info, err := os.Stat(root)
@@ -151,18 +170,37 @@ func (f *IOSAppFileSystem) Tree(ctx context.Context, dev Device) (FileNode, erro
 	return node, nil
 }
 
-// FileSystemFor returns the simulator FileSystem serving scope: the app's
-// local container for ScopeAppSandbox, the simulator's data root otherwise.
-func (m *iosManager) FileSystemFor(scope FileScope, target string) FileSystem {
+// FileSystemFor returns the simulator FileSystem serving a target.
+func (m *iosManager) FileSystemFor(t FileTarget, d Depth) FileSystem {
+	depth := 6
+	if d == OneLevel {
+		depth = 1
+	}
+
 	switch {
-	case scope == ScopeAppSandbox && target != "":
-		return NewIOSAppFileSystem(target)
-	case scope == ScopePath && target != "":
-		return NewIOSPathFileSystem(target)
-	case scope == ScopeDirectory && target != "":
-		return &IOSPathFileSystem{Path: target, MaxDepth: 1}
+	case t.BundleID() != "":
+		return NewIOSAppFileSystem(t.BundleID())
+	case t.Path() != "":
+		return &IOSPathFileSystem{Path: t.Path(), MaxDepth: depth}
 	default:
 		return NewIOSRootFileSystem()
+	}
+}
+
+// StorageRoots reports the directories a target covers. A simulator keeps
+// an app's storage in one container, which simctl resolves.
+func (m *iosManager) StorageRoots(ctx context.Context, dev Device, t FileTarget) ([]string, error) {
+	switch {
+	case t.BundleID() != "":
+		root, err := iosAppContainer(ctx, dev, t.BundleID())
+		if err != nil {
+			return nil, err
+		}
+		return []string{root}, nil
+	case t.Path() != "":
+		return []string{t.Path()}, nil
+	default:
+		return []string{simulatorDataRoot(dev)}, nil
 	}
 }
 

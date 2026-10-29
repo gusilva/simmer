@@ -2,7 +2,6 @@ package device
 
 import (
 	"context"
-	"fmt"
 )
 
 // BuildStream is a live stream of build/install progress events.
@@ -24,56 +23,31 @@ type AppInstallStreamer interface {
 	StartInstall(dev Device, path, scheme string) (*BuildStream, error)
 }
 
-// StartInstall routes to the Manager that implements AppInstallStreamer for
-// the device's platform and starts the pipeline asynchronously.
-// Prefers a KindedManager whose Kind matches dev.Kind; falls back to any
-// AppInstallStreamer that does not implement KindedManager.
+// StartInstall starts a build+install+launch pipeline asynchronously.
 func (c *Coordinator) StartInstall(dev Device, path, scheme string) (*BuildStream, error) {
-	// Pass 1: kinded match.
-	for _, m := range c.Managers {
-		s, ok := m.(AppInstallStreamer)
-		if !ok || s.Platform() != dev.Platform {
-			continue
-		}
-		k, isKinded := m.(KindedManager)
-		if !isKinded || k.Kind() != dev.Kind {
-			continue
-		}
+	if s, err := pickCapability[AppInstallStreamer](c.Managers, dev.Platform, dev.Kind, "install streamer"); err == nil {
 		return s.StartInstall(dev, path, scheme)
 	}
-	// Pass 2: unkinded fallback (skip managers that implement KindedManager).
-	for _, m := range c.Managers {
-		s, ok := m.(AppInstallStreamer)
-		if !ok || s.Platform() != dev.Platform {
-			continue
-		}
-		if _, isKinded := m.(KindedManager); isKinded {
-			continue
-		}
-		return s.StartInstall(dev, path, scheme)
+
+	// A platform that has not adopted the streaming interface still has a
+	// blocking installer; wrapping it keeps one caller-facing shape.
+	i, err := pickCapability[AppInstaller](c.Managers, dev.Platform, dev.Kind, "app installer")
+	if err != nil {
+		return nil, err
 	}
-	// Fallback: wrap synchronous AppInstaller in a stream for platforms that
-	// have not yet adopted AppInstallStreamer.
-	for _, m := range c.Managers {
-		i, ok := m.(AppInstaller)
-		if !ok || i.Platform() != dev.Platform {
-			continue
-		}
-		if _, isKinded := m.(KindedManager); isKinded {
-			continue
-		}
-		events := make(chan string, 64)
-		done := make(chan error, 1)
-		ctx, cancel := newBuildContext()
-		go func() {
-			defer close(events)
-			defer cancel()
-			events <- "Installing…"
-			done <- i.InstallApp(ctx, dev.ID, path, scheme)
-		}()
-		return &BuildStream{Events: events, Done: done, Stop: cancel}, nil
-	}
-	return nil, fmt.Errorf("no install streamer registered for platform %s", dev.Platform)
+
+	events := make(chan string, 64)
+	done := make(chan error, 1)
+	ctx, cancel := newBuildContext()
+
+	go func() {
+		defer close(events)
+		defer cancel()
+		events <- "Installing…"
+		done <- i.InstallApp(ctx, dev.ID, path, scheme)
+	}()
+
+	return &BuildStream{Events: events, Done: done, Stop: cancel}, nil
 }
 
 func newBuildContext() (context.Context, context.CancelFunc) {

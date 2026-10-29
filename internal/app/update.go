@@ -366,7 +366,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		return m, m.searchFilesCmd(*sel, msg.Roots, msg.Query)
+		return m, m.searchFilesCmd(*sel, msg.Target, msg.Query)
 
 	case fileSearchMsg:
 		if msg.err != nil {
@@ -386,6 +386,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.mainPane.ExitFileSearch()
+		m.mainPane.SetTreeTarget(device.Directory(msg.Path))
 
 		return m, m.loadTreeAtCmd(*sel, msg.Path)
 
@@ -415,14 +416,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// Scope, not adapter: the Session knows that a physical Android
-		// device has no run-as access to a package's private data dir and
-		// falls back to external storage.
-		if msg.App == nil {
-			return m, m.loadFileTreeCmd(*sel, device.ScopeDeviceRoot, "")
+		// A target, not an adapter: which storage areas an app owns, and how
+		// each is reached, belongs to the device layer.
+		target := device.DeviceRoot()
+		if msg.App != nil {
+			target = device.AppStorage(msg.App.BundleID)
 		}
+		m.mainPane.SetTreeTarget(target)
 
-		return m, m.loadFileTreeCmd(*sel, device.ScopeAppSandbox, msg.App.BundleID)
+		return m, m.loadFileTreeCmd(*sel, target)
 
 	case ui.StopAppLoggingMsg:
 		m.teardownAppLogging()

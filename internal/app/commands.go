@@ -153,10 +153,10 @@ func (m model) shutdownDeviceCmd(dev device.Device) tea.Cmd {
 // searchFilesCmd searches the device under the tree's roots. The tree only
 // knows the directories that have been expanded, so this is what finds a
 // file nobody has navigated to.
-func (m model) searchFilesCmd(dev device.Device, roots []string, query string) tea.Cmd {
+func (m model) searchFilesCmd(dev device.Device, target device.FileTarget, query string) tea.Cmd {
 	sess := m.sess
 	return func() tea.Msg {
-		matches, err := sess.SearchFiles(context.Background(), dev, roots, query)
+		matches, err := sess.SearchFiles(context.Background(), dev, target, query)
 		return fileSearchMsg{query: query, matches: matches, err: err}
 	}
 }
@@ -166,7 +166,7 @@ func (m model) searchFilesCmd(dev device.Device, roots []string, query string) t
 func (m model) loadTreeAtCmd(dev device.Device, path string) tea.Cmd {
 	sess := m.sess
 	return func() tea.Msg {
-		root, err := sess.FileTree(context.Background(), dev, device.ScopeDirectory, path)
+		root, err := sess.FileTree(context.Background(), dev, device.Directory(path), device.OneLevel)
 		return fileTreeMsg{device: dev, root: root, err: err}
 	}
 }
@@ -177,19 +177,19 @@ func (m model) loadTreeAtCmd(dev device.Device, path string) tea.Cmd {
 func (m model) loadSubtreeCmd(dev device.Device, path string) tea.Cmd {
 	sess := m.sess
 	return func() tea.Msg {
-		node, err := sess.FileTree(context.Background(), dev, device.ScopeDirectory, path)
+		node, err := sess.FileTree(context.Background(), dev, device.Directory(path), device.OneLevel)
 		return subtreeMsg{device: dev, path: path, node: node, err: err}
 	}
 }
 
-// loadFileTreeCmd walks a device's filesystem at the given scope. The
+// loadFileTreeCmd reads a device's filesystem at the given target. The
 // Session picks the adapter for the device's platform and kind, so this
 // command no longer needs to know that physical iOS goes over AFC or that a
 // package's private data dir needs run-as.
-func (m model) loadFileTreeCmd(dev device.Device, scope device.FileScope, bundleID string) tea.Cmd {
+func (m model) loadFileTreeCmd(dev device.Device, target device.FileTarget) tea.Cmd {
 	sess := m.sess
 	return func() tea.Msg {
-		root, err := sess.FileTree(context.Background(), dev, scope, bundleID)
+		root, err := sess.FileTree(context.Background(), dev, target, device.FullDepth)
 		return fileTreeMsg{device: dev, root: root, err: err}
 	}
 }

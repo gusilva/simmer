@@ -97,7 +97,7 @@ func TestSearchFilesReachesPastTheLoadedTree(t *testing.T) {
 		},
 	}), nil, testConfig())
 
-	got, err := s.SearchFiles(context.Background(), androidDevice(device.KindVirtual), []string{"/storage/emulated/0"}, "rooms")
+	got, err := s.SearchFiles(context.Background(), androidDevice(device.KindVirtual), device.Directory("/storage/emulated/0"), "rooms")
 	if err != nil {
 		t.Fatalf("SearchFiles: %v", err)
 	}
@@ -114,6 +114,14 @@ type fakeSearchManager struct {
 func (f *fakeSearchManager) ListDevices(context.Context) ([]device.Device, error) { return nil, nil }
 func (f *fakeSearchManager) Platform() device.Platform                            { return device.PlatformAndroid }
 func (f *fakeSearchManager) Kind() device.DeviceKind                              { return device.KindVirtual }
+func (f *fakeSearchManager) FileSystemFor(device.FileTarget, device.Depth) device.FileSystem {
+	return nil
+}
+
+func (f *fakeSearchManager) StorageRoots(_ context.Context, _ device.Device, t device.FileTarget) ([]string, error) {
+	return []string{t.Path()}, nil
+}
+
 func (f *fakeSearchManager) SearchFiles(_ context.Context, _ device.Device, root, _ string, _ int) ([]device.FileMatch, error) {
 	return f.results[root], nil
 }

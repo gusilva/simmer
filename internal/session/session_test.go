@@ -47,15 +47,22 @@ func (f *fakeManager) FetchAppVersions(_ context.Context, _ string, bundleIDs []
 func (f *fakeManager) DetectReactNative(_ context.Context, _ string, app device.App) bool {
 	return f.rn[app.BundleID]
 }
-func (f *fakeManager) FileSystemFor(scope device.FileScope, _ string) device.FileSystem {
-	switch scope {
-	case device.ScopeAppSandbox:
+func (f *fakeManager) FileSystemFor(t device.FileTarget, _ device.Depth) device.FileSystem {
+	switch {
+	case t.BundleID() != "":
 		return fakeFS{f.appTree}
-	case device.ScopePath:
+	case t.Path() != "":
 		return fakeFS{f.pathTree}
 	default:
 		return fakeFS{f.tree}
 	}
+}
+
+func (f *fakeManager) StorageRoots(_ context.Context, _ device.Device, t device.FileTarget) ([]string, error) {
+	if t.BundleID() != "" {
+		return []string{"/data/data/" + t.BundleID()}, nil
+	}
+	return []string{t.Path()}, nil
 }
 
 type fakeFS struct{ root device.FileNode }
@@ -86,7 +93,7 @@ func TestListDevicesRecordsRoster(t *testing.T) {
 	}
 }
 
-func TestFileTreeRoutesByScope(t *testing.T) {
+func TestFileTreeRoutesByTarget(t *testing.T) {
 	root := device.FileNode{Name: "/", IsDir: true}
 	sandbox := device.FileNode{Name: "sandbox", IsDir: true}
 	s := New(device.NewCoordinator(&fakeManager{
@@ -98,12 +105,12 @@ func TestFileTreeRoutesByScope(t *testing.T) {
 
 	target := dev("X", "Pixel_8", device.PlatformAndroid, device.StatusRunning)
 
-	got, err := s.FileTree(context.Background(), target, device.ScopeDeviceRoot, "")
+	got, err := s.FileTree(context.Background(), target, device.DeviceRoot(), device.FullDepth)
 	if err != nil || got.Name != "/" {
 		t.Fatalf("device root: got %q, err %v", got.Name, err)
 	}
 
-	got, err = s.FileTree(context.Background(), target, device.ScopeAppSandbox, "com.acme.app")
+	got, err = s.FileTree(context.Background(), target, device.AppStorage("com.acme.app"), device.FullDepth)
 	if err != nil || got.Name != "sandbox" {
 		t.Fatalf("app sandbox: got %q, err %v", got.Name, err)
 	}
@@ -118,7 +125,7 @@ func TestFileTreeWalksANamedPath(t *testing.T) {
 		pathTree: download,
 	}), nil, testConfig())
 
-	got, err := s.FileTree(context.Background(), androidDevice(device.KindVirtual), device.ScopePath, download.Path)
+	got, err := s.FileTree(context.Background(), androidDevice(device.KindVirtual), device.Directory(download.Path), device.FullDepth)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -129,7 +136,7 @@ func TestFileTreeWalksANamedPath(t *testing.T) {
 
 func TestFileTreeUnroutedPlatformErrors(t *testing.T) {
 	s := New(device.NewCoordinator(), nil, testConfig())
-	_, err := s.FileTree(context.Background(), dev("X", "iPhone", device.PlatformIOS, device.StatusOff), device.ScopeDeviceRoot, "")
+	_, err := s.FileTree(context.Background(), dev("X", "iPhone", device.PlatformIOS, device.StatusOff), device.DeviceRoot(), device.FullDepth)
 	if err == nil {
 		t.Fatal("expected an error when no manager serves the platform")
 	}

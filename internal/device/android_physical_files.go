@@ -96,27 +96,19 @@ func buildGadbTree(ctx context.Context, logger *logging.Logger, d gadb.Device, p
 	return node, nil
 }
 
-// FileSystemFor returns the physical-Android FileSystem serving scope.
+// FileSystemFor returns the physical-Android FileSystem serving a target.
 //
-// An app sandbox is read exactly as on an emulator: run-as needs the package
-// to be debuggable, not the device to be rooted, and the sandbox FileSystem
-// already returns whichever of the two storage areas it can read.
-//
-// There is deliberately no fallback to external storage here. It used to
-// fire when both areas were refused and answer "this app's sandbox" with the
-// whole of /storage/emulated/0 — a wrong tree that surfaced as an empty
-// result, which reads as "this app has no databases".
-func (m *physicalAndroidManager) FileSystemFor(scope FileScope, target string) FileSystem {
-	switch {
-	case scope == ScopeAppSandbox && target != "":
-		return NewAndroidFileSystem(target, m.logger)
-	case scope == ScopePath && target != "":
-		return NewAndroidPathFileSystem(target, m.logger)
-	case scope == ScopeDirectory && target != "":
-		return NewAndroidDirFileSystem(target, m.logger)
-	default:
-		// Shared storage is what a physical device's root listing can
-		// reach without root.
-		return NewAndroidPhysicalFileSystem(m.logger)
-	}
+// An app's storage is read exactly as on an emulator: run-as needs the app
+// to be debuggable, not the device to be rooted. There is deliberately no
+// fallback to shared storage when both of an app's areas are refused — that
+// answered "this app's files" with the whole sdcard, which surfaced as an
+// empty result.
+func (m *physicalAndroidManager) FileSystemFor(t FileTarget, d Depth) FileSystem {
+	return androidFileSystemFor(t, d, NewAndroidPhysicalFileSystem(m.logger), m.logger)
+}
+
+// StorageRoots reports the directories a target covers. A physical device's
+// own filesystem is only reachable as shared storage without root.
+func (m *physicalAndroidManager) StorageRoots(_ context.Context, _ Device, t FileTarget) ([]string, error) {
+	return androidStorageRoots(t, "/storage/emulated/0")
 }
