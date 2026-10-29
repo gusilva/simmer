@@ -10,14 +10,14 @@ import (
 type capManager struct {
 	platform Platform
 	kind     DeviceKind
-	kinded   bool
 	id       string
 }
 
 func (m *capManager) ListDevices(context.Context) ([]Device, error) { return nil, nil }
 func (m *capManager) Platform() Platform                            { return m.platform }
 
-// kindedCap implements KindedManager only when asked to.
+// kindedCap is the same manager with a Kind, so a test can hold one of each
+// and check which the router prefers.
 type kindedCap struct{ capManager }
 
 func (m *kindedCap) Kind() DeviceKind { return m.kind }

@@ -81,7 +81,7 @@ func querySQLiteIOSPhysical(ctx context.Context, logger *logging.Logger, dev Dev
 	if err != nil {
 		return nil, fmt.Errorf("create temp dir: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	tmpDB := filepath.Join(tmpDir, filepath.Base(dbPath))
 
@@ -182,7 +182,7 @@ func queryAndroidViaCopy(ctx context.Context, logger *logging.Logger, serial, db
 	if err != nil {
 		return nil, fmt.Errorf("create temp dir: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	tmpDB := filepath.Join(tmpDir, filepath.Base(dbPath))
 	if err := copyDeviceFile(ctx, logger, serial, dbPath, tmpDB); err != nil {

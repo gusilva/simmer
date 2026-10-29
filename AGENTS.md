@@ -4,7 +4,9 @@ TUI application to list and manage iOS simulators and Android emulators on macOS
 
 ## Commands
 
-`make check` runs everything CI enforces; run it before pushing. `make` targets are the source of
+`make check` runs everything CI enforces, lint included; run it before pushing. Lint is scoped to
+the diff against `origin/main` — the same scope CI uses, so a narrower base (`HEAD~1`) will miss
+findings the pipeline reports. `make` targets are the source of
 truth for build, test, lint and the rest — read the `Makefile` rather than assembling commands.
 
 - **Device tests:** `make check-device` exercises attached simulators, emulators and phones.

@@ -37,9 +37,14 @@ lint:
 	golangci-lint run
 
 ## lint-new: exactly what CI lints - code that differs from the base branch
+#
+# Skips rather than fails when golangci-lint or the base ref is missing, so a
+# fresh clone or an offline checkout can still run `make check`. The default
+# base matches CI; overriding it with HEAD~1 lints only the last commit and
+# will miss findings CI reports.
 LINT_BASE ?= origin/main
 lint-new:
-	golangci-lint run --new-from-rev=$(LINT_BASE) --timeout=5m
+	@if ! command -v golangci-lint >/dev/null; then 		echo "skipping lint: golangci-lint is not installed"; 	elif ! git rev-parse --verify --quiet $(LINT_BASE) >/dev/null; then 		echo "skipping lint: $(LINT_BASE) not found (git fetch origin main)"; 	else 		golangci-lint run --new-from-rev=$(LINT_BASE) --timeout=5m; 	fi
 
 ## fmt-check: fail when anything is unformatted
 fmt-check:
@@ -58,8 +63,8 @@ deadcode:
 exclusions:
 	./scripts/check-build-exclusions.sh
 
-## check: everything CI enforces
-check: exclusions fmt-check vet build test deadcode
+## check: everything CI enforces, including the lint job
+check: exclusions fmt-check vet build test deadcode lint-new
 
 ## check-device: integration tests against attached simulators and phones
 #

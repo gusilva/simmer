@@ -142,9 +142,12 @@ Local builds default to `dev` unless you set the linker variable manually.
   accumulating.
 
 ```bash
-make check         # everything CI enforces
+make check         # everything CI enforces, lint included
 make check-device  # integration tests against attached devices (skipped without hardware)
 ```
+
+Lint is scoped to code that differs from `origin/main`, exactly as the CI job is, so the tree's
+pre-existing findings do not fail every change. `make lint` reports the whole tree.
 
 ## 📝 Logging
 
