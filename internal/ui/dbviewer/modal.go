@@ -128,17 +128,6 @@ func (m Modal) setQueryText(sql string) Modal {
 	return m
 }
 
-// injectQuery sets the query editor content and moves focus to the query pane.
-func (m Modal) injectQuery(sql string) (Modal, tea.Cmd) {
-	qp, ok := m.panes[paneQuery].(queryPaneAdapter)
-	if !ok {
-		return m, nil
-	}
-	qp.inner = qp.inner.SetQuery(sql)
-	m.panes[paneQuery] = qp
-	return m.setFocus(paneQuery)
-}
-
 // sidebarSQL returns the SQL string to inject for the currently selected
 // sidebar node, and true when the node is a table or column.
 func (m Modal) sidebarSQL() (string, bool) {

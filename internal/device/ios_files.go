@@ -211,11 +211,6 @@ type IOSPathFileSystem struct {
 	MaxDepth int
 }
 
-// NewIOSPathFileSystem returns a FileSystem rooted at a host path.
-func NewIOSPathFileSystem(path string) FileSystem {
-	return &IOSPathFileSystem{Path: path, MaxDepth: 6}
-}
-
 func (f *IOSPathFileSystem) Tree(ctx context.Context, _ Device) (FileNode, error) {
 	path := expandPath(f.Path)
 	info, err := os.Stat(path)

@@ -271,6 +271,8 @@ go tool pprof -alloc_space heap.out
 
 - **Guides**
   - [Headless mode: every command, with examples](docs/headless.md)
+- **Working on Simmer**
+  - [AGENTS.md](AGENTS.md) — commands, device tests, domain terms
 - **Architecture**
   - [App model/update/view flow](docs/architecture/app-model-update-view.md)
   - [Device layer design](docs/architecture/device-layer.md)
