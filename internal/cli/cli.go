@@ -37,7 +37,7 @@ func Run(ctx context.Context, args []string, logger *logging.Logger, io Streams)
 	case "help", "-h", "--help":
 		usage(io.Out)
 		return exitOK
-	case "devices", "apps", "db":
+	case "devices", "apps", "db", "reverse":
 	default:
 		writef(io.Err, "unknown command %q\n\n", verb)
 		usage(io.Err)
@@ -59,6 +59,8 @@ func Run(ctx context.Context, args []string, logger *logging.Logger, io Streams)
 		return cmd.apps(ctx, rest)
 	case "db":
 		return cmd.db(ctx, rest)
+	case "reverse":
+		return cmd.reverse(ctx, rest)
 	}
 
 	return exitUsage
@@ -108,6 +110,8 @@ Commands:
                                        list SQLite databases under any directory
   simmer db query --device <ref> --app <bundle> --db <path> "<SQL>"
                                        run a query against a device database
+  simmer reverse  --device <ref> --port <port>
+                                       adb reverse tcp:<port> tcp:<port> (Android)
 
 Device references (--device):
   a UDID or adb serial, a device name, a unique fragment of a name, or
@@ -124,6 +128,7 @@ Common flags:
 Examples:
   simmer devices --json
   simmer apps --device "iPhone 16 Pro"
+  simmer reverse --device booted --port 8081
   simmer db ls --device booted --app com.acme.fieldkit
   simmer db ls --device booted --path /storage/emulated/0/Download
   simmer db query --device booted --app com.acme.fieldkit \

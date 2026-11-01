@@ -204,3 +204,10 @@ type consoleLogStartedMsg struct {
 	stream *device.LogStream
 	err    error
 }
+
+// reversePortResultMsg reports the outcome of `adb reverse` for a port (see
+// model.reversePortCmd).
+type reversePortResultMsg struct {
+	port string
+	err  error
+}

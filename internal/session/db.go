@@ -108,3 +108,21 @@ func (s *Session) SearchFiles(ctx context.Context, dev device.Device, t device.F
 	defer cancel()
 	return s.coord.SearchFiles(ctx, dev, t, query, device.DefaultSearchLimit)
 }
+
+// ReversePort forwards port on an Android device to the same port on the
+// host (`adb reverse`), so the device reaches a host server such as Metro as
+// localhost:<port>. Only a running Android device can be reversed.
+func (s *Session) ReversePort(ctx context.Context, dev device.Device, port string) error {
+	if err := device.ValidatePort(port); err != nil {
+		return fmt.Errorf("port %q: %w", port, err)
+	}
+	if dev.Platform != device.PlatformAndroid {
+		return fmt.Errorf("%s is not an Android device: adb reverse is Android-only", dev.Name)
+	}
+	if dev.Status != device.StatusRunning {
+		return fmt.Errorf("%s is not running", dev.Name)
+	}
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+	return s.coord.ReversePort(ctx, dev, port)
+}

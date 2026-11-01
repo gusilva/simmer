@@ -56,6 +56,7 @@ type SidebarKeyMap struct {
 	Delete     key.Binding
 	Boot       key.Binding
 	Shutdown   key.Binding
+	Reverse    key.Binding
 	Load       key.Binding
 	Refresh    key.Binding
 	Help       key.Binding
@@ -69,7 +70,7 @@ func (k SidebarKeyMap) ShortHelp() []key.Binding {
 func (k SidebarKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.SwitchPane},
-		{k.Boot, k.Shutdown, k.Load},
+		{k.Boot, k.Shutdown, k.Load, k.Reverse},
 		{k.Filter, k.Add, k.Delete},
 		{k.Toggle, k.Refresh, k.Help, k.Quit},
 	}
@@ -86,6 +87,7 @@ var SidebarKeys = SidebarKeyMap{
 	Delete:     key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
 	Boot:       key.NewBinding(key.WithKeys("b"), key.WithHelp("b", "boot")),
 	Shutdown:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "shutdown")),
+	Reverse:    key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "reverse port (android)")),
 	Load:       key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "load device")),
 	Refresh:    key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 	Help:       key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),

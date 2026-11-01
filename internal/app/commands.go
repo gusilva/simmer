@@ -457,3 +457,16 @@ func nextLogBatchCmd(stream *device.LogStream, bundleID string) tea.Cmd {
 		return logBatchMsg{bundleID: bundleID, lines: lines}
 	}
 }
+
+// validatePort checks that s is a TCP port number in 1-65535.
+func validatePort(s string) error { return device.ValidatePort(s) }
+
+// reversePortCmd forwards port on dev to the same host port (`adb reverse`).
+func (m model) reversePortCmd(dev device.Device, port string) tea.Cmd {
+	coord := m.coordinator
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		return reversePortResultMsg{port: port, err: coord.ReversePort(ctx, dev, port)}
+	}
+}

@@ -13,6 +13,7 @@ JSON out, a meaningful exit code.
   - [`simmer apps`](#simmer-apps)
   - [`simmer db ls`](#simmer-db-ls)
   - [`simmer db query`](#simmer-db-query)
+  - [`simmer reverse`](#simmer-reverse)
 - [Output formats](#output-formats)
 - [Exit codes](#exit-codes)
 - [Warnings and errors](#warnings-and-errors)
@@ -469,6 +470,28 @@ tables query) are read by headless mode too, keyed by the database's file name. 
 `tables_query` therefore affects what the viewer's explorer lists; `db query` always runs exactly the
 SQL you pass.
 
+### `simmer reverse`
+
+Forwards a port on an Android device to the same port on the host, so the device reaches a host
+server (typically Metro) as `localhost:<port>`. It runs `adb -s <serial> reverse tcp:<port> tcp:<port>`.
+
+```
+simmer reverse --device <ref> --port <port>
+```
+
+| Flag | Required | Meaning |
+| --- | --- | --- |
+| `--port <port>` | yes | TCP port, 1-65535 |
+| `--device <ref>` | no | Which device; omitted means the only running device |
+
+```console
+$ simmer reverse --device booted --port 8081
+reversed tcp:8081 on Pixel 8
+```
+
+Only a running Android device (emulator or phone) qualifies; an iOS or offline device fails with
+exit code `1`, and an invalid or missing port exits `2`. In the TUI the same action is the `p` key.
+
 ## Output formats
 
 **Table** (default) is meant to be readable by eye and still cuttable by script: columns are padded
@@ -618,7 +641,7 @@ tail -40 simmer.log
 
 ## Not available headlessly
 
-Headless mode covers reading. State-changing operations are still TUI-only: booting and shutting
+Headless mode mostly covers reading; the one state-changing exception is `simmer reverse`. Other state-changing operations are still TUI-only: booting and shutting
 down devices, creating and deleting simulators and emulators, installing, launching, closing and
 uninstalling apps, Rebuild-and-reinstall, app log streaming, and the React Native debugging menu.
 

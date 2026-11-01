@@ -103,3 +103,11 @@ func androidStatCmd(root string, paths []string) string {
 	return androidRunAsForPath(root) + "stat -c " + sqSingleQuote("%s %A %n") + " " +
 		strings.Join(quoted, " ") + " 2>/dev/null"
 }
+
+// androidReverseArgs builds the adb argv that forwards a device port to the
+// same port on the host, so the device reaches a host server (Metro) as
+// localhost:<port>.
+func androidReverseArgs(serial, port string) []string {
+	spec := "tcp:" + port
+	return []string{"-s", serial, "reverse", spec, spec}
+}

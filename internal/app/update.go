@@ -172,6 +172,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, m.shutdownDeviceCmd(*sel)
+		case "p":
+			sel := m.sidebar.SelectedDevice()
+			if sel == nil || sel.Status != device.StatusRunning || sel.Platform != device.PlatformAndroid {
+				return m, nil
+			}
+			dev := *sel
+			return m, func() tea.Msg { return ui.ShowReversePortMsg{Device: dev} }
 		case "space":
 			sel := m.sidebar.SelectedDevice()
 			if sel == nil || sel.Status != device.StatusRunning {
@@ -496,9 +503,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case ui.ShowReversePortMsg:
+		m.actionMenu = nil
+		modal, cmd := ui.NewTextPromptModal(ui.TextPromptReversePort, "Reverse Port (tcp)",
+			"8081", "8081", msg.Device, device.App{}, validatePort)
+		m.textPromptModal = &modal
+		return m, cmd
+
+	case reversePortResultMsg:
+		if msg.err != nil {
+			m.errs = append(m.errs, msg.err)
+			return m, m.setStatus("reverse port failed: "+errPreview(msg.err), ui.StatusErr)
+		}
+		return m, m.setStatus("Reversed tcp:"+msg.port, ui.StatusOk)
+
 	case ui.TextPromptSubmittedMsg:
 		m.textPromptModal = nil
 		switch msg.Kind {
+		case ui.TextPromptReversePort:
+			return m, tea.Batch(m.reversePortCmd(msg.Device, msg.Value), m.setStatus("Reversing tcp:"+msg.Value+"…", ui.StatusInfo))
 		case ui.TextPromptBundler:
 			m.bundlerHostPorts[msg.App.BundleID] = msg.Value
 			return m, tea.Batch(

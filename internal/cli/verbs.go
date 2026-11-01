@@ -113,6 +113,34 @@ func (c *command) apps(ctx context.Context, args []string) int {
 	return exitOK
 }
 
+// reverse forwards a device port to the same host port (adb reverse).
+func (c *command) reverse(ctx context.Context, args []string) int {
+	fs := c.flags("reverse")
+	ref := fs.String("device", "", "device reference (Android)")
+	port := fs.String("port", "", "TCP port to reverse, e.g. 8081")
+	if err := fs.Parse(args); err != nil {
+		return exitUsage
+	}
+	if *port == "" {
+		return c.misuse("reverse needs --port <port>")
+	}
+	if err := device.ValidatePort(*port); err != nil {
+		return c.misuse("--port %q: %v", *port, err)
+	}
+
+	dev, code := c.resolve(ctx, *ref)
+	if code != exitOK {
+		return code
+	}
+
+	if err := c.sess.ReversePort(ctx, dev, *port); err != nil {
+		return c.fail(err)
+	}
+	writef(c.io.Out, "reversed tcp:%s on %s\n", *port, dev.Name)
+
+	return exitOK
+}
+
 // db dispatches the database subcommands.
 func (c *command) db(ctx context.Context, args []string) int {
 	if len(args) == 0 {

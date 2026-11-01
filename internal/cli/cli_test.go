@@ -135,3 +135,13 @@ func TestDBListRequiresExactlyOneTarget(t *testing.T) {
 		t.Errorf("stderr does not explain the conflict: %q", errBuf.String())
 	}
 }
+
+func TestReverseRejectsBadPort(t *testing.T) {
+	for _, args := range [][]string{{"reverse"}, {"reverse", "--port", "0"}, {"reverse", "--port", "abc"}, {"reverse", "--port", "70000"}} {
+		var out, errb bytes.Buffer
+		cmd := &command{io: Streams{Out: &out, Err: &errb}}
+		if got := cmd.reverse(context.Background(), args[1:]); got != exitUsage {
+			t.Errorf("%v: exit %d, want %d (%s)", args, got, exitUsage, errb.String())
+		}
+	}
+}

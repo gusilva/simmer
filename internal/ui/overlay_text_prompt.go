@@ -21,6 +21,7 @@ type TextPromptKind int
 const (
 	TextPromptBundler TextPromptKind = iota
 	TextPromptLogPath
+	TextPromptReversePort
 )
 
 // TextPromptModal collects one line of free text (bundler host:port, a log

@@ -89,6 +89,14 @@ func (m model) buildDeviceActionMenu(dev device.Device) *ui.ActionMenuModal {
 		})
 	}
 
+	if dev.Platform == device.PlatformAndroid && dev.Status == device.StatusRunning {
+		d := dev
+		items = append(items, ui.ActionMenuItem{
+			Label: "Reverse Port…",
+			Cmd:   func() tea.Msg { return ui.ShowReversePortMsg{Device: d} },
+		})
+	}
+
 	items = append(items,
 		ui.ActionMenuItem{
 			Label: "Add Device…",

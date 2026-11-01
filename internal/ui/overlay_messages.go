@@ -126,3 +126,6 @@ type ShowSQLiteViewerMsg struct {
 	DBPath    string
 	DBName    string
 }
+
+// ShowReversePortMsg asks the app to prompt for a port to `adb reverse` on Device.
+type ShowReversePortMsg struct{ Device device.Device }
