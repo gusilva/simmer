@@ -12,6 +12,8 @@ truth for build, test, lint and the rest — read the `Makefile` rather than ass
   Unit tests cannot reach the behaviour that breaks most here — access routes into app storage,
   whether a device ships sqlite3, what a given toybox build does. Add cases to
   `internal/device/integration_device_test.go` instead of writing a throwaway harness.
+  Changing what is sent to a device (keyevents, intents, `TriggerDevMenu`) needs a case there.
+  RN dev-menu or Metro problems on Android: `docs/android-dev-menu.md`.
 - **Recording:** `vhs demo.tape`
 
 ## Architecture & Tech Stack

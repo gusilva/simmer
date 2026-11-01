@@ -221,3 +221,29 @@ func TestReactNativeDetectionReadsOnlyTheZipDirectory(t *testing.T) {
 		t.Errorf("detection took %s, which suggests the whole APK was transferred", elapsed)
 	}
 }
+
+// A dev-menu trigger must never leave the foreground app: OEM ROMs (Xiaomi)
+// map the Menu key to recent apps, which swaps the foreground package for the
+// launcher. Either the trigger reaches the app (same package) or it reports an
+// error; a "success" that changed the foreground is the regression.
+func TestAndroidDevMenuKeepsAppForeground(t *testing.T) {
+	dev := requireDevice(t, PlatformAndroid, KindPhysical)
+
+	d, err := gadbDevice(dev.ID)
+	if err != nil {
+		t.Skipf("adb unavailable: %v", err)
+	}
+	before := foregroundPackage(d)
+	if before == "" {
+		t.Skip("no foreground app to trigger the dev menu on")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	trigErr := deviceCoordinator().TriggerDevMenu(ctx, dev, "")
+	time.Sleep(time.Second)
+
+	if after := foregroundPackage(d); after != before {
+		t.Fatalf("foreground changed %s -> %s (trigger error: %v)", before, after, trigErr)
+	}
+}
