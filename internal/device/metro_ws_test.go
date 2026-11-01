@@ -18,7 +18,7 @@ func TestTriggerDevMenuViaMetro(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 
 	_, port, _ := net.SplitHostPort(ln.Addr().String())
 
@@ -31,7 +31,7 @@ func TestTriggerDevMenuViaMetro(t *testing.T) {
 			errCh <- err
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		reader := bufio.NewReader(conn)
 		requestLine, err := reader.ReadString('\n')

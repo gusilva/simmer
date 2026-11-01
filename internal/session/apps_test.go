@@ -12,9 +12,11 @@ func androidDevice(kind device.DeviceKind) device.Device {
 	return device.Device{ID: "X", Name: "Pixel_8", Platform: device.PlatformAndroid, Status: device.StatusRunning, Kind: kind}
 }
 
+// androidSession wires a fake that reports versions and React Native
+// status, as both Android managers do.
 func androidSession(f *fakeManager) *Session {
 	f.platform = device.PlatformAndroid
-	return New(device.NewCoordinator(f), nil, testConfig())
+	return New(device.NewCoordinator(&enrichingManager{&detectingManager{f}}), nil, testConfig())
 }
 
 func TestAppsSettledMergesEnrichment(t *testing.T) {
@@ -133,24 +135,6 @@ func TestApplyFoldsUpdates(t *testing.T) {
 	}
 }
 
-func TestEnrichConcurrency(t *testing.T) {
-	tests := []struct {
-		name string
-		dev  device.Device
-		want int
-	}{
-		{"ios simulator", device.Device{Platform: device.PlatformIOS, Kind: device.KindVirtual}, 4},
-		{"android emulator", device.Device{Platform: device.PlatformAndroid, Kind: device.KindVirtual}, 4},
-		{"physical android", device.Device{Platform: device.PlatformAndroid, Kind: device.KindPhysical}, 4},
-		{"physical ios stays serial", device.Device{Platform: device.PlatformIOS, Kind: device.KindPhysical}, 1},
-	}
-	for _, tc := range tests {
-		if got := enrichConcurrency(tc.dev); got != tc.want {
-			t.Errorf("%s: got %d workers, want %d", tc.name, got, tc.want)
-		}
-	}
-}
-
 func TestAppsSkipReactNative(t *testing.T) {
 	// Android needs versions regardless, so the catalogue still streams —
 	// but the React Native round-trip must not be made.
@@ -180,7 +164,7 @@ func TestAppsSkipReactNativeOnIOSPhysicalNeedsNothing(t *testing.T) {
 	// Physical iOS needs only the React Native check; skipping it leaves no
 	// enrichment to do at all.
 	f := &fakeManager{platform: device.PlatformIOS, kind: device.KindPhysical, apps: []device.App{{BundleID: "com.acme.one"}}}
-	s := New(device.NewCoordinator(f), nil, testConfig())
+	s := New(device.NewCoordinator(&detectingManager{f}), nil, testConfig())
 
 	cat, err := s.Apps(context.Background(), device.Device{ID: "P", Platform: device.PlatformIOS, Kind: device.KindPhysical}, EnrichOptions{SkipReactNative: true})
 	if err != nil {

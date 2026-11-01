@@ -36,7 +36,7 @@ func triggerDevMenuViaMetro(ctx context.Context, port string) error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	return writeWSTextFrame(conn, `{"version":2,"method":"devMenu"}`)
 }
 
@@ -54,7 +54,7 @@ func dialMetroMessageSocket(ctx context.Context, port string) (net.Conn, error) 
 
 	keyBytes := make([]byte, 16)
 	if _, err := rand.Read(keyBytes); err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, err
 	}
 	key := base64.StdEncoding.EncodeToString(keyBytes)
@@ -66,24 +66,24 @@ func dialMetroMessageSocket(ctx context.Context, port string) (net.Conn, error) 
 		"Sec-WebSocket-Key: " + key + "\r\n" +
 		"Sec-WebSocket-Version: 13\r\n\r\n"
 	if _, err := conn.Write([]byte(req)); err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, err
 	}
 
 	reader := bufio.NewReader(conn)
 	statusLine, err := reader.ReadString('\n')
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, fmt.Errorf("read handshake response: %w", err)
 	}
 	if !strings.Contains(statusLine, "101") {
-		conn.Close()
+		_ = conn.Close()
 		return nil, fmt.Errorf("unexpected handshake response: %s", strings.TrimSpace(statusLine))
 	}
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
-			conn.Close()
+			_ = conn.Close()
 			return nil, fmt.Errorf("read handshake headers: %w", err)
 		}
 		if strings.TrimRight(line, "\r\n") == "" {

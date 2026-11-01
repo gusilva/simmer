@@ -62,6 +62,22 @@ type AppVersionFetcher interface {
 	FetchAppVersions(ctx context.Context, deviceID string, bundleIDs []string) map[string]string
 }
 
+// SupportsAppVersions reports whether version names need a separate
+// round-trip on this device. Callers ask rather than deciding: which
+// managers implement the capability is this package's business, and a
+// caller that restates it goes stale the moment a manager is added.
+func (c *Coordinator) SupportsAppVersions(dev Device) bool {
+	_, err := pickKinded[AppVersionFetcher](c.Managers, dev.Platform, dev.Kind, "app version fetcher")
+	return err == nil
+}
+
+// SupportsReactNativeDetection reports whether React Native status needs a
+// device round-trip here. False where the app list already carries it.
+func (c *Coordinator) SupportsReactNativeDetection(dev Device) bool {
+	_, err := pickKinded[ReactNativeDetector](c.Managers, dev.Platform, dev.Kind, "react native detector")
+	return err == nil
+}
+
 // FetchAppVersions returns version names for the given bundle ids, or nil
 // when this device's kind has no fetcher: an emulator's manager must not
 // answer for a phone.

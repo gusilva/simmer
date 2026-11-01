@@ -34,6 +34,11 @@ func NewPhysicalIOSManager(logger *logging.Logger) Manager {
 func (m *physicalIOSManager) Platform() Platform { return PlatformIOS }
 func (m *physicalIOSManager) Kind() DeviceKind   { return KindPhysical }
 
+// AppEnrichmentConcurrency serialises per-app work. Detection here opens a
+// house_arrest session per app over one USB transport, and that has not been
+// measured under concurrency; the cautious value stays until it has been.
+func (m *physicalIOSManager) AppEnrichmentConcurrency() int { return 1 }
+
 // ListDevices returns all physical iOS devices visible to usbmuxd.
 // Returns nil, nil when usbmuxd is unavailable so the coordinator skips
 // gracefully without surfacing an error.
@@ -159,13 +164,13 @@ func isReactNativeBundlePhysical(entry ios.DeviceEntry, bundleID string) bool {
 	if err != nil {
 		return false
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	f, err := client.Open("/Library/Preferences/"+bundleID+".plist", afc.READ_ONLY)
 	if err != nil {
 		return false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	data, err := io.ReadAll(f)
 	if err != nil {
@@ -356,7 +361,7 @@ func (m *physicalIOSManager) StreamLogs(parent context.Context, dev Device, app 
 
 	stop := func() {
 		cancel()
-		conn.Close() // unblocks the blocking ReadLogMessage call
+		_ = conn.Close() // unblocks the blocking ReadLogMessage call
 	}
 
 	go func() {
@@ -423,7 +428,7 @@ func (m *physicalIOSManager) StartInstall(dev Device, path, scheme string) (*Bui
 				done <- fmt.Errorf("create build dir: %w", err)
 				return
 			}
-			defer os.RemoveAll(derivedData)
+			defer func() { _ = os.RemoveAll(derivedData) }()
 
 			sendEvent(ctx, events, "Building "+scheme+"…")
 			built, err := xcodeBuildPhysicalStream(ctx, m.logger, events, p, scheme, dev.ID, derivedData)

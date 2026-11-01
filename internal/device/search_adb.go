@@ -32,31 +32,7 @@ func searchAndroidFiles(ctx context.Context, logger *logging.Logger, dev Device,
 		return nil, fmt.Errorf("find serial: %w", err)
 	}
 
-	// Two shapes, because -iname matches the file name alone: a query
-	// naming a location ("databases/business") has to be matched against
-	// the whole path, the same rule matchesQuery applies where the tree is
-	// walked here.
-	//
-	// The path case is filtered with grep rather than find -ipath, which
-	// toybox accepts and then matches nothing (seen on Android 9). The
-	// query is escaped into a regex instead of passed to grep -F, because
-	// that same toybox grep treats -F as "match every line".
-	//
-	// -type is left open so directories match too. Errors are dropped on
-	// the device: an unreadable subdirectory is normal and must not fail
-	// the whole search.
-	// The pipeline is handed to the device shell as written, with run-as as
-	// its first command rather than wrapping it: nesting it in `sh -c '…'`
-	// needs a second level of quoting, which adb does not carry reliably —
-	// the grep pattern arrived empty and every path matched.
-	cmd := androidRunAsForPath(root) + "find " + sqSingleQuote(root)
-	if strings.Contains(query, "/") {
-		cmd += " 2>/dev/null | grep -i -- " + sqSingleQuote(escapeBRE(query))
-	} else {
-		pattern := "*" + strings.ReplaceAll(query, "*", "") + "*"
-		cmd += " -iname " + sqSingleQuote(pattern) + " 2>/dev/null"
-	}
-	cmd += " | head -n " + strconv.Itoa(limit)
+	cmd := androidFindCmd(root, query, limit)
 
 	out, err := adbExecOut(ctx, logger, serial, cmd)
 	if err != nil {
@@ -74,20 +50,10 @@ func searchAndroidFiles(ctx context.Context, logger *logging.Logger, dev Device,
 // statAndroidPaths turns found paths into matches, asking the device once
 // for the size and type of all of them.
 func statAndroidPaths(ctx context.Context, logger *logging.Logger, serial, root string, paths []string, limit int) ([]FileMatch, error) {
-	quoted := make([]string, 0, len(paths))
-	for _, p := range paths {
-		if p = strings.TrimSpace(p); p != "" {
-			quoted = append(quoted, sqSingleQuote(p))
-		}
-	}
-	if len(quoted) == 0 {
+	cmd := androidStatCmd(root, paths)
+	if cmd == "" {
 		return nil, nil
 	}
-
-	// "<size> <type> <path>" per line, where type is the first character of
-	// the mode: "d" for a directory.
-	cmd := androidRunAsForPath(root) + "stat -c " + sqSingleQuote("%s %A %n") + " " +
-		strings.Join(quoted, " ") + " 2>/dev/null"
 
 	out, err := adbExecOut(ctx, logger, serial, cmd)
 	if err != nil {

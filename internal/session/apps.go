@@ -60,10 +60,10 @@ func (s *Session) Apps(ctx context.Context, dev device.Device, opts EnrichOption
 
 	cat := &AppCatalog{Device: dev, Apps: apps, Stop: func() {}}
 
-	needVersions := dev.Platform == device.PlatformAndroid
-	needRN := !opts.SkipReactNative &&
-		(dev.Platform == device.PlatformAndroid ||
-			(dev.Platform == device.PlatformIOS && dev.Kind == device.KindPhysical))
+	// Which refinements a device needs is decided by which managers
+	// implement them, so ask rather than restate it here.
+	needVersions := s.coord.SupportsAppVersions(dev)
+	needRN := !opts.SkipReactNative && s.coord.SupportsReactNativeDetection(dev)
 	if len(apps) == 0 || (!needVersions && !needRN) {
 		return cat, nil
 	}
@@ -78,30 +78,11 @@ func (s *Session) Apps(ctx context.Context, dev device.Device, opts EnrichOption
 	return cat, nil
 }
 
-// enrichConcurrency returns how many apps may be enriched at once.
-//
-// Physical Android used to be limited to one: React Native detection pulled
-// each whole APK, and concurrent multi-hundred-megabyte transfers over a
-// single USB connection starved each other and failed silently rather than
-// erroring. Detection now reads only an APK's central directory (a few
-// hundred kilobytes), and four workers measured clean and repeatable against
-// a 56-app phone, so the limit no longer applies there.
-//
-// Physical iOS keeps it. Its detection opens a house_arrest AFC session per
-// app over the same USB transport, and that has not been measured under
-// concurrency — the conservative value stays until it has been.
-func enrichConcurrency(dev device.Device) int {
-	if dev.Kind == device.KindPhysical && dev.Platform == device.PlatformIOS {
-		return 1
-	}
-	return 4
-}
-
 // enrich runs the per-app round-trips and closes updates when done.
 func (s *Session) enrich(ctx context.Context, dev device.Device, apps []device.App, needVersions, needRN bool, updates chan<- AppUpdate) {
 	defer close(updates)
 
-	workers := enrichConcurrency(dev)
+	workers := s.coord.EnrichmentConcurrency(dev)
 
 	jobs := make(chan device.App)
 	var wg sync.WaitGroup

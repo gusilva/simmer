@@ -87,6 +87,33 @@ type Shutdowner interface {
 	Shutdown(ctx context.Context, id string) error
 }
 
+// EnrichmentLimiter is an optional interface a Manager may implement to cap
+// how many of its devices' apps may be queried at once. The limit is a
+// property of the transport — a phone's USB connection starves under
+// concurrent transfers where an emulator on local loopback does not — so it
+// belongs to the manager that owns it rather than to a caller guessing from
+// Platform and Kind.
+type EnrichmentLimiter interface {
+	Platform() Platform
+	AppEnrichmentConcurrency() int
+}
+
+// DefaultEnrichmentConcurrency applies to managers that declare no limit.
+const DefaultEnrichmentConcurrency = 4
+
+// EnrichmentConcurrency reports how many apps may be enriched at once on
+// dev.
+func (c *Coordinator) EnrichmentConcurrency(dev Device) int {
+	l, err := pickKinded[EnrichmentLimiter](c.Managers, dev.Platform, dev.Kind, "enrichment limiter")
+	if err != nil {
+		return DefaultEnrichmentConcurrency
+	}
+	if n := l.AppEnrichmentConcurrency(); n > 0 {
+		return n
+	}
+	return DefaultEnrichmentConcurrency
+}
+
 // DeviceType represents a simulator device type template (e.g. "iPhone 16 Pro").
 type DeviceType struct {
 	Name       string

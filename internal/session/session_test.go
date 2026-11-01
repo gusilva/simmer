@@ -35,7 +35,19 @@ func (f *fakeManager) Kind() device.DeviceKind   { return f.kind }
 func (f *fakeManager) ListApps(context.Context, string) ([]device.App, error) {
 	return f.apps, f.listAppsErr
 }
-func (f *fakeManager) FetchAppVersions(_ context.Context, _ string, bundleIDs []string) map[string]string {
+
+// The fakes mirror how the real managers divide the enrichment
+// capabilities, because Session now routes on exactly that:
+//
+//   - fakeManager implements neither, like the iOS simulator's manager,
+//     whose app list already carries versions and React Native status.
+//   - detectingManager adds React Native detection, like physical iOS.
+//   - enrichingManager adds versions too, like both Android managers.
+type detectingManager struct{ *fakeManager }
+
+type enrichingManager struct{ *detectingManager }
+
+func (f *enrichingManager) FetchAppVersions(_ context.Context, _ string, bundleIDs []string) map[string]string {
 	out := make(map[string]string)
 	for _, id := range bundleIDs {
 		if v, ok := f.versions[id]; ok {
@@ -44,7 +56,7 @@ func (f *fakeManager) FetchAppVersions(_ context.Context, _ string, bundleIDs []
 	}
 	return out
 }
-func (f *fakeManager) DetectReactNative(_ context.Context, _ string, app device.App) bool {
+func (f *detectingManager) DetectReactNative(_ context.Context, _ string, app device.App) bool {
 	return f.rn[app.BundleID]
 }
 func (f *fakeManager) FileSystemFor(t device.FileTarget, _ device.Depth) device.FileSystem {

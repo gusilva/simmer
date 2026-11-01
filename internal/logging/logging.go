@@ -55,7 +55,7 @@ func (l *Logger) Writer() *os.File {
 
 func (l *Logger) Close() {
 	if l != nil && l.f != nil {
-		l.f.Close()
+		_ = l.f.Close()
 	}
 }
 
@@ -76,9 +76,9 @@ func (l *Logger) LogExec(cmd string, args []string, output string, err error) {
 	}
 	ts := time.Now().Format(time.RFC3339)
 	if l.level >= LevelTrace {
-		fmt.Fprintf(l.f, "%s %s exec %s %v output=%q err=%v\n", ts, label, cmd, args, output, err)
+		_, _ = fmt.Fprintf(l.f, "%s %s exec %s %v output=%q err=%v\n", ts, label, cmd, args, output, err)
 	} else {
-		fmt.Fprintf(l.f, "%s %s exec %s %v err=%v\n", ts, label, cmd, args, err)
+		_, _ = fmt.Fprintf(l.f, "%s %s exec %s %v err=%v\n", ts, label, cmd, args, err)
 	}
 }
 
@@ -98,7 +98,7 @@ func (l *Logger) LogStart(cmd string, args []string, err error) {
 		label = "ERROR"
 	}
 	ts := time.Now().Format(time.RFC3339)
-	fmt.Fprintf(l.f, "%s %s start %s %v err=%v\n", ts, label, cmd, args, err)
+	_, _ = fmt.Fprintf(l.f, "%s %s start %s %v err=%v\n", ts, label, cmd, args, err)
 }
 
 // LogError logs a non-exec failure (e.g. a resolution or parsing error) with
@@ -108,5 +108,5 @@ func (l *Logger) LogError(op string, err error) {
 		return
 	}
 	ts := time.Now().Format(time.RFC3339)
-	fmt.Fprintf(l.f, "%s ERROR %s err=%v\n", ts, op, err)
+	_, _ = fmt.Fprintf(l.f, "%s ERROR %s err=%v\n", ts, op, err)
 }

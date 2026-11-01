@@ -77,7 +77,7 @@ func (m *model) startAppLoggingAtPath(dev device.Device, app device.App, path st
 		return nil, fmt.Errorf("open app-log file %s: %w", filepath.Base(path), err)
 	}
 
-	fmt.Fprintf(f, "# %s (%s) on %s — %s\n",
+	_, _ = fmt.Fprintf(f, "# %s (%s) on %s — %s\n",
 		app.Label(), app.BundleID, dev.Name, time.Now().Format(time.RFC3339))
 
 	return f, nil

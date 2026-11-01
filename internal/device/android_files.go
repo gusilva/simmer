@@ -86,15 +86,15 @@ func (f *AndroidRootFileSystem) Tree(ctx context.Context, dev Device) (FileNode,
 // ensureAdbRoot restarts adbd as root and polls until `adb shell id` confirms
 // uid=0. Returns an error if root cannot be confirmed within ~5 seconds.
 func ensureAdbRoot(ctx context.Context, serial string) error {
-	exec.CommandContext(ctx, "adb", "-s", serial, "root").Run()
+	_ = exec.CommandContext(ctx, "adb", "-s", serial, "root").Run()
 	for range 5 {
-		exec.CommandContext(ctx, "adb", "-s", serial, "wait-for-device").Run()
+		_ = exec.CommandContext(ctx, "adb", "-s", serial, "wait-for-device").Run()
 		out, err := exec.CommandContext(ctx, "adb", "-s", serial, "shell", "id").Output()
 		if err == nil && strings.Contains(string(out), "uid=0") {
 			return nil
 		}
 		time.Sleep(time.Second)
-		exec.CommandContext(ctx, "adb", "-s", serial, "root").Run()
+		_ = exec.CommandContext(ctx, "adb", "-s", serial, "root").Run()
 	}
 	return fmt.Errorf("adb root: could not confirm uid=0 after 5 attempts")
 }
@@ -683,27 +683,6 @@ func NewAndroidPathFileSystem(path string, logger *logging.Logger) FileSystem {
 // entries and stops.
 func NewAndroidDirFileSystem(path string, logger *logging.Logger) FileSystem {
 	return &AndroidPathFileSystem{Path: strings.TrimSuffix(path, "/"), EntriesOnly: true, logger: logger}
-}
-
-// androidListArgs builds the shell command that lists a path: recursive
-// unless entriesOnly, and run as the owning app when the path is inside
-// private storage.
-//
-// The shell user is refused in /data/data, so without the run-as every
-// directory in an app's own data failed to open — a tree that silently
-// would not expand.
-func androidListArgs(path string, entriesOnly bool) []string {
-	flag := "-laR"
-	if entriesOnly {
-		flag = "-la"
-	}
-
-	args := []string{"ls", flag, path}
-	if pkg, private := androidPackageForPath(path); private {
-		args = append([]string{"run-as", pkg}, args...)
-	}
-
-	return args
 }
 
 // Tree lists the directory, recursively unless EntriesOnly is set.

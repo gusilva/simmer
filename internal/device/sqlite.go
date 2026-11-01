@@ -72,7 +72,7 @@ func querySQLiteIOSPhysical(ctx context.Context, logger *logging.Logger, dev Dev
 	if err != nil {
 		return nil, fmt.Errorf("afc connect: %w", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	// Use a temp directory so WAL/SHM sidecar files land beside the main DB.
 	// sqlite3 requires all three files to be co-located when the database is in
@@ -97,7 +97,7 @@ func querySQLiteIOSPhysical(ctx context.Context, logger *logging.Logger, dev Dev
 		dst := tmpDB + suffix
 		if err := client.PullSingleFile(src, dst); err != nil {
 			logger.LogExec("go-ios", []string{"afc", "PullSingleFile", src}, "", err)
-			os.Remove(dst)
+			_ = os.Remove(dst)
 		} else {
 			logger.LogExec("go-ios", []string{"afc", "PullSingleFile", src}, "", nil)
 		}
@@ -142,8 +142,7 @@ func querySQLiteAndroid(ctx context.Context, logger *logging.Logger, dev Device,
 // queryAndroidOnDevice runs the query with the device's own sqlite3 binary,
 // as the app that owns the path when that path is private.
 func queryAndroidOnDevice(ctx context.Context, logger *logging.Logger, serial, dbPath, query string) ([][]string, error) {
-	shellCmd := androidRunAsForPath(dbPath) +
-		"sqlite3 -csv -header " + sqSingleQuote(dbPath) + " " + sqSingleQuote(query)
+	shellCmd := androidSQLiteCmd(dbPath, query)
 
 	args := []string{"-s", serial, "shell", shellCmd}
 	var stderr strings.Builder
@@ -203,7 +202,7 @@ func queryAndroidViaCopy(ctx context.Context, logger *logging.Logger, serial, db
 // owning app when the path calls for it. exec-out is used because it does not
 // translate the bytes in transit.
 func copyDeviceFile(ctx context.Context, logger *logging.Logger, serial, src, dst string) error {
-	shellCmd := androidRunAsForPath(src) + "cat " + sqSingleQuote(src)
+	shellCmd := androidCatCmd(src)
 
 	args := []string{"-s", serial, "exec-out", shellCmd}
 	var stderr strings.Builder
@@ -397,12 +396,7 @@ func sqliteVersionAndroid(ctx context.Context, logger *logging.Logger, dev Devic
 		return "", fmt.Errorf("find serial: %w", err)
 	}
 
-	var shellCmd string
-	if packageID == "" {
-		shellCmd = "sqlite3 --version"
-	} else {
-		shellCmd = "run-as " + sqSingleQuote(packageID) + " sqlite3 --version"
-	}
+	shellCmd := androidSQLiteVersionCmd(packageID)
 
 	args := []string{"-s", serial, "shell", shellCmd}
 	out, err := exec.CommandContext(ctx, "adb", args...).Output()

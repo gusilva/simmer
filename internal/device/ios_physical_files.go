@@ -37,7 +37,7 @@ func (f *IOSPhysicalFileSystem) Tree(ctx context.Context, dev Device) (FileNode,
 	if err != nil {
 		return FileNode{}, fmt.Errorf("afc: %w", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	maxDepth := f.MaxDepth
 	if maxDepth <= 0 {
@@ -71,7 +71,7 @@ func (f *IOSPhysicalAppFileSystem) Tree(ctx context.Context, dev Device) (FileNo
 	if err != nil {
 		return FileNode{}, fmt.Errorf("house_arrest %s: %w", f.BundleID, err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	maxDepth := f.MaxDepth
 	if maxDepth <= 0 {

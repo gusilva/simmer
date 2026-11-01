@@ -1,0 +1,97 @@
+commit: 0f2ad7208c5b6a241c6cc6dfcc011453923d7e67
+describe: v1.8.0
+date: 2026-10-29T20:43:42Z
+go: go version go1.27.2 darwin/arm64
+machine: Darwin arm64
+goos: darwin
+goarch: arm64
+pkg: simmer/internal/app
+cpu: Apple M1 Max
+BenchmarkView/devices=5-10   	     571	   1996362 ns/op	  990880 B/op	   20907 allocs/op
+BenchmarkView/devices=5-10   	     604	   1964058 ns/op	  990209 B/op	   20907 allocs/op
+BenchmarkView/devices=5-10   	     597	   1934874 ns/op	  991255 B/op	   20907 allocs/op
+BenchmarkView/devices=5-10   	     619	   1935622 ns/op	  991271 B/op	   20907 allocs/op
+BenchmarkView/devices=5-10   	     610	   1944218 ns/op	  989695 B/op	   20907 allocs/op
+BenchmarkView/devices=5-10   	     620	   1971816 ns/op	  990891 B/op	   20907 allocs/op
+BenchmarkView/devices=5-10   	     615	   1975817 ns/op	  990243 B/op	   20907 allocs/op
+BenchmarkView/devices=5-10   	     602	   1974956 ns/op	  992847 B/op	   20907 allocs/op
+BenchmarkView/devices=5-10   	     607	   1967253 ns/op	  991054 B/op	   20907 allocs/op
+BenchmarkView/devices=5-10   	     604	   1954354 ns/op	  990327 B/op	   20907 allocs/op
+BenchmarkView/devices=50-10  	     446	   2680028 ns/op	 1347991 B/op	   27687 allocs/op
+BenchmarkView/devices=50-10  	     445	   2649935 ns/op	 1346623 B/op	   27686 allocs/op
+BenchmarkView/devices=50-10  	     457	   2714602 ns/op	 1347202 B/op	   27686 allocs/op
+BenchmarkView/devices=50-10  	     447	   2679176 ns/op	 1346199 B/op	   27686 allocs/op
+BenchmarkView/devices=50-10  	     450	   2664787 ns/op	 1346503 B/op	   27686 allocs/op
+BenchmarkView/devices=50-10  	     444	   2697196 ns/op	 1346689 B/op	   27686 allocs/op
+BenchmarkView/devices=50-10  	     445	   2653719 ns/op	 1344894 B/op	   27686 allocs/op
+BenchmarkView/devices=50-10  	     445	   2680421 ns/op	 1346156 B/op	   27686 allocs/op
+BenchmarkView/devices=50-10  	     450	   2641826 ns/op	 1347125 B/op	   27686 allocs/op
+BenchmarkView/devices=50-10  	     458	   2657864 ns/op	 1348418 B/op	   27687 allocs/op
+BenchmarkView/devices=200-10 	     282	   4209898 ns/op	 1739191 B/op	   39799 allocs/op
+BenchmarkView/devices=200-10 	     285	   4216822 ns/op	 1735885 B/op	   39799 allocs/op
+BenchmarkView/devices=200-10 	     290	   4123829 ns/op	 1735061 B/op	   39799 allocs/op
+BenchmarkView/devices=200-10 	     297	   4004337 ns/op	 1737830 B/op	   39799 allocs/op
+BenchmarkView/devices=200-10 	     300	   4102930 ns/op	 1736306 B/op	   39799 allocs/op
+BenchmarkView/devices=200-10 	     298	   4178833 ns/op	 1738206 B/op	   39799 allocs/op
+BenchmarkView/devices=200-10 	     282	   4118914 ns/op	 1737687 B/op	   39799 allocs/op
+BenchmarkView/devices=200-10 	     285	   4223218 ns/op	 1738606 B/op	   39799 allocs/op
+BenchmarkView/devices=200-10 	     289	   4178585 ns/op	 1738081 B/op	   39799 allocs/op
+BenchmarkView/devices=200-10 	     288	   4126494 ns/op	 1737996 B/op	   39799 allocs/op
+BenchmarkUpdateKeyNav-10     	 1382221	       863.7 ns/op	    2984 B/op	      15 allocs/op
+BenchmarkUpdateKeyNav-10     	 1394880	       845.0 ns/op	    2984 B/op	      15 allocs/op
+BenchmarkUpdateKeyNav-10     	 1419496	       847.1 ns/op	    2984 B/op	      15 allocs/op
+BenchmarkUpdateKeyNav-10     	 1405311	       845.3 ns/op	    2984 B/op	      15 allocs/op
+BenchmarkUpdateKeyNav-10     	 1413301	      1668 ns/op	    2984 B/op	      15 allocs/op
+BenchmarkUpdateKeyNav-10     	 1360839	       846.8 ns/op	    2984 B/op	      15 allocs/op
+BenchmarkUpdateKeyNav-10     	 1386049	       870.3 ns/op	    2984 B/op	      15 allocs/op
+BenchmarkUpdateKeyNav-10     	 1400408	      1023 ns/op	    2984 B/op	      15 allocs/op
+BenchmarkUpdateKeyNav-10     	 1414021	       851.4 ns/op	    2984 B/op	      15 allocs/op
+BenchmarkUpdateKeyNav-10     	 1400064	       845.8 ns/op	    2984 B/op	      15 allocs/op
+BenchmarkUpdateAndView-10    	     468	   2588907 ns/op	 1347351 B/op	   27758 allocs/op
+BenchmarkUpdateAndView-10    	     468	   2572989 ns/op	 1348268 B/op	   27758 allocs/op
+BenchmarkUpdateAndView-10    	     466	   2558349 ns/op	 1345771 B/op	   27758 allocs/op
+BenchmarkUpdateAndView-10    	     469	   2569484 ns/op	 1346704 B/op	   27758 allocs/op
+BenchmarkUpdateAndView-10    	     468	   2561668 ns/op	 1347341 B/op	   27758 allocs/op
+BenchmarkUpdateAndView-10    	     469	   2570273 ns/op	 1346116 B/op	   27758 allocs/op
+BenchmarkUpdateAndView-10    	     468	   2568079 ns/op	 1349322 B/op	   27758 allocs/op
+BenchmarkUpdateAndView-10    	     469	   2586768 ns/op	 1345818 B/op	   27758 allocs/op
+BenchmarkUpdateAndView-10    	     463	   2564231 ns/op	 1350199 B/op	   27758 allocs/op
+BenchmarkUpdateAndView-10    	     463	   2565502 ns/op	 1348046 B/op	   27758 allocs/op
+BenchmarkResize-10           	   16018	     75024 ns/op	   26706 B/op	    1068 allocs/op
+BenchmarkResize-10           	   15957	     74768 ns/op	   26712 B/op	    1068 allocs/op
+BenchmarkResize-10           	   15997	     74980 ns/op	   26724 B/op	    1068 allocs/op
+BenchmarkResize-10           	   15979	     75050 ns/op	   26765 B/op	    1068 allocs/op
+BenchmarkResize-10           	   15913	     74732 ns/op	   26762 B/op	    1068 allocs/op
+BenchmarkResize-10           	   15913	     75061 ns/op	   26784 B/op	    1068 allocs/op
+BenchmarkResize-10           	   16030	     75330 ns/op	   26803 B/op	    1068 allocs/op
+BenchmarkResize-10           	   16039	     75884 ns/op	   26847 B/op	    1068 allocs/op
+BenchmarkResize-10           	   16012	     74893 ns/op	   26773 B/op	    1068 allocs/op
+BenchmarkResize-10           	   16009	     75247 ns/op	   26782 B/op	    1068 allocs/op
+PASS
+ok  	simmer/internal/app	101.429s
+goos: darwin
+goarch: arm64
+pkg: simmer/internal/device
+cpu: Apple M1 Max
+BenchmarkParseSimctlOutput-10    	   24756	     48978 ns/op	 161.81 MB/s	   65587 B/op	     281 allocs/op
+BenchmarkParseSimctlOutput-10    	   24422	     47555 ns/op	 166.65 MB/s	   65588 B/op	     281 allocs/op
+BenchmarkParseSimctlOutput-10    	   25270	     47371 ns/op	 167.30 MB/s	   65590 B/op	     281 allocs/op
+BenchmarkParseSimctlOutput-10    	   25221	     48377 ns/op	 163.82 MB/s	   65593 B/op	     281 allocs/op
+BenchmarkParseSimctlOutput-10    	   25017	     56454 ns/op	 140.38 MB/s	   65590 B/op	     281 allocs/op
+BenchmarkParseSimctlOutput-10    	   25249	     47713 ns/op	 166.10 MB/s	   65594 B/op	     281 allocs/op
+BenchmarkParseSimctlOutput-10    	   25224	     47561 ns/op	 166.63 MB/s	   65594 B/op	     281 allocs/op
+BenchmarkParseSimctlOutput-10    	   25281	     47571 ns/op	 166.59 MB/s	   65593 B/op	     281 allocs/op
+BenchmarkParseSimctlOutput-10    	   25228	     47399 ns/op	 167.20 MB/s	   65596 B/op	     281 allocs/op
+BenchmarkParseSimctlOutput-10    	   25285	     47384 ns/op	 167.25 MB/s	   65597 B/op	     281 allocs/op
+BenchmarkParseLsLaR-10           	    3810	    318636 ns/op	 164.13 MB/s	  546625 B/op	    2771 allocs/op
+BenchmarkParseLsLaR-10           	    3756	    317424 ns/op	 164.76 MB/s	  546625 B/op	    2771 allocs/op
+BenchmarkParseLsLaR-10           	    3734	    316582 ns/op	 165.20 MB/s	  546625 B/op	    2771 allocs/op
+BenchmarkParseLsLaR-10           	    3730	    318214 ns/op	 164.35 MB/s	  546625 B/op	    2771 allocs/op
+BenchmarkParseLsLaR-10           	    3778	    316681 ns/op	 165.14 MB/s	  546625 B/op	    2771 allocs/op
+BenchmarkParseLsLaR-10           	    3762	    317909 ns/op	 164.51 MB/s	  546625 B/op	    2771 allocs/op
+BenchmarkParseLsLaR-10           	    3771	    319101 ns/op	 163.89 MB/s	  546626 B/op	    2771 allocs/op
+BenchmarkParseLsLaR-10           	    3758	    317731 ns/op	 164.60 MB/s	  546625 B/op	    2771 allocs/op
+BenchmarkParseLsLaR-10           	    3799	    319967 ns/op	 163.45 MB/s	  546625 B/op	    2771 allocs/op
+BenchmarkParseLsLaR-10           	    3722	    318774 ns/op	 164.06 MB/s	  546625 B/op	    2771 allocs/op
+PASS
+ok  	simmer/internal/device	29.755s

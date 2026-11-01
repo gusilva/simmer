@@ -36,7 +36,10 @@ func TestParseAVDs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := parseAVDs([]byte(tt.input))
-			if !reflect.DeepEqual(got, tt.expected) && !(len(got) == 0 && len(tt.expected) == 0) {
+			// Both empty counts as equal: nil and []string{} differ to
+			// DeepEqual but mean the same thing here.
+			bothEmpty := len(got) == 0 && len(tt.expected) == 0
+			if !reflect.DeepEqual(got, tt.expected) && !bothEmpty {
 				t.Errorf("parseAVDs() = %v, want %v", got, tt.expected)
 			}
 		})

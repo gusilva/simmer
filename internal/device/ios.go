@@ -411,7 +411,7 @@ func (m *iosManager) InstallApp(ctx context.Context, deviceID, path, scheme stri
 	if err != nil {
 		return fmt.Errorf("create build dir: %w", err)
 	}
-	defer os.RemoveAll(derivedData)
+	defer func() { _ = os.RemoveAll(derivedData) }()
 
 	appPath, err := xcodeBuild(ctx, m.logger, p, scheme, derivedData)
 	if err != nil {
@@ -794,7 +794,7 @@ func (m *iosManager) StartInstall(dev Device, path, scheme string) (*BuildStream
 				done <- fmt.Errorf("create build dir: %w", err)
 				return
 			}
-			defer os.RemoveAll(derivedData)
+			defer func() { _ = os.RemoveAll(derivedData) }()
 
 			sendEvent(ctx, events, "Building "+scheme+"…")
 			built, err := xcodeBuildStream(ctx, m.logger, events, p, scheme, derivedData)

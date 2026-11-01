@@ -156,59 +156,6 @@ func TestAndroidAccessRuleIsDerivedFromThePath(t *testing.T) {
 	}
 }
 
-func TestAndroidListArgsUsesRunAsForPrivateStorage(t *testing.T) {
-	tests := []struct {
-		name        string
-		path        string
-		entriesOnly bool
-		want        []string
-	}{
-		{
-			// The regression: without run-as the shell user is refused in
-			// /data/data, so the directory simply never opened.
-			name: "private storage is listed as the owning app",
-			path: "/data/data/com.acme.app/databases",
-			want: []string{"run-as", "com.acme.app", "ls", "-laR", "/data/data/com.acme.app/databases"},
-		},
-		{
-			name:        "one level only",
-			path:        "/data/data/com.acme.app/databases",
-			entriesOnly: true,
-			want:        []string{"run-as", "com.acme.app", "ls", "-la", "/data/data/com.acme.app/databases"},
-		},
-		{
-			name: "device-encrypted storage",
-			path: "/data/user_de/0/com.acme.app/files",
-			want: []string{"run-as", "com.acme.app", "ls", "-laR", "/data/user_de/0/com.acme.app/files"},
-		},
-		{
-			// run-as is refused on the external path, so it must not be used.
-			name: "external app storage is listed as the shell user",
-			path: "/storage/emulated/0/Android/data/com.acme.app/files",
-			want: []string{"ls", "-laR", "/storage/emulated/0/Android/data/com.acme.app/files"},
-		},
-		{
-			name: "shared storage",
-			path: "/storage/emulated/0/Download",
-			want: []string{"ls", "-laR", "/storage/emulated/0/Download"},
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := androidListArgs(tc.path, tc.entriesOnly)
-			if len(got) != len(tc.want) {
-				t.Fatalf("got %v, want %v", got, tc.want)
-			}
-			for i := range tc.want {
-				if got[i] != tc.want[i] {
-					t.Fatalf("got %v, want %v", got, tc.want)
-				}
-			}
-		})
-	}
-}
-
 func TestAndroidPackageForPath(t *testing.T) {
 	for path, want := range map[string]string{
 		"/data/data/com.acme.app/databases/x.db":        "com.acme.app",

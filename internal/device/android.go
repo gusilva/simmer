@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -54,7 +55,7 @@ func (m *androidManager) Boot(_ context.Context, id string) error {
 		return fmt.Errorf("emulator -avd %s: %w", id, err)
 	}
 
-	go cmd.Wait()
+	go func() { _ = cmd.Wait() }()
 	return nil
 }
 
@@ -608,7 +609,7 @@ func (m *androidManager) ListDeviceTypes(ctx context.Context) ([]DeviceType, err
 func (m *androidManager) ListRuntimes(ctx context.Context) ([]Runtime, error) {
 	sdkPath := androidSDKPath()
 	if sdkPath == "" {
-		return nil, fmt.Errorf("Android SDK not found; set ANDROID_HOME or ANDROID_SDK_ROOT")
+		return nil, errNoAndroidSDK
 	}
 	sysImagesDir := filepath.Join(sdkPath, "system-images")
 	apiEntries, err := os.ReadDir(sysImagesDir)
@@ -657,6 +658,10 @@ func (m *androidManager) ListRuntimes(ctx context.Context) ([]Runtime, error) {
 	}
 	return runtimes, nil
 }
+
+// errNoAndroidSDK reads as a clause so it composes when wrapped, which is
+// why it does not open with the product name.
+var errNoAndroidSDK = errors.New("no Android SDK found; set ANDROID_HOME or ANDROID_SDK_ROOT")
 
 func androidSDKPath() string {
 	if p := os.Getenv("ANDROID_HOME"); p != "" {
@@ -707,7 +712,7 @@ func avdAPILevel(avdName string) string {
 	if err != nil {
 		return ""
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	s := bufio.NewScanner(f)
 	for s.Scan() {
@@ -1159,7 +1164,7 @@ func avdConfig(avdName string) map[string]string {
 	if err != nil {
 		return map[string]string{}
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	cfg := make(map[string]string)
 	s := bufio.NewScanner(f)
@@ -1224,7 +1229,7 @@ func formatPartitionSize(s string) string {
 	}
 	// Raw bytes
 	var b int64
-	fmt.Sscanf(s, "%d", &b)
+	_, _ = fmt.Sscanf(s, "%d", &b)
 	if b == 0 {
 		return s
 	}

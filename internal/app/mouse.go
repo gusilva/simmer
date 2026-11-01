@@ -64,8 +64,8 @@ func (m model) mainPaneSelectionID() string {
 func (m model) buildDeviceActionMenu(dev device.Device) *ui.ActionMenuModal {
 	var items []ui.ActionMenuItem
 
-	switch {
-	case dev.Status == device.StatusRunning:
+	switch dev.Status {
+	case device.StatusRunning:
 		d := dev
 		items = append(items, ui.ActionMenuItem{
 			Label: "Load Device",

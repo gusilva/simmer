@@ -146,8 +146,7 @@ make check         # everything CI enforces, lint included
 make check-device  # integration tests against attached devices (skipped without hardware)
 ```
 
-Lint is scoped to code that differs from `origin/main`, exactly as the CI job is, so the tree's
-pre-existing findings do not fail every change. `make lint` reports the whole tree.
+Lint covers the whole tree and is clean, so any finding is from the change in hand.
 
 ## 📝 Logging
 

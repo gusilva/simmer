@@ -31,20 +31,20 @@ var (
 func startProfiling() {
 	if *cpuOut != "" {
 		if f, err := os.Create(*cpuOut); err != nil {
-			fmt.Fprintf(os.Stderr, "cpu profile: %v\n", err)
+			_, _ = fmt.Fprintf(os.Stderr, "cpu profile: %v\n", err)
 		} else if err := pprof.StartCPUProfile(f); err != nil {
-			fmt.Fprintf(os.Stderr, "cpu profile: %v\n", err)
-			f.Close()
+			_, _ = fmt.Fprintf(os.Stderr, "cpu profile: %v\n", err)
+			_ = f.Close()
 		} else {
 			cpuFile = f
 		}
 	}
 	if *traceOut != "" {
 		if f, err := os.Create(*traceOut); err != nil {
-			fmt.Fprintf(os.Stderr, "trace: %v\n", err)
+			_, _ = fmt.Fprintf(os.Stderr, "trace: %v\n", err)
 		} else if err := trace.Start(f); err != nil {
-			fmt.Fprintf(os.Stderr, "trace: %v\n", err)
-			f.Close()
+			_, _ = fmt.Fprintf(os.Stderr, "trace: %v\n", err)
+			_ = f.Close()
 		} else {
 			traceFile = f
 		}
@@ -52,7 +52,7 @@ func startProfiling() {
 	if *pprofAddr != "" {
 		go func() {
 			if err := http.ListenAndServe(*pprofAddr, nil); err != nil {
-				fmt.Fprintf(os.Stderr, "pprof: %v\n", err)
+				_, _ = fmt.Fprintf(os.Stderr, "pprof: %v\n", err)
 			}
 		}()
 	}
@@ -64,11 +64,11 @@ func startProfiling() {
 func stopProfiling() {
 	if cpuFile != nil {
 		pprof.StopCPUProfile()
-		cpuFile.Close()
+		_ = cpuFile.Close()
 	}
 	if traceFile != nil {
 		trace.Stop()
-		traceFile.Close()
+		_ = traceFile.Close()
 	}
 	if *heapOut != "" {
 		writeHeapDump(*heapOut)
@@ -91,13 +91,13 @@ func writeHeapDump(prefix string) {
 	path := fmt.Sprintf("%s_%s.out", prefix, time.Now().Format("150405"))
 	f, err := os.Create(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "heap dump: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "heap dump: %v\n", err)
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if err := pprof.WriteHeapProfile(f); err != nil {
-		fmt.Fprintf(os.Stderr, "heap dump write: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "heap dump write: %v\n", err)
 		return
 	}
-	fmt.Fprintf(os.Stderr, "heap dump → %s\n", path)
+	_, _ = fmt.Fprintf(os.Stderr, "heap dump → %s\n", path)
 }

@@ -57,7 +57,7 @@ func (d DeviceDelegate) Render(w io.Writer, m list.Model, index int, listItem li
 		if gap < 1 {
 			gap = 1
 		}
-		fmt.Fprint(w, lipgloss.NewStyle().
+		_, _ = fmt.Fprint(w, lipgloss.NewStyle().
 			Background(ColorAccent).
 			Foreground(ColorBg).
 			Bold(true).
@@ -74,7 +74,7 @@ func (d DeviceDelegate) Render(w io.Writer, m list.Model, index int, listItem li
 		if gap < 1 {
 			gap = 1
 		}
-		fmt.Fprint(w, lipgloss.NewStyle().
+		_, _ = fmt.Fprint(w, lipgloss.NewStyle().
 			Background(ColorBg).
 			Padding(0, 1).
 			Render(left+strings.Repeat(" ", gap)+meta))

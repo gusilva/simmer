@@ -39,7 +39,10 @@ compare)
   a="${2:?usage: compare <revA> [revB]}"
   b="${3:-$(rev)}"
   command -v benchstat >/dev/null || { echo "install: go install golang.org/x/perf/cmd/benchstat@latest" >&2; exit 1; }
-  benchstat "$(file "$a")" "$(file "$b")"
+  # Metadata headers (commit:, date:, ...) are treated by benchstat as config
+  # keys and would split the comparison, so strip them first.
+  strip() { grep -vE '^(commit|describe|date|go|machine): ' "$1"; }
+  benchstat "$a=$(strip "$(file "$a")" >/tmp/perf_a.txt; echo /tmp/perf_a.txt)" "$b=$(strip "$(file "$b")" >/tmp/perf_b.txt; echo /tmp/perf_b.txt)"
   ;;
 list)
   for f in perf/*.bench.txt; do
