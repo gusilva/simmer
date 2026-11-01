@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -239,16 +240,138 @@ func (m *physicalAndroidManager) SetBundlerLocation(ctx context.Context, deviceI
 	return m.LaunchApp(ctx, deviceID, bundleID)
 }
 
-// TriggerDevMenu opens the React Native dev menu via the hardware Menu key
-// (KEYCODE_MENU), the standard emulator/device dev-menu shortcut.
-func (m *physicalAndroidManager) TriggerDevMenu(_ context.Context, deviceID, _ string) error {
+// TriggerDevMenu opens the React Native dev menu. It broadcasts a "devMenu"
+// message over Metro's dev-server WebSocket (see triggerDevMenuViaMetro),
+// because many OEM ROMs (e.g. Xiaomi MIUI) remap KEYCODE_MENU (82) to the
+// recent-apps screen, so the key event never reaches the app.
+//
+// The broadcast only reaches the app if it is connected to that Metro, so the
+// port is the one the foreground app is configured for (debug_http_host,
+// readable via run-as on debuggable apps). Failing that: an explicit
+// metroPort, the device's `adb reverse` tunnels, then 8081. If the app's
+// own Metro port has nothing listening, an error says so rather than
+// reporting a broadcast nobody receives. If Metro is unreachable it falls
+// back to the hardware Menu key, except on OEMs known to remap it.
+func (m *physicalAndroidManager) TriggerDevMenu(ctx context.Context, deviceID, metroPort string) error {
 	d, err := gadbDevice(deviceID)
 	if err != nil {
 		return err
 	}
-	out, err := d.RunShellCommand("input", "keyevent", "82")
-	m.logger.LogExec("adb shell", []string{"input", "keyevent", "82"}, out, err)
-	return err
+
+	appPort := ""
+	if pkg := foregroundPackage(d); pkg != "" {
+		appPort = appDebugHostPort(d, pkg)
+		m.logger.LogExec("adb shell", []string{"run-as", pkg, "cat", "<debug_http_host>"}, appPort, nil)
+	}
+
+	var ports []string
+	switch {
+	case appPort != "":
+		ports = []string{appPort}
+	case metroPort != "":
+		ports = []string{metroPort}
+	default:
+		ports = append(reversedTCPPorts(ctx, deviceID), defaultMetroPort)
+	}
+
+	var metroErr error
+	for _, port := range ports {
+		err := triggerDevMenuViaMetro(ctx, port)
+		m.logger.LogExec("metro-ws", []string{"devMenu", "localhost:" + port}, "", err)
+		if err == nil {
+			return nil
+		}
+		if metroErr == nil {
+			metroErr = err
+		}
+	}
+	if appPort != "" {
+		return fmt.Errorf("app expects Metro on :%s but nothing is listening (start Metro there or set Bundler Location): %w", appPort, metroErr)
+	}
+	if mfr, _ := d.RunShellCommand("getprop", "ro.product.manufacturer"); remapsMenuKey(mfr) {
+		return fmt.Errorf("metro not reachable (start Metro or set Bundler Location): %w", metroErr)
+	}
+	out, kerr := d.RunShellCommand("input", "keyevent", "82")
+	m.logger.LogExec("adb shell", []string{"input", "keyevent", "82"}, out, kerr)
+	return kerr
+}
+
+var (
+	resumedActivityRE = regexp.MustCompile(`(?:mResumedActivity|topResumedActivity)[^\n]*? ([A-Za-z0-9_.]+)/`)
+	debugHostValueRE  = regexp.MustCompile(`<string name="debug_http_host">([^<]*)</string>`)
+)
+
+// foregroundPackage returns the package of the resumed activity, or "".
+func foregroundPackage(d gadb.Device) string {
+	out, err := d.RunShellCommand("dumpsys", "activity", "activities")
+	if err != nil {
+		return ""
+	}
+	if mm := resumedActivityRE.FindStringSubmatch(out); mm != nil {
+		return mm[1]
+	}
+	return ""
+}
+
+// appDebugHostPort returns the port of pkg's saved debug_http_host, or ""
+// when the app isn't debuggable or has none set.
+func appDebugHostPort(d gadb.Device, pkg string) string {
+	prefs := fmt.Sprintf("shared_prefs/%s_preferences.xml", pkg)
+	out, err := d.RunShellCommand("run-as", pkg, "cat", prefs)
+	if err != nil {
+		return ""
+	}
+	return parseDebugHostPort(out)
+}
+
+// parseDebugHostPort extracts the port from a prefs XML's debug_http_host.
+func parseDebugHostPort(xml string) string {
+	mm := debugHostValueRE.FindStringSubmatch(xml)
+	if mm == nil {
+		return ""
+	}
+	host := strings.TrimSpace(mm[1])
+	i := strings.LastIndex(host, ":")
+	if i < 0 || i == len(host)-1 {
+		return ""
+	}
+	return host[i+1:]
+}
+
+// remapsMenuKey reports whether the manufacturer's ROM is known to map
+// KEYCODE_MENU to recent apps instead of delivering it to the foreground app.
+func remapsMenuKey(manufacturer string) bool {
+	switch strings.ToLower(strings.TrimSpace(manufacturer)) {
+	case "xiaomi", "redmi", "poco":
+		return true
+	}
+	return false
+}
+
+// reversedTCPPorts returns the host-side ports of the device's
+// `adb reverse` tunnels, which is how a device normally reaches Metro.
+func reversedTCPPorts(ctx context.Context, serial string) []string {
+	cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(cctx, "adb", "-s", serial, "reverse", "--list").Output()
+	if err != nil {
+		return nil
+	}
+	return parseReversePorts(string(out))
+}
+
+// parseReversePorts extracts host ports from `adb reverse --list` lines of
+// the form "<serial> tcp:<devicePort> tcp:<hostPort>".
+func parseReversePorts(out string) []string {
+	var ports []string
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 3 || !strings.HasPrefix(f[2], "tcp:") {
+			continue
+		}
+		ports = append(ports, strings.TrimPrefix(f[2], "tcp:"))
+	}
+	return ports
 }
 
 // StreamLogs streams logcat output from a physical Android device.
