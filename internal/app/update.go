@@ -133,6 +133,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.dbViewerModal = &updated
 			return m, cmd
 		}
+		if m.doctorOverlay != nil {
+			updated, cmd := m.doctorOverlay.Update(msg)
+			m.doctorOverlay = &updated
+			return m, cmd
+		}
 		// Device-info sheet is modal-ish: it owns the keyboard while open.
 		if m.infoOverlay != nil {
 			updated, cmd := m.infoOverlay.Update(msg)
@@ -155,7 +160,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
-		// focus == focusSidebar
+		// focus == focusSidebar. While the filter input is open every key
+		// is text, so none of the sidebar's action keys apply.
+		if m.sidebar.Filtering() {
+			var cmd tea.Cmd
+			m.sidebar, cmd = m.sidebar.Update(msg)
+			return m, cmd
+		}
 		switch msg.String() {
 		case "r":
 			return m, func() tea.Msg { return ui.RefreshDevicesMsg{} }
@@ -172,6 +183,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, m.shutdownDeviceCmd(*sel)
+		case "A":
+			return m, tea.Batch(m.startAdbServerCmd(), m.setStatus("starting adb server…", ui.StatusInfo))
+		case "D":
+			ov := ui.NewDoctorOverlay(m.width, m.height)
+			m.doctorOverlay = &ov
+			return m, m.doctorCmd()
 		case "p":
 			sel := m.sidebar.SelectedDevice()
 			if sel == nil || sel.Status != device.StatusRunning || sel.Platform != device.PlatformAndroid {
@@ -215,6 +232,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.errs = msg.Errors
 		m.toolVersions = msg.ToolVersions
+		m.adbServer = msg.AdbServer
+		m.sidebar.SetAdbServer(msg.AdbServer)
 		m.lastRefresh = time.Now()
 
 		booted, ios, android := 0, 0, 0
@@ -814,7 +833,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// every key in the tea.KeyPressMsg case above.
 		if m.actionMenu != nil || m.platformPicker != nil || m.createIOSModal != nil || m.createAndModal != nil ||
 			m.installAppModal != nil || m.rnOptionsModal != nil || m.textPromptModal != nil ||
-			m.infoOverlay != nil || m.helpOverlay != nil {
+			m.infoOverlay != nil || m.doctorOverlay != nil || m.helpOverlay != nil {
 			return m, nil
 		}
 
@@ -880,11 +899,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.dbViewerModal = nil
 		m.rnOptionsModal = nil
 		m.textPromptModal = nil
+		m.doctorOverlay = nil
 		if m.infoOverlay != nil {
 			m.infoOverlay = nil
 			m.mainPane.SetInfoOpen(false)
 		}
 		return m, nil
+
+	case ui.RunDoctorMsg:
+		return m, m.doctorCmd()
+
+	case doctorReportMsg:
+		if m.doctorOverlay != nil {
+			m.doctorOverlay.SetChecks(msg.checks)
+		}
+		return m, nil
+
+	case adbServerStartedMsg:
+		if msg.err != nil {
+			m.errs = append(m.errs, msg.err)
+			return m, m.setStatus("adb server failed to start: "+msg.err.Error(), ui.StatusErr)
+		}
+		m.loading = true
+		return m, tea.Batch(m.fetchDevicesCmd(), m.setStatus("adb server started", ui.StatusOk))
 
 	case ui.ShowDeviceInfoMsg:
 		ov := ui.NewInfoOverlay(msg.Device, m.mainPane.DeviceInfo(), m.width, m.height)

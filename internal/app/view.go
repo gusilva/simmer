@@ -15,6 +15,7 @@ func (m model) View() tea.View {
 		IOSCount:     m.iosCount,
 		AndroidCount: m.androidCount,
 		ToolVersions: m.toolVersions,
+		AdbServer:    m.adbServer,
 	})
 
 	footerHelp := ui.NewHelpModel()
@@ -119,6 +120,15 @@ func (m model) View() tea.View {
 		overlayStr := m.infoOverlay.View()
 		oW := lipgloss.Width(overlayStr)
 		x := max(m.width-oW, 0)
+		bg := lipgloss.NewLayer(baseStr)
+		fg := lipgloss.NewLayer(overlayStr).X(x).Y(0).Z(1)
+		baseStr = lipgloss.NewCompositor(bg, fg).Render()
+	}
+
+	// Doctor sheet: same placement as the device-info sheet.
+	if m.doctorOverlay != nil {
+		overlayStr := m.doctorOverlay.View()
+		x := max(m.width-lipgloss.Width(overlayStr), 0)
 		bg := lipgloss.NewLayer(baseStr)
 		fg := lipgloss.NewLayer(overlayStr).X(x).Y(0).Z(1)
 		baseStr = lipgloss.NewCompositor(bg, fg).Render()

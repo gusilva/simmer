@@ -59,6 +59,8 @@ type SidebarKeyMap struct {
 	Reverse    key.Binding
 	Load       key.Binding
 	Refresh    key.Binding
+	StartAdb   key.Binding
+	Doctor     key.Binding
 	Help       key.Binding
 	Quit       key.Binding
 }
@@ -72,7 +74,8 @@ func (k SidebarKeyMap) FullHelp() [][]key.Binding {
 		{k.Up, k.Down, k.SwitchPane},
 		{k.Boot, k.Shutdown, k.Load, k.Reverse},
 		{k.Filter, k.Add, k.Delete},
-		{k.Toggle, k.Refresh, k.Help, k.Quit},
+		{k.Toggle, k.Refresh, k.StartAdb, k.Doctor},
+		{k.Help, k.Quit},
 	}
 }
 
@@ -90,6 +93,8 @@ var SidebarKeys = SidebarKeyMap{
 	Reverse:    key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "reverse port (android)")),
 	Load:       key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "load device")),
 	Refresh:    key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
+	StartAdb:   key.NewBinding(key.WithKeys("A"), key.WithHelp("A", "start adb server")),
+	Doctor:     key.NewBinding(key.WithKeys("D"), key.WithHelp("D", "doctor")),
 	Help:       key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 	Quit:       key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 }
@@ -226,6 +231,28 @@ var InfoOverlayKeys = InfoOverlayKeyMap{
 	Close:  key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")),
 	Copy:   key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "copy udid")),
 	Reveal: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "reveal in Finder")),
+}
+
+// ── Doctor overlay key map ─────────────────────────────────────────────────
+
+// DoctorOverlayKeyMap contains bindings for the Doctor sheet.
+type DoctorOverlayKeyMap struct {
+	Close   key.Binding
+	Recheck key.Binding
+}
+
+func (k DoctorOverlayKeyMap) ShortHelp() []key.Binding {
+	return []key.Binding{k.Close, k.Recheck}
+}
+
+func (k DoctorOverlayKeyMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{{k.Close, k.Recheck}}
+}
+
+// DoctorOverlayKeys is the Doctor sheet key map singleton.
+var DoctorOverlayKeys = DoctorOverlayKeyMap{
+	Close:   key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")),
+	Recheck: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "re-check")),
 }
 
 // ── RN debugging options key map ────────────────────────────────────────────

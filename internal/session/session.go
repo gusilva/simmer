@@ -45,6 +45,8 @@ type Session struct {
 	// it.
 	mu     sync.RWMutex
 	roster []device.Device
+	// cfgErr is why the last config load fell back to defaults, if it did.
+	cfgErr error
 }
 
 // New returns a Session over the given coordinator. logger may be nil.
@@ -64,7 +66,9 @@ func NewDefault(logger *logging.Logger) (*Session, error) {
 		device.NewAndroidManager(logger),
 		device.NewPhysicalAndroidManager(logger),
 	)
-	return New(coord, logger, cfg), err
+	s := New(coord, logger, cfg)
+	s.cfgErr = err
+	return s, err
 }
 
 // Coordinator exposes the underlying coordinator for operations that have
@@ -137,6 +141,7 @@ func (s *Session) ReloadConfig() error {
 
 	s.mu.Lock()
 	s.cfg = cfg
+	s.cfgErr = err
 	s.mu.Unlock()
 
 	return err

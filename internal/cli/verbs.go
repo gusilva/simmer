@@ -19,9 +19,7 @@ func (c *command) devices(ctx context.Context, args []string) int {
 	}
 
 	res := c.sess.ListDevices(ctx)
-	for _, err := range res.Errors {
-		writef(c.io.Err, "warning: %v\n", err)
-	}
+	c.warnDiscovery(res)
 
 	if *asJSON {
 		type row struct {
@@ -284,9 +282,7 @@ func (c *command) dbQuery(ctx context.Context, args []string) int {
 // the error stream. The returned code is exitOK when dev is usable.
 func (c *command) resolve(ctx context.Context, ref string) (device.Device, int) {
 	res := c.sess.ListDevices(ctx)
-	for _, err := range res.Errors {
-		writef(c.io.Err, "warning: %v\n", err)
-	}
+	c.warnDiscovery(res)
 
 	dev, err := c.sess.Resolve(ref)
 	if err != nil {

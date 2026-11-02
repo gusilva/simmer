@@ -37,7 +37,7 @@ func Run(ctx context.Context, args []string, logger *logging.Logger, io Streams)
 	case "help", "-h", "--help":
 		usage(io.Out)
 		return exitOK
-	case "devices", "apps", "db", "reverse":
+	case "devices", "apps", "db", "reverse", "doctor":
 	default:
 		writef(io.Err, "unknown command %q\n\n", verb)
 		usage(io.Err)
@@ -61,6 +61,8 @@ func Run(ctx context.Context, args []string, logger *logging.Logger, io Streams)
 		return cmd.db(ctx, rest)
 	case "reverse":
 		return cmd.reverse(ctx, rest)
+	case "doctor":
+		return cmd.doctor(ctx, rest)
 	}
 
 	return exitUsage
@@ -112,6 +114,8 @@ Commands:
                                        run a query against a device database
   simmer reverse  --device <ref> --port <port>
                                        adb reverse tcp:<port> tcp:<port> (Android)
+  simmer doctor                        check tools, services and devices; exits 1
+                                       when a platform is unusable
 
 Device references (--device):
   a UDID or adb serial, a device name, a unique fragment of a name, or
