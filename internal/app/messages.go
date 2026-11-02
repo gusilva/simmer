@@ -205,6 +205,13 @@ type consoleLogStartedMsg struct {
 	err    error
 }
 
+// adbServerStartedMsg reports the outcome of a user-requested
+// `adb start-server` (see model.startAdbServerCmd).
+type adbServerStartedMsg struct{ err error }
+
+// doctorReportMsg carries a finished Doctor report to the open sheet.
+type doctorReportMsg struct{ checks []device.HealthCheck }
+
 // reversePortResultMsg reports the outcome of `adb reverse` for a port (see
 // model.reversePortCmd).
 type reversePortResultMsg struct {

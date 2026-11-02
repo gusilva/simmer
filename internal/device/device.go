@@ -33,6 +33,9 @@ const (
 	StatusRunning Status = "Running"
 	// StatusOff indicates the device is shutdown or unavailable.
 	StatusOff Status = "Shutdown"
+	// StatusUnknown indicates the device's state cannot be read: an Android
+	// emulator while the adb server is not running may or may not be up.
+	StatusUnknown Status = "Unknown"
 )
 
 // Device represents a specific simulator or emulator instance.
@@ -50,6 +53,10 @@ type Device struct {
 	// reference, so the alternative name travels with the device. Empty
 	// when ID is already the serial, and on iOS.
 	Serial string
+
+	// Problem is what the user must do before Simmer can use the device,
+	// such as accepting a USB debugging prompt. Empty when it is usable.
+	Problem string
 }
 
 // Manager defines the contract for discovering devices on a specific platform.
@@ -157,6 +164,9 @@ type DiscoveryResult struct {
 	Devices      []Device
 	Errors       []error
 	ToolVersions map[Platform]string
+	// AdbServer explains an empty or stale Android list: AdbServerUnknown
+	// when no manager could tell.
+	AdbServer AdbServerState
 }
 
 // Coordinator manages multiple Managers to perform concurrent device discovery.
@@ -196,6 +206,7 @@ func (c *Coordinator) Discover(ctx context.Context) DiscoveryResult {
 		platform    Platform
 		toolVersion string
 		hasVersion  bool
+		adbServer   AdbServerState
 	}
 
 	ch := make(chan managerResult, len(c.Managers))
@@ -207,6 +218,9 @@ func (c *Coordinator) Discover(ctx context.Context) DiscoveryResult {
 			if tv, ok := m.(ToolVersioner); ok {
 				r.platform, r.toolVersion = tv.ToolVersion(ctx)
 				r.hasVersion = true
+			}
+			if a, ok := m.(AdbServerReporter); ok {
+				r.adbServer = a.AdbServer(ctx)
 			}
 			ch <- r
 		}(mgr)
@@ -221,6 +235,9 @@ func (c *Coordinator) Discover(ctx context.Context) DiscoveryResult {
 		}
 		if r.hasVersion {
 			res.ToolVersions[r.platform] = r.toolVersion
+		}
+		if r.adbServer != AdbServerUnknown {
+			res.AdbServer = r.adbServer
 		}
 	}
 	return res

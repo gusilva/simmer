@@ -25,3 +25,10 @@ Glossary of domain terms for Simmer (iOS/Android Device Manager TUI). No impleme
 **Dev menu trigger** — Opening the React Native dev menu on a device. Device-wide, not app-scoped: it acts on whatever app is in the foreground. It reaches an app through the Metro server that app is connected to, not through a key press, because some device makers remap the Menu key to recent apps. A trigger that cannot reach a Metro the app is connected to is reported as a failure, never as success.
 
 **App Metro port** — The Metro port a debuggable Android app has saved as its bundler location. It decides which Metro a dev menu trigger must be sent to; it can differ from the port Metro or the device tunnel actually uses.
+
+**adb server** — The host-side background process every Android device, emulator or physical, is reached through. While it is not running, Android devices are *unreachable*: an emulator may well be running, but Simmer cannot tell, so it is never reported as off. Simmer reports a stopped adb server and offers to start it; it never starts one on its own, because a user may have stopped it deliberately.
+_Avoid_: adb daemon, bridge
+
+**Health check** — One fact about whether Simmer can do its job on this machine: a tool present, a service running, a connected device authorized. Each carries a severity — ok, warn (one capability is degraded), fail (a whole platform is unusable) — and, when not ok, what it breaks and how to fix it.
+
+**Doctor report** — Every health check, asked of the Session the same way by the TUI and by `simmer doctor`. It reports and prescribes; it never fixes anything itself.

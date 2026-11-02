@@ -470,3 +470,20 @@ func (m model) reversePortCmd(dev device.Device, port string) tea.Cmd {
 		return reversePortResultMsg{port: port, err: coord.ReversePort(ctx, dev, port)}
 	}
 }
+
+// startAdbServerCmd starts the adb server. Only ever run on the user's
+// request: a server stopped on purpose is never restarted behind their back.
+func (m model) startAdbServerCmd() tea.Cmd {
+	sess := m.sess
+	return func() tea.Msg {
+		return adbServerStartedMsg{err: sess.StartAdbServer(context.Background())}
+	}
+}
+
+// doctorCmd runs the Doctor report the headless `simmer doctor` prints.
+func (m model) doctorCmd() tea.Cmd {
+	sess := m.sess
+	return func() tea.Msg {
+		return doctorReportMsg{checks: sess.Doctor(context.Background()).Checks}
+	}
+}

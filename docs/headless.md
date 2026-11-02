@@ -14,6 +14,7 @@ JSON out, a meaningful exit code.
   - [`simmer db ls`](#simmer-db-ls)
   - [`simmer db query`](#simmer-db-query)
   - [`simmer reverse`](#simmer-reverse)
+  - [`simmer doctor`](#simmer-doctor)
 - [Output formats](#output-formats)
 - [Exit codes](#exit-codes)
 - [Warnings and errors](#warnings-and-errors)
@@ -170,7 +171,7 @@ iPhone 17 Pro           iOS       26.2     Shutdown  virtual  3C30DCEC-5213-4254
 | `NAME` | Device name (simulator name, AVD name, or the phone's name) |
 | `PLATFORM` | `iOS` or `Android` |
 | `VERSION` | OS version, or API level on Android |
-| `STATUS` | `Running` or `Shutdown` |
+| `STATUS` | `Running`, `Shutdown`, or `Unknown` — an Android emulator while the adb server is not running, which may or may not be up |
 | `KIND` | `virtual` (simulator/emulator) or `physical` (real hardware) |
 | `ID` | UDID, adb serial, or AVD name — the unambiguous `--device` value |
 
@@ -492,6 +493,62 @@ reversed tcp:8081 on Pixel 8
 Only a running Android device (emulator or phone) qualifies; an iOS or offline device fails with
 exit code `1`, and an invalid or missing port exits `2`. In the TUI the same action is the `p` key.
 
+### `simmer doctor`
+
+Checks whether Simmer can do its job on this machine and says how to fix what it cannot. It reports
+and prescribes; it never fixes anything itself — not even starting the adb server, which may have
+been stopped on purpose.
+
+```
+simmer doctor [--json]
+```
+
+```console
+$ simmer doctor
+   SECTION      CHECK                DETAIL
+✓  tools        xcrun                72 · /usr/bin/xcrun
+✓  tools        adb                  1.0.41 · /Users/me/Library/Android/sdk/platform-tools/adb
+!  tools        aapt                 not found: APKs cannot be installed from a file
+                                     fix: add $ANDROID_HOME/build-tools/<version> to PATH
+✗  services     adb server           not running: Android devices are unreachable
+                                     fix: adb start-server
+✓  services     xcode developer dir  /Applications/Xcode.app/Contents/Developer
+✓  environment  android sdk          /Users/me/Library/Android/sdk
+✓  environment  config               /Users/me/.config/simmer/config.toml
+!  devices      R5CT1234             Android device unauthorized: accept the USB debugging prompt on the device
+```
+
+| Section | What is checked |
+| --- | --- |
+| `tools` | Every host binary Simmer runs: `xcrun`, `xcodebuild`, `adb`, `emulator`, `avdmanager`, `aapt`, `sqlite3` |
+| `services` | The adb server is running; an Xcode developer directory is selected |
+| `environment` | The Android SDK is found; `config.toml` loads |
+| `devices` | Connected devices that need you (an unauthorized phone, a locked iPhone), and any platform discovery could not ask |
+
+Each check is `✓` ok, `!` warn — one capability is degraded — or `✗` fail — a whole platform is
+unusable. Every warn and fail names what it breaks and, where there is one, the fix.
+
+**Exit code:** `1` when any check fails, `0` when there are only warnings, so a script can gate on it:
+
+```bash
+simmer doctor >/dev/null || { echo "fix simmer's environment first" >&2; exit 1; }
+```
+
+JSON form, one object per check (`fix` is omitted when there is none):
+
+```console
+$ simmer doctor --json | jq '.[] | select(.status != "ok")'
+{
+  "section": "services",
+  "check": "adb server",
+  "status": "fail",
+  "detail": "not running: Android devices are unreachable",
+  "fix": "adb start-server"
+}
+```
+
+In the TUI the same report is the `D` key, and `A` starts the adb server.
+
 ## Output formats
 
 **Table** (default) is meant to be readable by eye and still cuttable by script: columns are padded
@@ -538,6 +595,14 @@ $ simmer devices
 warning: Android SDK not found; set ANDROID_HOME or ANDROID_SDK_ROOT
 NAME           PLATFORM  VERSION  STATUS    KIND     ID
 iPhone 17 Pro  iOS       26.2     Shutdown  virtual  3C30DCEC-…
+```
+
+A stopped adb server is called out by name, because without it an empty or `Unknown` Android list
+reads as "no devices" rather than "devices unreachable":
+
+```console
+$ simmer devices
+warning: adb server not running; Android devices are unreachable — run 'simmer doctor'
 ```
 
 An **error** is prefixed `error:`, goes to stderr, and sets a non-zero exit code. A malformed
@@ -616,7 +681,8 @@ version=$(simmer db query --device booted --app com.acme.app --db "$DB" \
 
 ## Troubleshooting
 
-Start by replaying the underlying tool invocations — `--log` records each one with its exit status,
+Start with `simmer doctor`: it names missing tools, a stopped adb server and devices waiting on you.
+Then replay the underlying tool invocations — `--log` records each one with its exit status,
 and `--log-level TRACE` adds full output:
 
 ```bash
@@ -626,6 +692,7 @@ tail -40 simmer.log
 
 | Symptom | Likely cause |
 | --- | --- |
+| Android devices missing, or emulators `Unknown` | The adb server is not running; `simmer doctor` confirms it, `adb start-server` fixes it |
 | `flag provided but not defined: -log` | A global flag was placed after the command; see [Command-line shape](#command-line-shape) |
 | `no running device` | Nothing is booted, and no `--device` was given |
 | `… matches N devices` | The reference is ambiguous; use the `ID` column from `simmer devices` |

@@ -11,6 +11,7 @@ type MockManager struct {
 	DevicesVal     []Device
 	ErrorVal       error
 	ToolVersionVal string
+	AdbServerVal   AdbServerState
 	BootError      error
 	ShutdownError  error
 
@@ -43,6 +44,10 @@ func (m *MockManager) ToolVersion(ctx context.Context) (Platform, string) {
 	return m.PlatformVal, m.ToolVersionVal
 }
 
+func (m *MockManager) AdbServer(ctx context.Context) AdbServerState {
+	return m.AdbServerVal
+}
+
 func (m *MockManager) Boot(ctx context.Context, id string) error {
 	m.BootCalled = true
 	m.BootID = id
@@ -69,10 +74,11 @@ func (m *MockManager) LaunchApp(ctx context.Context, deviceID, bundleID string) 
 
 // Ensure MockManager implements all desired interfaces
 var (
-	_ Manager       = (*MockManager)(nil)
-	_ ToolVersioner = (*MockManager)(nil)
-	_ Booter        = (*MockManager)(nil)
-	_ Shutdowner    = (*MockManager)(nil)
-	_ AppTerminator = (*MockManager)(nil)
-	_ AppLauncher   = (*MockManager)(nil)
+	_ Manager           = (*MockManager)(nil)
+	_ ToolVersioner     = (*MockManager)(nil)
+	_ AdbServerReporter = (*MockManager)(nil)
+	_ Booter            = (*MockManager)(nil)
+	_ Shutdowner        = (*MockManager)(nil)
+	_ AppTerminator     = (*MockManager)(nil)
+	_ AppLauncher       = (*MockManager)(nil)
 )

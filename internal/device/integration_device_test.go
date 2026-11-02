@@ -247,3 +247,25 @@ func TestAndroidDevMenuKeepsAppForeground(t *testing.T) {
 		t.Fatalf("foreground changed %s -> %s (trigger error: %v)", before, after, trigErr)
 	}
 }
+
+// TestAdbServerStartAndProbe checks the round trip the TUI's "A" key and
+// `simmer doctor` rely on: a started server is seen by the socket probe and
+// by discovery. It never stops the server, so other tools keep their devices.
+func TestAdbServerStartAndProbe(t *testing.T) {
+	if ProbeAdbServer() == AdbNotInstalled {
+		t.Skip("adb not on PATH")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	if err := StartAdbServer(ctx); err != nil {
+		t.Fatalf("start adb server: %v", err)
+	}
+	if got := ProbeAdbServer(); got != AdbServerRunning {
+		t.Fatalf("probe after start = %v, want running", got)
+	}
+	if got := NewCoordinator(NewAndroidManager(nil)).Discover(ctx).AdbServer; got != AdbServerRunning {
+		t.Errorf("discovery after start = %v, want running", got)
+	}
+}

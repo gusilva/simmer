@@ -362,3 +362,22 @@ sequenceDiagram
     S->>V: View()
     V-->>U: iOS Group Header (Collapsed)
 ```
+
+---
+
+## adb server down
+
+`SetAdbServer` records the adb server state from each discovery. While it is
+`AdbServerStopped`, the Online box ends with a blank row and a red
+`⛯ adb server down · A start` hint — the sidebar is where a missing Android
+device gets noticed, so the reason and the remedy sit next to it. The hint is
+not a cursor stop; `onlineRows` counts it as two `-1` rows so `HandleClick`
+stays aligned with what is drawn.
+
+An emulator whose state cannot be read (`StatusUnknown`) routes like an
+offline one, with an amber dot instead of a faint one: it may be running, but
+it cannot be used until the server is back.
+
+While the filter input is open, every key is text: the app skips the sidebar's
+action keys (`r`, `b`, `s`, `p`, `A`, `D`, space) so typing a name never fires
+one.

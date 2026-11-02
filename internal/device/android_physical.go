@@ -72,6 +72,7 @@ func (m *physicalAndroidManager) ListDevices(_ context.Context) ([]Device, error
 				Platform: PlatformAndroid,
 				Status:   StatusRunning,
 				Kind:     KindPhysical,
+				Problem:  "unauthorized: accept the USB debugging prompt on the device",
 			})
 			continue
 		}

@@ -151,17 +151,34 @@ func resolveAndroidSerial(ctx context.Context, deviceID string) (string, error) 
 }
 
 // ToolVersion returns the adb version string (e.g. "1.0.41").
-// First line of `adb version` is "Android Debug Bridge version 1.0.41".
 func (m *androidManager) ToolVersion(ctx context.Context) (Platform, string) {
+	ok, v := adbVersion(ctx)
+	if !ok {
+		return PlatformAndroid, "n/a"
+	}
+	return PlatformAndroid, v
+}
+
+// AdbServer reports whether the adb server is listening, so a discovery
+// that finds no Android devices can say whether there are none or whether
+// they could not be asked.
+func (m *androidManager) AdbServer(_ context.Context) AdbServerState {
+	return ProbeAdbServer()
+}
+
+// adbVersion reads `adb version`, whose first line is "Android Debug Bridge
+// version 1.0.41". It does not need the server, so it says nothing about
+// whether the server is running.
+func adbVersion(ctx context.Context) (bool, string) {
 	out, err := exec.CommandContext(ctx, "adb", "version").Output()
 	if err != nil {
-		return PlatformAndroid, "n/a"
+		return false, ""
 	}
 
 	line := strings.SplitN(string(out), "\n", 2)[0]
 	const prefix = "Android Debug Bridge version "
 
-	return PlatformAndroid, strings.TrimPrefix(strings.TrimSpace(line), prefix)
+	return true, strings.TrimPrefix(strings.TrimSpace(line), prefix)
 }
 
 func (m *androidManager) Create(ctx context.Context, name, deviceProfileID, systemImagePkg string) (string, error) {
@@ -737,17 +754,20 @@ func (m *androidManager) ListDevices(ctx context.Context) ([]Device, error) {
 	}
 
 	// 2. Get running devices via adb, keyed by AVD name
+	// Without the adb server nothing can say which AVDs are running, and
+	// reporting them all as off would be a false statement about the ones
+	// that are.
 	running, err := m.getRunningDevices(ctx)
-	if err != nil {
-		// If adb fails, we still return the AVDs with "Shutdown" status
-		running = make(map[string]string)
-	}
+	reachable := err == nil
 
 	var devices []Device
 	for _, name := range avds {
 		status := StatusOff
 		serial, isRunning := running[name]
-		if isRunning {
+		switch {
+		case !reachable:
+			status = StatusUnknown
+		case isRunning:
 			status = StatusRunning
 		}
 

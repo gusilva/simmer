@@ -1010,3 +1010,75 @@ func TestUpdate_RequestFileTreeAtMsg_LeavesSearchAndReroots(t *testing.T) {
 		t.Error("picking a result should leave the result list")
 	}
 }
+
+// ---------- adb server and Doctor ----------
+
+func TestUpdate_DiscoveryRecordsAdbServer(t *testing.T) {
+	m := newTestModel()
+	result, _ := m.Update(discoveryMsg(device.DiscoveryResult{AdbServer: device.AdbServerStopped}))
+	if got := result.(model).adbServer; got != device.AdbServerStopped {
+		t.Errorf("adbServer = %v, want stopped", got)
+	}
+}
+
+func TestUpdate_DoctorKeyOpensSheetAndFillsIt(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 120, 40
+	result, cmd := m.Update(tea.KeyPressMsg{Code: 'd', Text: "D", Mod: tea.ModShift})
+	m = result.(model)
+	if m.doctorOverlay == nil || cmd == nil {
+		t.Fatal("D should open the Doctor sheet and run the report")
+	}
+
+	checks := []device.HealthCheck{{Section: device.SectionServices, Name: "adb server", Severity: device.SeverityFail}}
+	result, _ = m.Update(doctorReportMsg{checks: checks})
+	m = result.(model)
+	if !strings.Contains(m.doctorOverlay.View(), "adb server") {
+		t.Error("report not shown in the Doctor sheet")
+	}
+
+	result, _ = m.Update(ui.CancelOverlayMsg{})
+	if result.(model).doctorOverlay != nil {
+		t.Error("CancelOverlayMsg should close the Doctor sheet")
+	}
+}
+
+func TestUpdate_StartAdbKeyRunsCommand(t *testing.T) {
+	m := newTestModel()
+	result, cmd := m.Update(tea.KeyPressMsg{Code: 'a', Text: "A", Mod: tea.ModShift})
+	if cmd == nil || result.(model).status == "" {
+		t.Error("A should start the adb server and say so")
+	}
+}
+
+func TestUpdate_AdbServerStartedRefreshes(t *testing.T) {
+	m := newTestModel()
+	result, cmd := m.Update(adbServerStartedMsg{})
+	m = result.(model)
+	if !m.loading || cmd == nil || m.statusKind != ui.StatusOk {
+		t.Errorf("a started server should trigger a refresh: loading=%v kind=%v", m.loading, m.statusKind)
+	}
+
+	result, _ = newTestModel().Update(adbServerStartedMsg{err: errorString("boom")})
+	if result.(model).statusKind != ui.StatusErr {
+		t.Error("a failed start should be reported as an error")
+	}
+}
+
+func TestUpdate_SidebarFilterSwallowsActionKeys(t *testing.T) {
+	m := newTestModel()
+	result, _ := m.Update(tea.KeyPressMsg{Code: '2', Text: "2"}) // Offline pane owns the filter
+	m = result.(model)
+	result, _ = m.Update(tea.KeyPressMsg{Code: 'f', Text: "f"})
+	m = result.(model)
+	if !m.sidebar.Filtering() {
+		t.Fatal("f should open the sidebar filter")
+	}
+	for _, k := range []tea.KeyPressMsg{{Code: 'r', Text: "r"}, {Code: 'a', Text: "A", Mod: tea.ModShift}} {
+		result, cmd := m.Update(k)
+		m = result.(model)
+		if cmd != nil {
+			t.Errorf("%q fired an action while filtering", k.Text)
+		}
+	}
+}

@@ -1,7 +1,7 @@
 ## Structure (`TopBarParams` struct)
 
 ```
- simmer v0.1.2 · ● 2 booted   3 iOS  ▲ 2 Android          xcrun 15.3 · adb 1.0.41 
+ simmer v0.1.2 · ● 2 booted   3 iOS  ▲ 2 Android        xcrun 15.3 · adb 1.0.41 ● 
 ```
 
 Left side: app identity + device counts. Right side: tool versions.
@@ -126,6 +126,11 @@ if v := p.ToolVersions[device.PlatformAndroid]; v != "" {
 }
 right := StyleFaint.Render(strings.Join(metaParts, " · "))
 ```
+
+The adb version is followed by the adb server badge from `TopBarParams.AdbServer`:
+a green `●` when the server is running, a red `● server down` when it is not, and nothing when adb
+is not installed or no discovery has answered yet. The badge exists because `adb version` answers
+without a server, so the version alone looks healthy while every Android device is unreachable.
 
 Tool versions are **optional** — if `xcrun` or `adb` isn't available,
 the key won't be in the map and the part is skipped.

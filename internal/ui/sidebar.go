@@ -57,6 +57,10 @@ type Sidebar struct {
 	filterMode  bool
 	filterQuery string
 
+	// adbServer decides whether the Online box explains that Android
+	// devices are unreachable rather than absent.
+	adbServer device.AdbServerState
+
 	width  int
 	height int
 }
@@ -85,6 +89,9 @@ func (s Sidebar) Width() int { return s.width }
 //   - StatusOff + KindPhysical           → skip
 //   - StatusOff + PlatformIOS            → virtIOS (Offline box, iOS tab)
 //   - StatusOff + PlatformAndroid        → virtAnd (Offline box, Android tab)
+//
+// StatusUnknown routes like StatusOff: the device cannot be used until its
+// state can be read.
 func (s *Sidebar) SetDevices(devs []device.Device) {
 	s.booted = s.booted[:0]
 	s.virtIOS = s.virtIOS[:0]
@@ -107,6 +114,12 @@ func (s *Sidebar) SetDevices(devs []device.Device) {
 	s.bootedIdx = clampIdx(s.bootedIdx, len(s.onlinePositions()))
 	s.availIdx = clampIdx(s.availIdx, len(s.offlineDevices()))
 }
+
+// Filtering reports whether the filter input owns the keyboard.
+func (s Sidebar) Filtering() bool { return s.filterMode }
+
+// SetAdbServer records the adb server state from the latest discovery.
+func (s *Sidebar) SetAdbServer(st device.AdbServerState) { s.adbServer = st }
 
 // Devices returns all devices currently loaded in the sidebar.
 func (s Sidebar) Devices() []device.Device {
@@ -229,10 +242,10 @@ func (s Sidebar) Update(msg tea.Msg) (Sidebar, tea.Cmd) {
 // drifts from what's actually drawn.
 func (s Sidebar) onlineRows() []int {
 	positions := s.onlinePositions()
+	rows := make([]int, 0, len(positions)+3)
 	if len(positions) == 0 {
-		return []int{-1}
+		rows = append(rows, -1)
 	}
-	rows := make([]int, 0, len(positions)+1)
 	prevPlatform := device.Platform("")
 	for i, p := range positions {
 		if p.isHeader && prevPlatform != "" && prevPlatform != p.platform {
@@ -242,6 +255,9 @@ func (s Sidebar) onlineRows() []int {
 		if p.isHeader {
 			prevPlatform = p.platform
 		}
+	}
+	if s.adbServer == device.AdbServerStopped {
+		rows = append(rows, -1, -1) // blank + adb-down hint
 	}
 	return rows
 }
@@ -490,6 +506,29 @@ func (s Sidebar) deviceOrdinal(idx int) int {
 // renderOnlineRows builds the content string for the Online box.
 func (s Sidebar) renderOnlineRows() string {
 	innerW := s.width - 2
+	rows := s.renderOnlineDeviceRows(innerW)
+	if s.adbServer == device.AdbServerStopped {
+		rows += "\n" + renderEmptyRow("", innerW) + "\n" + renderAdbDownRow(innerW)
+	}
+	return rows
+}
+
+// renderAdbDownRow is the hint shown while the adb server is stopped: it is
+// where a missing Android device is noticed, so the reason and the remedy
+// sit next to it. It is not a cursor stop.
+func renderAdbDownRow(innerW int) string {
+	bg := lipgloss.NewStyle().Background(ColorBg)
+	mark := lipgloss.NewStyle().Foreground(ColorErr).Background(ColorBg).Render(" ⛯ adb server down")
+	hint := lipgloss.NewStyle().Foreground(ColorFgFaint).Background(ColorBg).Render(" · A start")
+	row := mark + hint
+	if pad := innerW - lipgloss.Width(row); pad > 0 {
+		row += bg.Render(strings.Repeat(" ", pad))
+	}
+	return row
+}
+
+// renderOnlineDeviceRows builds the group headers and device rows.
+func (s Sidebar) renderOnlineDeviceRows(innerW int) string {
 	positions := s.onlinePositions()
 	if len(positions) == 0 {
 		return renderEmptyRow("(none)", innerW)
@@ -716,8 +755,11 @@ func renderDeviceRow(dev device.Device, selected bool, innerW int, indent bool) 
 	rightPad := strings.Repeat(" ", rowInnerPad)
 
 	dotC := ColorFgFaint
-	if dev.Status == device.StatusRunning {
+	switch dev.Status {
+	case device.StatusRunning:
 		dotC = ColorOk
+	case device.StatusUnknown:
+		dotC = ColorWarn
 	}
 
 	ver := dev.Version

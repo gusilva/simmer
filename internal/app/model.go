@@ -40,6 +40,7 @@ type model struct {
 	width        int
 	height       int
 	toolVersions map[device.Platform]string
+	adbServer    device.AdbServerState
 	bootedCount  int
 	iosCount     int
 	androidCount int
@@ -59,8 +60,9 @@ type model struct {
 	statusKind ui.StatusKind
 	statusSeq  int
 
-	helpOverlay *ui.HelpOverlay
-	infoOverlay *ui.InfoOverlay
+	helpOverlay   *ui.HelpOverlay
+	infoOverlay   *ui.InfoOverlay
+	doctorOverlay *ui.DoctorOverlay
 
 	platformPicker  *ui.PlatformPickerModal
 	createIOSModal  *ui.CreateSimulatorModal
@@ -159,6 +161,9 @@ func (m *model) contextHelpOverlay() ui.HelpOverlay {
 	}
 	if m.dbViewerModal != nil {
 		return ui.NewHelpOverlay("DB Viewer", ui.DBViewerKeys)
+	}
+	if m.doctorOverlay != nil {
+		return ui.NewHelpOverlay("Doctor", ui.DoctorOverlayKeys)
 	}
 	if m.infoOverlay != nil {
 		return ui.NewHelpOverlay("Device Info", ui.InfoOverlayKeys)

@@ -105,6 +105,9 @@ func configPath() (string, error) {
 	return filepath.Join(home, ".config", "simmer", "config.toml"), nil
 }
 
+// Path returns where the config file lives, whether or not it exists.
+func Path() (string, error) { return configPath() }
+
 // Load reads config from ~/.config/simmer/config.toml.
 // A missing file is not an error — Default() is returned instead.
 func Load() (Config, error) {

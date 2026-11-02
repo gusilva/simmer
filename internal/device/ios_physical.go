@@ -63,6 +63,7 @@ func (m *physicalIOSManager) ListDevices(_ context.Context) ([]Device, error) {
 				Platform: PlatformIOS,
 				Status:   StatusRunning,
 				Kind:     KindPhysical,
+				Problem:  "locked or untrusted: unlock it and tap Trust This Computer",
 			})
 			continue
 		}
