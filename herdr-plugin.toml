@@ -1,0 +1,21 @@
+id = "gusilva.simmer"
+name = "Simmer"
+version = "0.1.0"
+min_herdr_version = "0.9.3"
+description = "iOS simulator and Android emulator manager in a herdr popup"
+platforms = ["macos"]
+
+[[actions]]
+id = "open"
+title = "Simmer"
+command = ["herdr", "plugin", "pane", "open", "--plugin", "gusilva.simmer", "--entrypoint", "simmer"]
+
+[[panes]]
+id = "simmer"
+title = "Simmer"
+placement = "popup"
+width = "90%"
+height = "90%"
+# Runs the simmer binary found on PATH, so no build step is needed. If it is
+# missing, say so instead of letting the popup flash shut.
+command = ["sh", "-c", "command -v simmer >/dev/null || { echo 'simmer is not on PATH. Install it first (see the README).'; read -r _; exit 1; }; exec simmer"]
