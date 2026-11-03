@@ -19,6 +19,7 @@ var version = "dev"
 func main() {
 	logEnabled := flag.Bool("log", false, "enable structured command logging")
 	logLevel := flag.String("log-level", "INFO", "logging level: ERROR, WARN, INFO, TRACE")
+	fresh := flag.Bool("fresh", false, "open the TUI without resuming the last view")
 
 	// Help is answered before flag parsing so that `simmer --help` prints to
 	// stdout and exits 0, rather than being rejected as an unknown global
@@ -77,7 +78,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := app.Run(version, logger, launchDir); err != nil {
+	if err := app.Run(version, logger, launchDir, app.Options{Fresh: *fresh}); err != nil {
 		fmt.Printf("Fatal error: %v\n", err)
 		os.Exit(1)
 	}

@@ -14,10 +14,60 @@ import (
 )
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(m.fetchDevicesCmd(), scheduleAutoRefresh())
+	cmds := []tea.Cmd{m.fetchDevicesCmd(), scheduleAutoRefresh()}
+	if m.views != nil {
+		cmds = append(cmds, tea.Tick(ownerCheckInterval, func(time.Time) tea.Msg { return ownerCheckTick{} }))
+	}
+	if n := m.startupNotice; n != "" {
+		cmds = append(cmds, func() tea.Msg { return startupNoticeMsg{text: n} })
+	}
+	return tea.Batch(cmds...)
 }
 
+// Update wraps the regular message handling with the View state: instance
+// messages first, then the update itself, then the next resume step and a
+// debounced save of whatever changed.
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// While the resize prompt is up the user cannot see what a key or click
+	// would act on, so only quitting gets through. Everything else — ticks,
+	// discovery, streams, resizes — carries on as normal.
+	if m.tooSmall() && swallowedWhileTooSmall(msg) {
+		return m, nil
+	}
+	if next, cmd, handled := m.handleInstanceMsg(msg); handled {
+		next.syncLive()
+		return next, cmd
+	}
+	if m.restore != nil && isUserInput(msg) {
+		m.restore = nil
+	}
+
+	res, cmd := m.update(msg)
+	next := res.(model)
+	next, restoreCmd := next.advanceRestore(msg)
+	next.syncLive()
+	return next, tea.Batch(cmd, restoreCmd, next.scheduleSave())
+}
+
+func swallowedWhileTooSmall(msg tea.Msg) bool {
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
+		s := msg.String()
+		return s != "q" && s != "ctrl+c"
+	case tea.MouseClickMsg, tea.MouseWheelMsg, tea.PasteMsg:
+		return true
+	}
+	return false
+}
+
+// syncLive keeps the DB viewer's copy of the instance indicator current.
+func (m *model) syncLive() {
+	if m.dbViewerModal != nil {
+		m.dbViewerModal.SetLive(m.views == nil || m.live)
+	}
+}
+
+func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width

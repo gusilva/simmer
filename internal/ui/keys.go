@@ -58,6 +58,7 @@ type SidebarKeyMap struct {
 	Shutdown   key.Binding
 	Reverse    key.Binding
 	Load       key.Binding
+	TakeOver   key.Binding
 	Refresh    key.Binding
 	StartAdb   key.Binding
 	Doctor     key.Binding
@@ -75,7 +76,7 @@ func (k SidebarKeyMap) FullHelp() [][]key.Binding {
 		{k.Boot, k.Shutdown, k.Load, k.Reverse},
 		{k.Filter, k.Add, k.Delete},
 		{k.Toggle, k.Refresh, k.StartAdb, k.Doctor},
-		{k.Help, k.Quit},
+		{k.TakeOver, k.Help, k.Quit},
 	}
 }
 
@@ -95,8 +96,11 @@ var SidebarKeys = SidebarKeyMap{
 	Refresh:    key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 	StartAdb:   key.NewBinding(key.WithKeys("A"), key.WithHelp("A", "start adb server")),
 	Doctor:     key.NewBinding(key.WithKeys("D"), key.WithHelp("D", "doctor")),
-	Help:       key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
-	Quit:       key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+	// Handled by the app, not the sidebar: it works from any screen, but
+	// only while this Simmer is not live.
+	TakeOver: key.NewBinding(key.WithKeys("ctrl+t"), key.WithHelp("ctrl+t", "take over (when not live)")),
+	Help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+	Quit:     key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 }
 
 // ── Main pane key map ────────────────────────────────────────────────────────

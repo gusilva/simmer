@@ -126,6 +126,7 @@ Common flags:
   --fast      (apps) skip per-app version and React Native lookups
   --react-native=false
               (apps) keep versions, skip React Native detection
+  --fresh     (TUI) open without resuming the last view
   --log       write command logging to ./simmer.log
   --log-level ERROR|WARN|INFO|TRACE
 

@@ -7,6 +7,7 @@ import (
 	"simmer/internal/device"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // View renders the main pane: a persistent device header, then two stacked
@@ -64,12 +65,9 @@ func (m MainPane) View() string {
 		}
 	}
 
-	if len(rows) > innerH {
-		rows = rows[:innerH]
-	}
-	for len(rows) < innerH {
-		rows = append(rows, padBg(innerW))
-	}
+	// Safety net under every row renderer: a row wider than the pane would
+	// wrap in the terminal and shift everything beneath it.
+	rows = fitColumn(rows, innerW, innerH)
 
 	side := frame.Render("│")
 	wrapped := make([]string, 0, innerH+2)
@@ -212,7 +210,21 @@ func (m MainPane) renderTitleRow(innerW int) string {
 		Background(ColorBg).
 		Render("udid " + udidShort)
 
-	left := " " + dot + " " + name + " " + sep + " " + osLabel
+	// Space goes to the name first, then the OS; the udid is the first to
+	// go — it is repeated in the info sheet.
+	tail := " " + sep + " " + osLabel
+	if lipgloss.Width(" "+dot+" "+name+tail)+1+lipgloss.Width(udid)+1 > innerW {
+		udid = ""
+	}
+	nameBudget := innerW - lipgloss.Width(" "+dot+" "+tail) - 1
+	if udid != "" {
+		nameBudget -= lipgloss.Width(udid) + 1
+	}
+	if lipgloss.Width(name) > nameBudget {
+		name = ansi.Truncate(name, max(nameBudget, 1), "…")
+	}
+
+	left := " " + dot + " " + name + tail
 	gap := max(innerW-lipgloss.Width(left)-lipgloss.Width(udid)-1, 1)
 	return left + bg.Render(strings.Repeat(" ", gap)) + udid + bg.Render(" ")
 }

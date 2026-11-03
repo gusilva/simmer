@@ -7,6 +7,7 @@ import (
 	"simmer/internal/device"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestRenderTopBar(t *testing.T) {
@@ -87,5 +88,31 @@ func TestRenderTopBar(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRenderTopBar_InstanceIndicator(t *testing.T) {
+	p := TopBarParams{Width: 120, AppVersion: "v1"}
+	if strings.Contains(RenderTopBar(p), "live") {
+		t.Fatal("no indicator without a View state")
+	}
+	if _, _, ok := TopBarInstanceSpan(p); ok {
+		t.Fatal("no span without an indicator")
+	}
+
+	for state, want := range map[InstanceState]string{
+		InstanceLive:       "● live",
+		InstanceSuperseded: "○ not live · ^T take over",
+	} {
+		p.Instance = state
+		line := strings.Split(ansi.Strip(RenderTopBar(p)), "\n")[0]
+		if !strings.Contains(line, want) {
+			t.Fatalf("top bar %q missing %q", line, want)
+		}
+		x0, x1, ok := TopBarInstanceSpan(p)
+		runes := []rune(line)
+		if !ok || string(runes[x0:x1]) != want {
+			t.Fatalf("span [%d,%d) = %q, want %q", x0, x1, string(runes[x0:x1]), want)
+		}
 	}
 }

@@ -5,7 +5,10 @@ import (
 	"strings"
 	"time"
 
+	"simmer/internal/theme"
+
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // View renders the DB viewer as an ANSI string for overlay placement.
@@ -47,16 +50,32 @@ func (m Modal) renderTitleRow(sb *strings.Builder, l layout, s viewerStyles) {
 	prefix := s.Icon.Render("▤") + " " +
 		s.Label.Render("Database Viewer") + "  " +
 		s.Dot.Render("●") + " " +
-		s.Dim.Render(dbLabel+" · "+verLabel) + "  " +
-		s.Faint.Render("| ")
+		s.Dim.Render(dbLabel+" · "+verLabel) + "  "
 
-	const minGap = 1
-	breadcrumbBudget := max(l.InnerW-lipgloss.Width(prefix)-minGap, 8)
+	// The viewer covers the top bar, so it carries the Active-instance
+	// indicator itself. It is pinned to the right edge and wins the space:
+	// it is the one part of the row that tells the user something they must
+	// act on. It is dropped only when the row cannot hold it at all.
+	badge := theme.LiveBadge(m.live) + blank(1)
+	if lipgloss.Width(badge)+1 > l.InnerW {
+		badge = ""
+	}
+	avail := l.InnerW - lipgloss.Width(badge) - 1
 
-	left := prefix + m.renderPathBreadcrumb(s, breadcrumbBudget)
+	// The breadcrumb only gets what the prefix leaves; below a useful
+	// minimum it is dropped rather than squeezed.
+	const minBreadcrumb = 8
+	left := prefix
+	if budget := avail - lipgloss.Width(prefix) - lipgloss.Width(s.Faint.Render("| ")); budget >= minBreadcrumb {
+		left += s.Faint.Render("| ") + m.renderPathBreadcrumb(s, budget)
+	}
+	// Hard clip: the breadcrumb's own width estimate is approximate, and a
+	// long database name can overflow the prefix alone. Any overflow pushes
+	// the right border out of line.
+	left = ansi.Truncate(left, max(avail, 0), "…")
 
-	gap := max(l.InnerW-lipgloss.Width(left), 1)
-	titleRow := left + blank(gap)
+	gap := max(l.InnerW-lipgloss.Width(left)-lipgloss.Width(badge), 0)
+	titleRow := left + blank(gap) + badge
 
 	sb.WriteString(s.Outer.Render("│"))
 	sb.WriteString(titleRow)
