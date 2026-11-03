@@ -59,6 +59,28 @@ chmod +x simmer
 go install github.com/gusilva/simmer@latest
 ```
 
+### Use it as a herdr plugin
+
+Simmer can open as a popup inside [herdr](https://herdr.dev) (0.9.3 or later). The plugin runs the `simmer` binary found on your `PATH`, so install Simmer first (see above) and make sure herdr was started from a shell that can find it. Nothing is built.
+
+```bash
+herdr plugin install gusilva/simmer
+```
+
+Add a key to `~/.config/herdr/config.toml`:
+
+```toml
+[[keys.command]]
+key = "prefix+shift+s"
+type = "plugin_action"
+command = "gusilva.simmer.open"
+description = "simmer"
+```
+
+Then reload the config with `herdr server reload-config` and press the key. Closing the popup closes Simmer, and the next popup resumes where you left off.
+
+To work on the plugin from a checkout, run `herdr plugin link .`. To remove it, run `herdr plugin uninstall gusilva.simmer`, or `herdr plugin unlink gusilva.simmer` for a linked checkout.
+
 ## 📋 Prerequisites
 
 - **macOS** (Required for iOS simulators).
