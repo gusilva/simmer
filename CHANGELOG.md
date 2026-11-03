@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.9.1 — 2026-11-03
+
+### Added
+
+- **herdr plugin.** Simmer can open as a popup inside
+  [herdr](https://herdr.dev) (0.9.3 or later). Run
+  `herdr plugin install gusilva/simmer`, then bind a key to the
+  `gusilva.simmer.open` action. The plugin runs the `simmer` binary on your
+  `PATH`, so nothing is built at install time and Go is not required. Closing
+  the popup closes Simmer. The next popup takes over and resumes the last view,
+  as in ADR-0002. See "Use it as a herdr plugin" in the README.
+
 ## v1.9.0 — 2026-11-03
 
 ### Added
