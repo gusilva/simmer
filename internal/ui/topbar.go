@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"simmer/internal/device"
+	"simmer/internal/theme"
 
 	"charm.land/lipgloss/v2"
 )
@@ -18,6 +19,39 @@ type TopBarParams struct {
 	AndroidCount int
 	ToolVersions map[device.Platform]string
 	AdbServer    device.AdbServerState
+	// Instance says whether this Simmer records the View state. The zero
+	// value draws no indicator.
+	Instance InstanceState
+}
+
+// InstanceState is what the top bar's Active-instance indicator shows.
+type InstanceState int
+
+const (
+	// InstanceUnknown hides the indicator (no View state store).
+	InstanceUnknown InstanceState = iota
+	// InstanceLive: this Simmer is the Active instance.
+	InstanceLive
+	// InstanceSuperseded: another Simmer took over.
+	InstanceSuperseded
+)
+
+// topBarPadLeft is StyleTopBar's left padding.
+const topBarPadLeft = 1
+
+// brandPrefix is everything left of the instance indicator.
+func brandPrefix(p TopBarParams) string {
+	return StyleBrand.Render("simmer") + StyleFaint.Render(" "+p.AppVersion) + StyleFaint.Render(" · ")
+}
+
+// TopBarInstanceSpan returns the columns [x0, x1) the instance indicator
+// occupies, for click hit-testing; ok is false when none is drawn.
+func TopBarInstanceSpan(p TopBarParams) (x0, x1 int, ok bool) {
+	if p.Width == 0 || p.Instance == InstanceUnknown {
+		return 0, 0, false
+	}
+	x0 = topBarPadLeft + lipgloss.Width(brandPrefix(p))
+	return x0, x0 + lipgloss.Width(theme.LiveBadge(p.Instance == InstanceLive)), true
 }
 
 // RenderTopBar renders the top bar string for the given params.
@@ -28,10 +62,11 @@ func RenderTopBar(p TopBarParams) string {
 
 	sep := StyleFaint.Render(" · ")
 
-	left := StyleBrand.Render("simmer") +
-		StyleFaint.Render(" "+p.AppVersion) +
-		sep +
-		lipgloss.NewStyle().Foreground(ColorOk).Background(ColorBg).Render("●") +
+	left := brandPrefix(p)
+	if p.Instance != InstanceUnknown {
+		left += theme.LiveBadge(p.Instance == InstanceLive) + sep
+	}
+	left += lipgloss.NewStyle().Foreground(ColorOk).Background(ColorBg).Render("●") +
 		StyleDim.Render(fmt.Sprintf(" %d online", p.BootedCount)) +
 		StyleFaint.Render("  ") +
 		lipgloss.NewStyle().Foreground(ColorIOS).Background(ColorBg).Render("⌘") +

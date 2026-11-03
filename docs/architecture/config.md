@@ -87,3 +87,19 @@ fixes all consumers.
 (a few hundred bytes from disk). Re-reading on demand means the TUI always
 reflects what is on disk, even if the file was edited externally between
 invocations.
+
+## View state is not config
+
+`internal/viewstate/` keeps the View state (where the user is in the TUI) in
+`$XDG_STATE_HOME/simmer/state.json`, defaulting to `~/.local/state/simmer/`.
+That file is machine-owned and rewritten constantly, so it never shares a file
+with the hand-edited `config.toml`. Ownership between several open Simmers,
+the owner token and the `flock` are described in
+`docs/adr/0002-single-active-instance-takeover.md`.
+
+`internal/app/viewstate.go` is the TUI side:
+
+- `snapshot` reads the View state off the model.
+- `Update` arms a 250 ms debounced save whenever the snapshot changes.
+- `advanceRestore` resumes the state step by step, as discovery, the app list
+  and the table list arrive.

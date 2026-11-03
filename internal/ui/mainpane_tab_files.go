@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func (m MainPane) renderFiles(innerW, innerH int) string {
@@ -248,8 +249,6 @@ func (m MainPane) renderPreviewPane(w, h int) []string {
 		sel = rows[m.treeIdx].node
 	}
 
-	bg := lipgloss.NewStyle().Background(ColorBg)
-
 	// Leading blank so the "preview …" line sits level with the first tree row
 	// (the tree pane also opens with one blank line).
 	lines := []string{padBg(w)}
@@ -296,16 +295,29 @@ func (m MainPane) renderPreviewPane(w, h int) []string {
 		}
 	}
 
+	return fitColumn(lines, w, h)
+}
+
+// fitColumn makes lines exactly w cells wide and h rows tall: long lines are
+// clipped with an ellipsis, short ones padded, missing rows filled. A column
+// drawn beside another must never exceed its width — the terminal wraps the
+// excess onto the next row and shifts everything below it.
+func fitColumn(lines []string, w, h int) []string {
+	bg := lipgloss.NewStyle().Background(ColorBg)
+	if len(lines) > h {
+		lines = lines[:h]
+	}
 	for i, line := range lines {
-		if pad := w - lipgloss.Width(line); pad > 0 {
-			lines[i] = line + bg.Render(strings.Repeat(" ", pad))
+		if lipgloss.Width(line) > w {
+			line = ansi.Truncate(line, w, "…")
 		}
+		if pad := w - lipgloss.Width(line); pad > 0 {
+			line += bg.Render(strings.Repeat(" ", pad))
+		}
+		lines[i] = line
 	}
 	for len(lines) < h {
 		lines = append(lines, padBg(w))
-	}
-	if len(lines) > h {
-		lines = lines[:h]
 	}
 	return lines
 }

@@ -7,8 +7,8 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-func (m model) View() tea.View {
-	topBar := ui.RenderTopBar(ui.TopBarParams{
+func (m model) topBarParams() ui.TopBarParams {
+	return ui.TopBarParams{
 		Width:        m.width,
 		AppVersion:   m.appVersion,
 		BootedCount:  m.bootedCount,
@@ -16,7 +16,32 @@ func (m model) View() tea.View {
 		AndroidCount: m.androidCount,
 		ToolVersions: m.toolVersions,
 		AdbServer:    m.adbServer,
-	})
+		Instance:     m.instanceState(),
+	}
+}
+
+// The smallest terminal the layout is built for. Below it panels wrap and
+// overflow, and the DB viewer cannot lay out its panes at all, so the whole
+// TUI is replaced by a resize prompt (see RenderTooSmall).
+const (
+	minTermWidth  = 80
+	minTermHeight = 24
+)
+
+// tooSmall reports whether the terminal is below the minimum size. Before
+// the first size report the size is unknown, not small.
+func (m model) tooSmall() bool {
+	return m.width > 0 && (m.width < minTermWidth || m.height < minTermHeight)
+}
+
+func (m model) View() tea.View {
+	if m.tooSmall() {
+		// Nothing clickable is on screen; stale hit areas must not fire.
+		*m.layout = appLayout{}
+		return m.newView(ui.RenderTooSmall(m.width, m.height, minTermWidth, minTermHeight))
+	}
+
+	topBar := ui.RenderTopBar(m.topBarParams())
 
 	footerHelp := ui.NewHelpModel()
 	footerHelp.SetWidth(m.width - 4)
@@ -146,7 +171,13 @@ func (m model) View() tea.View {
 		baseStr = lipgloss.NewCompositor(bg, fg).Render()
 	}
 
-	v := tea.NewView(baseStr)
+	return m.newView(baseStr)
+}
+
+// newView wraps rendered content with the terminal features every frame
+// declares.
+func (m model) newView(content string) tea.View {
+	v := tea.NewView(content)
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	v.WindowTitle = "Simmer"

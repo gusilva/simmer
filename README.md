@@ -98,6 +98,9 @@ Every command takes `--json` for machine-readable output. `apps` additionally ta
 per-app lookups) and `--react-native=false` (keep version names, skip React Native detection). Exit
 status is `1` for a failed operation and `2` for a command-line error.
 
+The TUI needs a terminal of at least **80×24**. Smaller than that, it shows the current and needed
+size instead of a broken layout, and comes back as soon as the window is resized.
+
 ### Keybindings
 
 `?` opens a help overlay listing the keys for whatever has focus. The essentials:
@@ -115,6 +118,20 @@ Device actions live on the sidebar: `b` boot, `s` shutdown, `a` add, `d` delete,
 device info. App actions live on the Apps panel: `a` install, `d` uninstall, `c` close, `l` log to
 file, `r` rebuild and reinstall, `m` more. `ctrl+d` opens the SQLite viewer from anywhere, and
 `q` or `ctrl+c` quits.
+
+### Resuming where you left off
+
+Simmer reopens where you were: the selected device, the expanded panel, the app under the cursor, and
+the database open in the SQLite viewer with its query and selected table. It resumes the view and nothing
+else: it never boots a device, starts the adb server, or re-runs a query. Anything that is gone since
+(a deleted device, an uninstalled app) falls back to the nearest thing that still exists, and a status
+message says what was skipped. `simmer --fresh` opens with a blank view.
+
+With Simmer open in several terminals, only one records where you are. The top bar shows `● live` on
+that one. Opening Simmer somewhere else takes over: the new one resumes exactly where the old one was,
+and the old one switches to `○ not live · ^T take over`. The old one stays fully usable and keeps any
+build or log stream running. Press `ctrl+t` or click the indicator to make it live again from the
+screen it shows now.
 
 ### Building for production
 

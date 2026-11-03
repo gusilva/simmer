@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"simmer/internal/session"
 	"simmer/internal/ui"
 	"simmer/internal/ui/dbviewer"
+	"simmer/internal/viewstate"
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
@@ -98,6 +100,20 @@ type model struct {
 	// any later relaunch we trigger (e.g. "Log to File") has to re-supply it
 	// or the app reverts to its compiled-in default and never reaches Metro.
 	bundlerHostPorts map[string]string
+
+	// views is this Simmer's handle on the View state; nil disables it
+	// (tests, or a state directory that cannot be used).
+	views *viewstate.Store
+	// live reports whether this Simmer is the Active instance.
+	live bool
+	// recorded is the last View state handed to the debounced save.
+	recorded viewstate.View
+	saveSeq  int
+	// restore is the resume still in progress; nil once done or abandoned.
+	restore *restorePlan
+	// startupNotice is a warning from claiming the View state, shown once
+	// the program runs.
+	startupNotice string
 }
 
 func initialModel(version string, logger *logging.Logger, launchDir string) model {
@@ -192,11 +208,26 @@ func (m model) bodyHeight() int {
 	return max(m.height-lipgloss.Height(topBar)-lipgloss.Height(footer), 0)
 }
 
-func Run(version string, logger *logging.Logger, launchDir string) error {
+// Options are the TUI's launch choices.
+type Options struct {
+	// Fresh starts from an empty View state instead of resuming the last
+	// one. It still takes over.
+	Fresh bool
+}
+
+func Run(version string, logger *logging.Logger, launchDir string, opts Options) error {
 	m := initialModel(version, logger, launchDir)
+	m.claimViewState(opts.Fresh)
 	p := tea.NewProgram(m)
 
 	final, err := p.Run()
+
+	// The last change may still be inside its debounce window.
+	if fm, ok := final.(model); ok && fm.recording() {
+		if _, serr := fm.views.Save(fm.snapshot()); serr != nil {
+			logger.LogError("save view state", serr)
+		}
+	}
 
 	// Catch-all flush + close of any in-flight app-log file for the paths that
 	// return a model: clean quit and a panic inside a Cmd. (A panic inside
@@ -214,6 +245,32 @@ func Run(version string, logger *logging.Logger, launchDir string) error {
 	}
 
 	return nil
+}
+
+// claimViewState takes over as the Active instance and queues the resume.
+// Any failure leaves the TUI working without View state rather than not
+// starting.
+func (m *model) claimViewState(fresh bool) {
+	dir, err := viewstate.DefaultDir()
+	if err != nil {
+		m.logger.LogError("view state dir", err)
+		return
+	}
+	store := viewstate.Open(dir)
+	view, err := store.Claim(fresh)
+	if err != nil {
+		m.logger.LogError("claim view state", err)
+		if !errors.Is(err, viewstate.ErrUnreadable) {
+			return
+		}
+		m.startupNotice = "last view could not be read; starting fresh"
+	}
+	m.views = store
+	m.live = true
+	m.recorded = view
+	if view.DeviceID != "" {
+		m.restore = &restorePlan{view: view, stage: restoreAwaitDevices}
+	}
 }
 
 // errPreview returns a short, single-line excerpt of err's message, suitable

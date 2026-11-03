@@ -53,6 +53,12 @@ type Modal struct {
 
 	settingsOpen bool
 	settings     Settings
+
+	// pendingTable is the table to put the explorer cursor on when the
+	// table list arrives (restoring the View state); "" when none.
+	pendingTable string
+	// live reports whether this Simmer is the Active instance.
+	live bool
 }
 
 // New creates a Modal. onClose is called when the user dismisses the overlay;
@@ -68,6 +74,7 @@ func New(onClose func() tea.Msg, sess *session.Session) Modal {
 			paneResults: newResultsPane().asPane(),
 		},
 		onClose: onClose,
+		live:    true,
 	}
 }
 

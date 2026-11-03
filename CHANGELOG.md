@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Resume the last view** (#24). The TUI reopens on the device, panel, app and
+  database you left, recorded under `~/.local/state/simmer/`. `--fresh` skips it.
+- **Live indicator and takeover.** Each launch takes over from any Simmer open in
+  another terminal; the top bar (and the SQLite viewer title) shows `● live` or
+  `○ not live · ^T take over`. `ctrl+t` or a click takes back control. See
+  `docs/adr/0002-single-active-instance-takeover.md`.
+- **Minimum terminal size.** Below 80×24 the TUI shows the current and needed
+  size instead of a wrapped or overflowing layout; only `q` / `ctrl+c` act
+  until the window is big enough. This also stops the SQLite viewer panicking
+  on terminals under 13 rows.
+
+### Fixed
+
+- The SQLite viewer title row no longer pushes the right border out when the
+  database name is long.
+- The Files preview (and the file-search preview) no longer wraps a long line
+  into the sidebar and shifts the rows below it; the device header truncates a
+  long device name instead of wrapping. Every main-pane row is now clipped to
+  the pane width.
+
 ## v1.8.0 — 2026-11-01
 
 ### Added

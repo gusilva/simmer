@@ -346,10 +346,7 @@ func (m MainPane) renderSearchPreview(w, h int) []string {
 
 	if match == nil {
 		line(" " + faint.Render("no match selected"))
-		for len(lines) < h {
-			lines = append(lines, padBg(w))
-		}
-		return lines
+		return fitColumn(lines, w, h)
 	}
 
 	kind := "file"
@@ -377,11 +374,7 @@ func (m MainPane) renderSearchPreview(w, h int) []string {
 	line(padBg(w))
 	line(" " + faint.Render("enter opens it · esc returns to the tree"))
 
-	for len(lines) < h {
-		lines = append(lines, padBg(w))
-	}
-
-	return lines
+	return fitColumn(lines, w, h)
 }
 
 // wrapPath splits a path into width-sized chunks so a long one stays

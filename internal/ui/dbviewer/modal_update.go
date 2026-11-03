@@ -54,6 +54,10 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		if tm.Err == nil {
 			if ep, ok := m.panes[paneSidebar].(explorerPane); ok {
 				ep.inner.SetTables(m.dbName, tm.Objects)
+				if m.pendingTable != "" {
+					ep.inner.selectTable(m.pendingTable)
+					m.pendingTable = ""
+				}
 				m.panes[paneSidebar] = ep
 			}
 		}
