@@ -10,7 +10,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/danielpaulus/go-ios v1.0.213
 	github.com/electricbubble/gadb v0.1.0
-	github.com/gusilva/goeditor v0.19.1-simmer.1
+	github.com/gusilva/goeditor v0.19.1-simmer.2
 	github.com/sirupsen/logrus v1.9.3
 	howett.net/plist v0.0.0-20200419221736-3b63eb3a43b5
 )

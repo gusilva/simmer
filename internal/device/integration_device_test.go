@@ -14,6 +14,7 @@ package device
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -138,6 +139,68 @@ func TestAndroidPrivateDirectoryListsThroughRunAs(t *testing.T) {
 // own sqlite3 where it exists, and the local copy where it does not (most
 // images since Android 9).
 func TestAndroidSQLiteServesQueriesEitherWay(t *testing.T) {
+	dev, dbPath := requireAndroidDatabase(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	rows, err := QuerySQLite(ctx, nil, dev, "", dbPath, "select count(*) as n from sqlite_master")
+	if err != nil {
+		t.Fatalf("query %s: %v", dbPath, err)
+	}
+	t.Logf("%s → %v", dbPath, rows)
+}
+
+// TestAndroidSchemaColumnsEitherWay runs the completion schema query — a
+// table-valued pragma joined to sqlite_master, which needs SQLite 3.16 — over
+// both routes: the device's own sqlite3, when it has one, and a copy queried
+// with the host's. The two must agree.
+func TestAndroidSchemaColumnsEitherWay(t *testing.T) {
+	dev, dbPath := requireAndroidDatabase(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	serial, err := resolveAndroidSerial(ctx, dev.ID)
+	if err != nil {
+		t.Fatalf("serial: %v", err)
+	}
+	prev, hadPrev := androidSQLiteOnDevice.Load(serial)
+	t.Cleanup(func() {
+		if hadPrev {
+			androidSQLiteOnDevice.Store(serial, prev)
+		} else {
+			androidSQLiteOnDevice.Delete(serial)
+		}
+	})
+
+	androidSQLiteOnDevice.Delete(serial) // probe the device's sqlite3 afresh
+	first, err := ListSchemaColumns(ctx, nil, dev, "", dbPath)
+	if err != nil {
+		t.Fatalf("schema columns (first route): %v", err)
+	}
+	onDevice, _ := androidSQLiteOnDevice.Load(serial)
+	t.Logf("%s: %d tables, device sqlite3: %v", dbPath, len(first), onDevice)
+
+	androidSQLiteOnDevice.Store(serial, false) // force the copy route
+	copied, err := ListSchemaColumns(ctx, nil, dev, "", dbPath)
+	if err != nil {
+		t.Fatalf("schema columns (copy): %v", err)
+	}
+	if !reflect.DeepEqual(first, copied) {
+		t.Errorf("routes disagree:\n%+v\n%+v", first, copied)
+	}
+	for _, tbl := range first {
+		if len(tbl.Columns) == 0 {
+			t.Errorf("%s has no columns", tbl.Name)
+		}
+	}
+}
+
+// requireAndroidDatabase returns a running emulator and the first SQLite
+// database in an app's storage on it, or skips.
+func requireAndroidDatabase(t *testing.T) (Device, string) {
+	t.Helper()
 	dev := requireDevice(t, PlatformAndroid, KindVirtual)
 	c := deviceCoordinator()
 	app := requireApp(t, c, dev)
@@ -165,12 +228,7 @@ func TestAndroidSQLiteServesQueriesEitherWay(t *testing.T) {
 	if dbPath == "" {
 		t.Skipf("%s keeps no SQLite database", app.BundleID)
 	}
-
-	rows, err := QuerySQLite(ctx, nil, dev, "", dbPath, "select count(*) as n from sqlite_master")
-	if err != nil {
-		t.Fatalf("query %s: %v", dbPath, err)
-	}
-	t.Logf("%s → %v", dbPath, rows)
+	return dev, dbPath
 }
 
 // TestAndroidSearchFindsByNameAndPath covers the two query shapes, including

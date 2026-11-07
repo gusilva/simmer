@@ -14,6 +14,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	goeditor "github.com/gusilva/goeditor"
+	"github.com/gusilva/goeditor/core"
 )
 
 // FileSavedMsg is returned after a save attempt completes.
@@ -43,10 +44,19 @@ type QueryPane struct {
 	filePath     string
 	scriptDir    string // directory from config.ScriptPath; file is written to scriptDir/filePath
 	state        fileState
+	schema       sqlSchema // what completion offers
 }
 
 // queryHeadRows is the query head plus its separator, above the editor.
 const queryHeadRows = 2
+
+const (
+	// completionDebounce is how long typing pauses before completion runs.
+	completionDebounce = 120 * time.Millisecond
+	// completionMenuItems is the most the menu lists at once; fewer when
+	// the editor is too short to show that many with the menu's border.
+	completionMenuItems = 8
+)
 
 func newQueryPane(cfg config.Config) QueryPane {
 	// Simmer paints the terminal background itself, so the editor must not
@@ -57,6 +67,8 @@ func newQueryPane(cfg config.Config) QueryPane {
 	ed.HideStatusLine(true)
 	ed.SetPlaceholder("Write SQL here…")
 	ed.DisableVimMode(!cfg.VimMode)
+	ed.WithCompletionAutoTrigger(true)
+	ed.WithCompletionDebounce(completionDebounce)
 
 	scriptDir := cfg.ScriptPath
 
@@ -76,18 +88,17 @@ func newQueryPane(cfg config.Config) QueryPane {
 	spStyles.Focused.Placeholder = lipgloss.NewStyle().Foreground(theme.ColorFgFaint).Background(theme.ColorBg)
 	sp.SetStyles(spStyles)
 
-	return QueryPane{
+	p := QueryPane{
 		activeTab:  0,
 		editor:     ed,
 		vim:        cfg.VimMode,
-		width:      80,
-		height:     10 + queryHeadRows,
 		savePrompt: sp,
 		rh:         newRenderHelpers(),
 		filePath:   defaultQueryFile,
 		scriptDir:  scriptDir,
 		state:      state,
 	}
+	return p.withSize(80, 10+queryHeadRows)
 }
 
 func (p QueryPane) FocusEditor() (QueryPane, tea.Cmd) {
@@ -143,6 +154,16 @@ func (p QueryPane) withVimMode(on bool) QueryPane {
 	return p
 }
 
+// withSchema sets what completion offers.
+func (p QueryPane) withSchema(s sqlSchema) QueryPane {
+	p.schema = s
+	return p
+}
+
+// CompletionMenuVisible reports whether the completion menu is open, so the
+// keys it uses (Esc among them) go to it.
+func (p QueryPane) CompletionMenuVisible() bool { return p.editor.IsCompletionMenuVisible() }
+
 // VimMode reports whether the editor is modal.
 func (p QueryPane) VimMode() bool { return p.vim }
 
@@ -154,7 +175,11 @@ func (p QueryPane) withSize(width, height int) QueryPane {
 		return p
 	}
 	p.width, p.height = width, height
-	p.editor.SetSize(width, max(height-queryHeadRows, 1))
+	editorH := max(height-queryHeadRows, 1)
+	p.editor.SetSize(width, editorH)
+	// The menu (items plus a two-row border) must fit above or below the
+	// cursor line within the editor; the command line takes a row in vim.
+	p.editor.SetCompletionMenuMaxVisibleItems(min(max(editorH-4, 1), completionMenuItems))
 	return p
 }
 
@@ -225,6 +250,24 @@ func (p QueryPane) Update(msg tea.Msg) (QueryPane, tea.Cmd) {
 	case goeditor.ErrorMsg:
 		return p, p.editor.DispatchError(msg.Error, editorMessageTTL)
 
+	case goeditor.CompletionRequestMsg:
+		// Built from the whole buffer, not the request's few context lines:
+		// an alias is often defined after the cursor ("SELECT u.| FROM users u").
+		pos := p.editor.GetCursorPosition()
+		manual := msg.Context.TriggerKind == core.CompletionTriggerManual
+		var items []core.Completion
+		// The editor auto-triggers on the key that enters insert mode too
+		// ("A", "o"): only a character that landed before the cursor counts.
+		if manual || strings.HasSuffix(msg.Context.TextBeforeCursor, msg.Context.TriggerCharacter) {
+			items = sqlCompletions(p.Value(), pos.Row, pos.Col, p.schema, manual)
+		}
+		p.editor.SetCompletions(items, msg.Context)
+		// Update re-arms the editor's signal listener, which carries the
+		// response back; without it the menu would wait for the next key.
+		var cmd tea.Cmd
+		p.editor, cmd = p.editor.Update(msg)
+		return p, cmd
+
 	case tea.PasteMsg:
 		return p.paste(msg.Content)
 	}
@@ -248,6 +291,7 @@ func (p QueryPane) Update(msg tea.Msg) (QueryPane, tea.Cmd) {
 	prev := p.Value()
 	var cmd tea.Cmd
 	p.editor, cmd = p.editor.Update(msg)
+
 	if p.Value() != prev {
 		p.state = fileStateDirty
 	}

@@ -164,8 +164,9 @@ Key constants:
 ```
 
 Reserved while the editor has focus: `ctrl+h/j/k/l`, `f5`, `ctrl+enter`,
-`ctrl+s`, `super+s`, `super+v`. `Esc` goes to the editor in vim mode and
-focuses the explorer in plain mode.
+`ctrl+s`, `super+s`, `super+v`. `Esc` focuses the explorer once the editor
+has nothing left to leave — no completion menu, and in vim mode already in
+normal mode (the editor still receives it, to cancel a half-typed command).
 
 Global key bindings:
 

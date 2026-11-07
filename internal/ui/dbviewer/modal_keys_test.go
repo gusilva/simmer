@@ -1,10 +1,13 @@
 package dbviewer
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"simmer/internal/device"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -34,6 +37,8 @@ func keyOf(s string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: tea.KeyTab}
 	case "ctrl+h":
 		return tea.KeyPressMsg{Code: 'h', Mod: tea.ModCtrl}
+	case "ctrl+space":
+		return tea.KeyPressMsg{Code: tea.KeySpace, Mod: tea.ModCtrl}
 	}
 	r := []rune(s)[0]
 	return tea.KeyPressMsg{Code: r, Text: s}
@@ -61,50 +66,55 @@ func typeKeys(m Modal, keys ...string) (Modal, []tea.Cmd) {
 	return m, cmds
 }
 
-// runCmd runs cmd and returns the messages it produces, expanding batches.
-// A command still blocked after a short wait — the editor's signal listener
-// when no signal is pending — contributes nothing.
-func runCmd(cmd tea.Cmd) []tea.Msg {
+// cmdRunner runs commands the way the Bubble Tea runtime does: each in its
+// own goroutine, results gathered as they arrive. One that is still blocked —
+// the editor's signal listener waiting for a signal — keeps running, and its
+// message is collected whenever the signal comes.
+type cmdRunner struct{ out chan tea.Msg }
+
+func newCmdRunner() *cmdRunner { return &cmdRunner{out: make(chan tea.Msg, 256)} }
+
+func (r *cmdRunner) start(cmd tea.Cmd) {
 	if cmd == nil {
-		return nil
+		return
 	}
-	done := make(chan tea.Msg, 1)
-	go func() { done <- cmd() }()
-	var msg tea.Msg
-	select {
-	case msg = <-done:
-	case <-time.After(50 * time.Millisecond):
-		return nil
-	}
-	if batch, ok := msg.(tea.BatchMsg); ok {
-		var out []tea.Msg
-		for _, c := range batch {
-			out = append(out, runCmd(c)...)
+	go func() { r.out <- cmd() }()
+}
+
+// collect returns what has arrived until nothing more does for a short while.
+func (r *cmdRunner) collect() []tea.Msg {
+	var msgs []tea.Msg
+	for {
+		select {
+		case msg := <-r.out:
+			if batch, ok := msg.(tea.BatchMsg); ok {
+				for _, c := range batch {
+					r.start(c)
+				}
+				continue
+			}
+			if msg != nil {
+				msgs = append(msgs, msg)
+			}
+		case <-time.After(50 * time.Millisecond):
+			return msgs
 		}
-		return out
 	}
-	if msg == nil {
-		return nil
-	}
-	return []tea.Msg{msg}
 }
 
 // settle feeds the messages cmds produce back into m until none are left,
 // the way the Bubble Tea runtime would, and reports whether one closed it.
-// Commands are only run here, after the keys: the editor's one signal
-// listener is armed by the first key and must still be waiting when the
-// signal arrives.
 func settle(m Modal, cmds []tea.Cmd) (Modal, bool) {
+	r := newCmdRunner()
+	for _, c := range cmds {
+		r.start(c)
+	}
 	closed := false
 	for range 100 {
-		var msgs []tea.Msg
-		for _, c := range cmds {
-			msgs = append(msgs, runCmd(c)...)
-		}
+		msgs := r.collect()
 		if len(msgs) == 0 {
 			break
 		}
-		cmds = nil
 		for _, msg := range msgs {
 			if _, ok := msg.(closedMsg); ok {
 				closed = true
@@ -112,7 +122,7 @@ func settle(m Modal, cmds []tea.Cmd) (Modal, bool) {
 			}
 			var cmd tea.Cmd
 			m, cmd = m.Update(msg)
-			cmds = append(cmds, cmd)
+			r.start(cmd)
 		}
 	}
 	return m, closed
@@ -159,6 +169,34 @@ func TestModal_VimEditor(t *testing.T) {
 		}
 		if got := m.panes[paneQuery].(queryPaneAdapter).inner.modeLabel(); got != "NORMAL" {
 			t.Errorf("mode = %q, want NORMAL", got)
+		}
+	})
+	t.Run("esc in normal mode moves to the explorer", func(t *testing.T) {
+		m, _ := typeKeys(newTestModalInEditor(t, true), "i", "x", "esc", "esc")
+		if m.focus != paneSidebar {
+			t.Errorf("focus = %d, want explorer (%d)", m.focus, paneSidebar)
+		}
+		if got := editorText(m); got != "x" {
+			t.Errorf("editor = %q, want %q", got, "x")
+		}
+	})
+	t.Run("esc cancels a half-typed command on the way out", func(t *testing.T) {
+		m := newTestModalInEditor(t, true)
+		m = m.setQueryText("one\ntwo\nthree")
+		m, _ = typeKeys(m, "g", "g", "d", "esc")
+		if m.focus != paneSidebar {
+			t.Fatalf("focus = %d, want explorer", m.focus)
+		}
+		m, _ = m.setFocus(paneQuery)
+		m, _ = typeKeys(m, "j")
+		if got := editorText(m); got != "one\ntwo\nthree" {
+			t.Errorf("a pending d completed on return: editor = %q", got)
+		}
+	})
+	t.Run("esc in visual mode stays in the editor", func(t *testing.T) {
+		m, _ := typeKeys(newTestModalInEditor(t, true), "v", "esc")
+		if m.focus != paneQuery {
+			t.Errorf("focus = %d, want query", m.focus)
 		}
 	})
 	t.Run("tab belongs to the editor", func(t *testing.T) {
@@ -213,4 +251,90 @@ func TestModal_QOutsideEditorCloses(t *testing.T) {
 	if _, closed := settle(typeKeys(m, "q")); !closed {
 		t.Error("q in the explorer did not close the viewer")
 	}
+}
+
+func TestModal_Completion(t *testing.T) {
+	withSchema := func(m Modal) Modal {
+		return m.withQuerySchema(newSQLSchema([]device.SchemaTable{
+			{Name: "users", Columns: []string{"id", "name"}},
+		}))
+	}
+	menu := func(m Modal) bool { return m.completionMenuVisible() }
+
+	for _, vim := range []bool{true, false} {
+		name := "plain"
+		if vim {
+			name = "vim"
+		}
+		t.Run(name+": ctrl+space opens, tab accepts", func(t *testing.T) {
+			m := withSchema(newTestModalInEditor(t, vim))
+			keys := []string{"SELECT * FROM us", "ctrl+space"}
+			if vim {
+				keys = append([]string{"i"}, keys...)
+			}
+			m, cmds := typeKeys(m, keys...)
+			m, _ = settle(m, cmds)
+			if !menu(m) {
+				t.Fatal("completion menu did not open")
+			}
+			m, _ = typeKeys(m, "tab")
+			if got := editorText(m); got != "SELECT * FROM users" {
+				t.Errorf("editor = %q", got)
+			}
+			if menu(m) {
+				t.Error("menu still open after accepting")
+			}
+		})
+	}
+
+	t.Run("vim: the key entering insert mode opens no menu", func(t *testing.T) {
+		m := withSchema(newTestModalInEditor(t, true))
+		m = m.setQueryText("SELECT * FROM us")
+		qp := m.panes[paneQuery].(queryPaneAdapter)
+		qp.inner.editor.WithCompletionDebounce(time.Millisecond) // so the real tick fires in settle
+		m.panes[paneQuery] = qp
+		m, cmds := typeKeys(m, "A")
+		m, _ = settle(m, cmds)
+		if menu(m) {
+			t.Error("pressing A opened the completion menu")
+		}
+	})
+
+	t.Run("plain: esc closes the menu, not the editor", func(t *testing.T) {
+		m := withSchema(newTestModalInEditor(t, false))
+		m, cmds := typeKeys(m, "SELECT * FROM us", "ctrl+space")
+		m, _ = settle(m, cmds)
+		if !menu(m) {
+			t.Fatal("completion menu did not open")
+		}
+		m, _ = typeKeys(m, "esc")
+		if menu(m) || m.focus != paneQuery {
+			t.Errorf("menu open = %v, focus = %d; want closed, still in the editor", menu(m), m.focus)
+		}
+		m, _ = typeKeys(m, "esc")
+		if m.focus != paneSidebar {
+			t.Errorf("second esc: focus = %d, want explorer", m.focus)
+		}
+	})
+
+	t.Run("tables loaded give names, columns follow", func(t *testing.T) {
+		m := newTestModalInEditor(t, true)
+		m, _ = m.Update(TablesLoadedMsg{Objects: device.SQLiteObjects{
+			Tables: []device.SchemaObject{{Name: "users", DisplayName: "People"}},
+		}})
+		qp := m.panes[paneQuery].(queryPaneAdapter).inner
+		if tbl, ok := qp.schema.table("users"); !ok || len(tbl.Columns) != 0 {
+			t.Fatalf("after tables: %+v %v, want users without columns", tbl, ok)
+		}
+		m, _ = m.Update(SchemaColumnsLoadedMsg{Tables: []device.SchemaTable{{Name: "users", Columns: []string{"id"}}}})
+		qp = m.panes[paneQuery].(queryPaneAdapter).inner
+		if tbl, _ := qp.schema.table("users"); len(tbl.Columns) != 1 {
+			t.Errorf("after columns: %+v", tbl)
+		}
+		m, _ = m.Update(SchemaColumnsLoadedMsg{Err: errors.New("no such function: pragma_table_info")})
+		qp = m.panes[paneQuery].(queryPaneAdapter).inner
+		if _, ok := qp.schema.table("users"); !ok {
+			t.Error("a failed column load dropped the names")
+		}
+	})
 }

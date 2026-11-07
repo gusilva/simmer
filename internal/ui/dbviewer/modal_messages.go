@@ -48,6 +48,13 @@ type ColumnsLoadedMsg struct {
 	err  error
 }
 
+// SchemaColumnsLoadedMsg carries every table and view with its columns, for
+// completion.
+type SchemaColumnsLoadedMsg struct {
+	Tables []device.SchemaTable
+	Err    error
+}
+
 // QueryResultMsg carries the result of an executed SQL query.
 type QueryResultMsg struct {
 	Rows [][]string

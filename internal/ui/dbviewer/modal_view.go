@@ -187,7 +187,7 @@ func (m Modal) renderStatusRow(sb *strings.Builder, l layout, s viewerStyles) {
 	switch {
 	case m.focus == paneQuery && m.vimMode():
 		hints = strings.Join([]string{
-			s.Key.Render("^H") + s.Val.Render(" tables"),
+			s.Key.Render("Esc") + s.Val.Render(" tables"),
 			s.Key.Render(":w") + s.Val.Render(" save"),
 			s.Key.Render(":q") + s.Val.Render(" close"),
 		}, s.Faint.Render("  "))

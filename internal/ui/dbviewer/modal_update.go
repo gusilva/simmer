@@ -51,8 +51,11 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 	}
 
 	// When the save-as prompt is active in the query pane, route all input there
-	// so global shortcuts (esc, tab, etc.) don't fire underneath it.
-	if qp, ok := m.panes[paneQuery].(queryPaneAdapter); ok && qp.inner.PromptActive() {
+	// so global shortcuts (esc, tab, etc.) don't fire underneath it. Only
+	// input: results arriving meanwhile (tables, schema) are handled below.
+	_, isKey := msg.(tea.KeyPressMsg)
+	_, isPaste := msg.(tea.PasteMsg)
+	if qp, ok := m.panes[paneQuery].(queryPaneAdapter); ok && qp.inner.PromptActive() && (isKey || isPaste) {
 		next, cmd := qp.inner.Update(msg)
 		m.panes[paneQuery] = queryPaneAdapter{next}
 		return m, cmd
@@ -75,6 +78,17 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 				}
 				m.panes[paneSidebar] = ep
 			}
+			// Names complete at once; columns follow from one more query.
+			m = m.withQuerySchema(schemaFromObjects(tm.Objects))
+			return m, m.fetchSchemaColumnsCmd()
+		}
+		return m, nil
+	}
+
+	if sm, ok := msg.(SchemaColumnsLoadedMsg); ok {
+		// On failure completion keeps the names alone; Session logged why.
+		if sm.Err == nil {
+			m = m.withQuerySchema(newSQLSchema(sm.Tables))
 		}
 		return m, nil
 	}
@@ -194,10 +208,15 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 	// While the editor has focus it owns every key but the few the viewer
 	// keeps for moving between panes, running and saving.
 	if m.focus == paneQuery && !editorReservedKeys[k.String()] {
-		if k.String() == "esc" && !m.vimMode() {
-			return m.setFocus(paneSidebar)
-		}
 		var cmd tea.Cmd
+		if k.String() == "esc" && m.escLeavesEditor() {
+			// The editor still gets the Esc: it cancels a half-typed
+			// command ("d", "2") that would otherwise complete with the
+			// first key on coming back.
+			m.panes[paneQuery], cmd = m.panes[paneQuery].Update(msg)
+			m, focusCmd := m.setFocus(paneSidebar)
+			return m, tea.Batch(cmd, focusCmd)
+		}
 		m.panes[paneQuery], cmd = m.panes[paneQuery].Update(msg)
 		return m, cmd
 	}

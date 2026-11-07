@@ -90,6 +90,19 @@ func (s *Session) TableColumns(ctx context.Context, t DBTarget, table string) ([
 	return device.QueryTableColumns(ctx, s.logger, t.Device, t.PackageID, t.Path, table)
 }
 
+// SchemaColumns lists every table and view in the target with its columns,
+// in one query, for SQL completion.
+func (s *Session) SchemaColumns(ctx context.Context, t DBTarget) ([]device.SchemaTable, error) {
+	ctx, cancel := context.WithTimeout(ctx, schemaTimeout)
+	defer cancel()
+	tables, err := device.ListSchemaColumns(ctx, s.logger, t.Device, t.PackageID, t.Path)
+	if err != nil {
+		// Completion falls back to names alone; nothing else reports this.
+		s.logger.LogError("SQL completion without columns for "+t.Path, err)
+	}
+	return tables, err
+}
+
 // SQLiteVersion reports the SQLite engine version serving the target.
 func (s *Session) SQLiteVersion(ctx context.Context, t DBTarget) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, appsTimeout)

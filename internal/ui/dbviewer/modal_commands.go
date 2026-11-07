@@ -30,6 +30,15 @@ func (m Modal) fetchTablesCmd() tea.Cmd {
 	}
 }
 
+// fetchSchemaColumnsCmd lists every table's columns for completion.
+func (m Modal) fetchSchemaColumnsCmd() tea.Cmd {
+	sess, target := m.sess, m.target()
+	return func() tea.Msg {
+		tables, err := sess.SchemaColumns(context.Background(), target)
+		return SchemaColumnsLoadedMsg{Tables: tables, Err: err}
+	}
+}
+
 func (m Modal) fetchSQLiteVersionCmd() tea.Cmd {
 	sess, target := m.sess, m.target()
 	return func() tea.Msg {

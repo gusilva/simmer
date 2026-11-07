@@ -133,6 +133,31 @@ func (m Modal) vimMode() bool {
 	return ok && qp.inner.VimMode()
 }
 
+// completionMenuVisible reports whether the editor's completion menu is open.
+func (m Modal) completionMenuVisible() bool {
+	qp, ok := m.panes[paneQuery].(queryPaneAdapter)
+	return ok && qp.inner.CompletionMenuVisible()
+}
+
+// escLeavesEditor reports whether Esc moves focus out of the editor rather
+// than acting in it: when the completion menu is closed and, in vim mode, the
+// editor is already in normal mode — so insert → normal → explorer.
+func (m Modal) escLeavesEditor() bool {
+	qp, ok := m.panes[paneQuery].(queryPaneAdapter)
+	if !ok || qp.inner.CompletionMenuVisible() {
+		return false
+	}
+	return !qp.inner.VimMode() || qp.inner.modeLabel() == "NORMAL"
+}
+
+// withQuerySchema gives the query editor what to complete.
+func (m Modal) withQuerySchema(s sqlSchema) Modal {
+	if qp, ok := m.panes[paneQuery].(queryPaneAdapter); ok {
+		m.panes[paneQuery] = queryPaneAdapter{qp.inner.withSchema(s)}
+	}
+	return m
+}
+
 // EditorFocused reports whether the query editor has the keyboard, so the
 // app must pass it keys it would otherwise take for itself, such as "?".
 func (m Modal) EditorFocused() bool {

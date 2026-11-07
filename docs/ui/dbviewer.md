@@ -128,8 +128,8 @@ SQL editor above the horizontal divider.
 The editor is [goeditor](https://github.com/ionut-t/goeditor), used through the
 fork `github.com/gusilva/goeditor` until upstream releases two fixes Simmer
 needs (one signal listener at a time; `WithDarkBackground`, so creating the
-editor never queries the terminal under Bubble Tea). Swap the import back once
-ionut-t/goeditor#141 and #142 are released.
+editor never queries the terminal under Bubble Tea; `IsCompletionMenuVisible`).
+Swap the import back once ionut-t/goeditor#141, #142 and #143 are released.
 
 - Syntax colours: chroma's `sql` lexer with the `simmer` style registered from
   the theme palette (`editor_theme.go`).
@@ -171,12 +171,36 @@ The app also leaves `?` and `ctrl+d` to it.
 
 | Key | Vim mode | Plain mode |
 |---|---|---|
-| `Esc` | the editor's (leave insert, …) | focus the explorer |
+| `Esc` | insert/visual/command → normal; in normal mode, focus the explorer (cancelling any half-typed command) | focus the explorer |
 | `:w` / `:w name.sql` | save the Script / save as `name.sql` in the script directory | — |
 | `:q` (`:q!`, `:wq`) | close the viewer | — |
 
 A terminal paste (`tea.PasteMsg`) is fed to the editor as keys: inserted
 verbatim at the cursor as one undo step, in any mode.
+
+### Completion (`completion.go`)
+
+The schema comes in two steps when tables load: the explorer's table and view
+names at once, then every column from one `sqlite_master` ×
+`pragma_table_info` query (`device.ListSchemaColumns`, SQLite 3.16+). If that
+query fails, completion keeps the names and the Session logs why. It offers
+real identifiers only — double-quoted when needed — never the display labels
+a custom tables query adds.
+
+The menu opens by itself after an identifier character or `.` (120 ms
+debounce), or on `ctrl+space`; `ctrl+n`/`ctrl+p` move, `tab`/`enter`/`ctrl+y`
+accept, `esc`/`ctrl+e` dismiss (Esc only leaves the editor once the menu is
+closed). What it offers depends on the cursor's Statement:
+
+| Before the cursor | Offered |
+|---|---|
+| `x.` | columns of the table `x` names or aliases (anywhere in the Statement) |
+| `FROM`, `JOIN`, `INTO`, `UPDATE`, `TABLE`, or `,` in a FROM list | tables and views |
+| anything else | columns of the Statement's tables, functions (`count(`), keywords |
+
+Keywords and functions follow the case being typed. Nothing is offered in a
+string, quoted identifier or comment. The menu shows at most 8 items, fewer
+when the editor is too short to fit them.
 
 ### Statement at cursor (`StatementUnderCursor`)
 
