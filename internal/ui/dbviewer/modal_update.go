@@ -192,6 +192,16 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		}
 
 	case "esc", "q":
+		// The editor owns its keys: "q" is text, and Esc steps out to the
+		// explorer rather than closing the viewer under the user's typing.
+		if m.focus == paneQuery {
+			if k.String() == "esc" {
+				return m.setFocus(paneSidebar)
+			}
+			var cmd tea.Cmd
+			m.panes[paneQuery], cmd = m.panes[paneQuery].Update(msg)
+			return m, cmd
+		}
 		return m, m.onClose
 
 	case "tab":

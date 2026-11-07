@@ -23,6 +23,12 @@ _Avoid_: using "session" for where the user is in the TUI — that is the View s
 
 **App database** — A SQLite file an app reads or writes, wherever it keeps it: inside its own storage, or in shared storage that belongs to no app. A database's path cannot be derived from a bundle id, so it is discovered by listing — an app's storage, or a named directory — before it can be queried.
 
+**Statement** — One `;`-terminated unit of SQL in the DB viewer's editor: the thing that runs when the user runs what is under the cursor. A `;` inside a string literal or comment does not end a statement.
+_Avoid_: query (as a noun for the text)
+
+**Script** — A saved `.sql` file in the script directory, opened into the DB viewer's editor and holding any number of statements. "Query" is kept for the act of running SQL against an App database, never for the text or the file.
+_Avoid_: query file, query text
+
 **Dev menu trigger** — Opening the React Native dev menu on a device. Device-wide, not app-scoped: it acts on whatever app is in the foreground. It reaches an app through the Metro server that app is connected to, not through a key press, because some device makers remap the Menu key to recent apps. A trigger that cannot reach a Metro the app is connected to is reported as a failure, never as success.
 
 **App Metro port** — The Metro port a debuggable Android app has saved as its bundler location. It decides which Metro a dev menu trigger must be sent to; it can differ from the port Metro or the device tunnel actually uses.

@@ -105,11 +105,10 @@ func (p QueryPane) FocusEditor() (QueryPane, tea.Cmd) {
 // Value returns the current editor content.
 func (p QueryPane) Value() string { return p.editor.Value() }
 
-// StatementUnderCursor returns the SQL statement that contains the current
-// cursor line. A statement is delimited by ";" characters. If the cursor sits
-// on a blank line between statements the next statement is returned.
+// StatementUnderCursor returns the Statement under the editor's cursor; see
+// statementAt for how a cursor between Statements is resolved.
 func (p QueryPane) StatementUnderCursor() string {
-	return statementAtLine(p.editor.Value(), p.editor.Line())
+	return statementAt(p.editor.Value(), p.editor.Line(), p.editor.Column())
 }
 
 // LoadScript loads file content into the editor and marks the file as clean.
@@ -365,42 +364,4 @@ func (p QueryPane) renderQueryHead(width int) string {
 		dot
 
 	return rh.ExactWidth(left, width)
-}
-
-// statementAtLine extracts the SQL statement that contains cursorLine (0-indexed)
-// from text. Statements are delimited by ";". The search scans backward for the
-// previous ";" then forward for the next ";" to find the boundaries.
-func statementAtLine(text string, cursorLine int) string {
-	lines := strings.Split(text, "\n")
-	if len(lines) == 0 {
-		return strings.TrimSpace(text)
-	}
-	if cursorLine < 0 {
-		cursorLine = 0
-	}
-	if cursorLine >= len(lines) {
-		cursorLine = len(lines) - 1
-	}
-
-	// Scan backward from the line before cursor to find where the current
-	// statement starts (the line after the previous ";").
-	start := 0
-	for i := cursorLine - 1; i >= 0; i-- {
-		if strings.Contains(lines[i], ";") {
-			start = i + 1
-			break
-		}
-	}
-
-	// Scan forward from cursor to find where the current statement ends (the
-	// line that contains the next ";").
-	end := len(lines) - 1
-	for i := cursorLine; i < len(lines); i++ {
-		if strings.Contains(lines[i], ";") {
-			end = i
-			break
-		}
-	}
-
-	return strings.TrimSpace(strings.Join(lines[start:end+1], "\n"))
 }

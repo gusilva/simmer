@@ -5,17 +5,17 @@ import (
 	"testing"
 )
 
-// ---------- statementAtLine ----------
+// ---------- statementAt ----------
 
-func TestStatementAtLine_SingleStatement(t *testing.T) {
+func TestStatementAt_SingleStatement(t *testing.T) {
 	text := "SELECT * FROM users;"
-	got := statementAtLine(text, 0)
+	got := statementAt(text, 0, 0)
 	if got != "SELECT * FROM users;" {
 		t.Errorf("got %q", got)
 	}
 }
 
-func TestStatementAtLine_MultipleStatements(t *testing.T) {
+func TestStatementAt_MultipleStatements(t *testing.T) {
 	text := "SELECT 1;\nSELECT 2;\nSELECT 3;"
 	tests := []struct {
 		line int
@@ -26,60 +26,60 @@ func TestStatementAtLine_MultipleStatements(t *testing.T) {
 		{2, "SELECT 3;"},
 	}
 	for _, tc := range tests {
-		got := statementAtLine(text, tc.line)
+		got := statementAt(text, tc.line, 0)
 		if got != tc.want {
 			t.Errorf("line %d: got %q, want %q", tc.line, got, tc.want)
 		}
 	}
 }
 
-func TestStatementAtLine_MultilineStatement(t *testing.T) {
+func TestStatementAt_MultilineStatement(t *testing.T) {
 	text := "SELECT *\nFROM users\nWHERE id = 1;"
 	// All lines belong to the same statement.
 	for line := 0; line <= 2; line++ {
-		got := statementAtLine(text, line)
+		got := statementAt(text, line, 0)
 		if !strings.Contains(got, "SELECT") || !strings.Contains(got, "WHERE") {
 			t.Errorf("line %d: missing full statement, got %q", line, got)
 		}
 	}
 }
 
-func TestStatementAtLine_CursorOnBlankLineBetweenStatements(t *testing.T) {
+func TestStatementAt_CursorOnBlankLineBetweenStatements(t *testing.T) {
 	// Blank line between two statements — cursor picks up the next statement.
 	text := "SELECT 1;\n\nSELECT 2;"
-	got := statementAtLine(text, 1) // blank line
+	got := statementAt(text, 1, 0) // blank line
 	// Should return either one of the surrounding statements (not empty).
 	if got == "" {
 		t.Errorf("expected non-empty statement for blank line cursor, got empty")
 	}
 }
 
-func TestStatementAtLine_EmptyText(t *testing.T) {
-	got := statementAtLine("", 0)
+func TestStatementAt_EmptyText(t *testing.T) {
+	got := statementAt("", 0, 0)
 	if got != "" {
 		t.Errorf("expected empty for empty text, got %q", got)
 	}
 }
 
-func TestStatementAtLine_NegativeLine(t *testing.T) {
+func TestStatementAt_NegativeLine(t *testing.T) {
 	text := "SELECT 1;"
-	got := statementAtLine(text, -5)
+	got := statementAt(text, -5, 0)
 	if got != "SELECT 1;" {
 		t.Errorf("got %q", got)
 	}
 }
 
-func TestStatementAtLine_LineExceedsLength(t *testing.T) {
+func TestStatementAt_LineExceedsLength(t *testing.T) {
 	text := "SELECT 1;"
-	got := statementAtLine(text, 999)
+	got := statementAt(text, 999, 0)
 	if got != "SELECT 1;" {
 		t.Errorf("got %q", got)
 	}
 }
 
-func TestStatementAtLine_TrimsSurroundingWhitespace(t *testing.T) {
+func TestStatementAt_TrimsSurroundingWhitespace(t *testing.T) {
 	text := "  SELECT 1;  "
-	got := statementAtLine(text, 0)
+	got := statementAt(text, 0, 0)
 	if strings.HasPrefix(got, " ") || strings.HasSuffix(got, " ") {
 		t.Errorf("result not trimmed: %q", got)
 	}

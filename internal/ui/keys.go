@@ -364,7 +364,7 @@ var DBViewerKeys = DBViewerKeyMap{
 	RunAll:       key.NewBinding(key.WithKeys("ctrl+enter"), key.WithHelp("ctrl+enter", "run all")),
 	Save:         key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("ctrl+s", "save query")),
 	Settings:     key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("ctrl+s (no query)", "settings")),
-	Close:        key.NewBinding(key.WithKeys("esc", "q"), key.WithHelp("esc/q", "close")),
+	Close:        key.NewBinding(key.WithKeys("esc", "q"), key.WithHelp("esc/q", "close (esc in query → tables)")),
 }
 
 // ── Shared helpers ───────────────────────────────────────────────────────────

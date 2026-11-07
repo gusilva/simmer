@@ -176,9 +176,13 @@ func (m Modal) renderStatusRow(sb *strings.Builder, l layout, s viewerStyles) {
 		left += s.Bg.Render("  ") + statsOrMsg
 	}
 
+	escHint := " close"
+	if m.focus == paneQuery {
+		escHint = " tables"
+	}
 	hints := strings.Join([]string{
 		s.Key.Render("?") + s.Val.Render(" help"),
-		s.Key.Render("Esc") + s.Val.Render(" close"),
+		s.Key.Render("Esc") + s.Val.Render(escHint),
 	}, s.Faint.Render("  "))
 
 	width := l.InnerW
