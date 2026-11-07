@@ -4,7 +4,17 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	goeditor "github.com/gusilva/goeditor"
 )
+
+// editorReservedKeys are the keys the viewer keeps while the query editor has
+// focus. Every other key, Esc included in vim mode, belongs to the editor.
+var editorReservedKeys = map[string]bool{
+	"ctrl+h": true, "ctrl+j": true, "ctrl+k": true, "ctrl+l": true, // panes
+	"f5": true, "ctrl+enter": true, // run
+	"ctrl+s": true, "super+s": true, // save-as prompt
+	"super+v": true, // paste for terminals without bracketed paste
+}
 
 func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 	// Settings messages are handled regardless of settingsOpen (save is async).
@@ -17,7 +27,7 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 			cfg := m.sess.Config()
 			m.scriptDir = cfg.ScriptPath
 			if qp, ok := m.panes[paneQuery].(queryPaneAdapter); ok {
-				m.panes[paneQuery] = queryPaneAdapter{qp.inner.withScriptDir(cfg.ScriptPath)}
+				m.panes[paneQuery] = queryPaneAdapter{qp.inner.withScriptDir(cfg.ScriptPath).withVimMode(cfg.VimMode)}
 			}
 			return m, tea.Batch(m.fetchTablesCmd(), m.fetchScriptsCmd())
 		}
@@ -33,6 +43,11 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		var cmd tea.Cmd
 		m.settings, cmd = m.settings.Update(msg)
 		return m, cmd
+	}
+
+	// :q in the editor closes the viewer, the way Esc does from other panes.
+	if _, ok := msg.(goeditor.QuitMsg); ok {
+		return m, m.onClose
 	}
 
 	// When the save-as prompt is active in the query pane, route all input there
@@ -166,8 +181,24 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 
 	k, ok := msg.(tea.KeyPressMsg)
 	if !ok {
-		var cmd tea.Cmd
+		// The editor's own messages (its signals, :w, errors, timers) are
+		// private types that must reach it whichever pane has focus.
+		var cmd, qcmd tea.Cmd
 		m.panes[m.focus], cmd = m.panes[m.focus].Update(msg)
+		if m.focus != paneQuery {
+			m.panes[paneQuery], qcmd = m.panes[paneQuery].Update(msg)
+		}
+		return m, tea.Batch(cmd, qcmd)
+	}
+
+	// While the editor has focus it owns every key but the few the viewer
+	// keeps for moving between panes, running and saving.
+	if m.focus == paneQuery && !editorReservedKeys[k.String()] {
+		if k.String() == "esc" && !m.vimMode() {
+			return m.setFocus(paneSidebar)
+		}
+		var cmd tea.Cmd
+		m.panes[paneQuery], cmd = m.panes[paneQuery].Update(msg)
 		return m, cmd
 	}
 
@@ -192,16 +223,6 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		}
 
 	case "esc", "q":
-		// The editor owns its keys: "q" is text, and Esc steps out to the
-		// explorer rather than closing the viewer under the user's typing.
-		if m.focus == paneQuery {
-			if k.String() == "esc" {
-				return m.setFocus(paneSidebar)
-			}
-			var cmd tea.Cmd
-			m.panes[paneQuery], cmd = m.panes[paneQuery].Update(msg)
-			return m, cmd
-		}
 		return m, m.onClose
 
 	case "tab":

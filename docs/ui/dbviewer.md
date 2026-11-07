@@ -123,11 +123,27 @@ SQL editor above the horizontal divider.
   5│ SELECT count(*) FROM sessions;
 ```
 
-### State
+### Editor
+
+The editor is [goeditor](https://github.com/ionut-t/goeditor), used through the
+fork `github.com/gusilva/goeditor` until upstream releases two fixes Simmer
+needs (one signal listener at a time; `WithDarkBackground`, so creating the
+editor never queries the terminal under Bubble Tea). Swap the import back once
+ionut-t/goeditor#141 and #142 are released.
+
+- Syntax colours: chroma's `sql` lexer with the `simmer` style registered from
+  the theme palette (`editor_theme.go`).
+- **Vim mode** (`vim_mode` in `config.toml`, global, on by default; toggled in
+  the settings form): normal, insert, visual, command and search modes. The
+  editor's own status line is hidden; its mode drives the badge in the
+  viewer's status row. Its command line shows `:` commands and errors.
+- Plain mode: the editor is always inserting.
 
 ```go
 type QueryPane struct {
-    editor   textarea.Model
+    editor   goeditor.Model
+    vim      bool          // modal editing
+    width, height int      // size last applied; set in Update via withSize
     filePath string        // default: "untitled-1.sql"
     state    fileState     // New | Clean | Dirty
 }
@@ -140,28 +156,41 @@ type fileState int  // fileStateNew | fileStateClean | fileStateDirty
 - `●` green — file matches disk
 - `●` yellow — unsaved local changes
 
-On startup, `newQueryPane` tries to read `untitled-1.sql` from the current
+On startup, `newQueryPane` tries to read `untitled-1.sql` from the script
 directory. If found, content is loaded and state is `fileStateClean`; if
 missing, state is `fileStateNew`.
 
+The editor is sized in `Update` (`Modal.SetSize` → `withSize`), not while
+rendering: it scrolls against the size it was last given.
+
+### Keys while the editor has focus
+
+The editor gets every key except `ctrl+h/j/k/l` (move between panes), `F5`,
+`ctrl+enter`, `ctrl+s` / `super+s` (save-as prompt) and `super+v` (paste).
+The app also leaves `?` and `ctrl+d` to it.
+
+| Key | Vim mode | Plain mode |
+|---|---|---|
+| `Esc` | the editor's (leave insert, …) | focus the explorer |
+| `:w` / `:w name.sql` | save the Script / save as `name.sql` in the script directory | — |
+| `:q` (`:q!`, `:wq`) | close the viewer | — |
+
+A terminal paste (`tea.PasteMsg`) is fed to the editor as keys: inserted
+verbatim at the cursor as one undo step, in any mode.
+
 ### Statement at cursor (`StatementUnderCursor`)
 
-```go
-func (p QueryPane) StatementUnderCursor() string {
-    return statementAtLine(p.editor.Value(), p.editor.Line())
-}
-```
+`statementAt(text, line, col)` (`statement.go`) splits the buffer into
+Statements at each `;` SQLite treats as a terminator — not inside a string,
+a quoted identifier (`"…"`, `` `…` ``, `[…]`) or a comment, and not inside a
+`CREATE TRIGGER … BEGIN … END` body. A cursor after a `;` on the same line
+belongs to that Statement; one elsewhere between Statements picks the next.
 
-`statementAtLine` scans backward from the cursor line to find the previous `;`
-(start boundary), then forward to find the next `;` (end boundary), and returns
-the trimmed joined lines. Cursor on a blank line between statements returns the
-next statement.
-
-This is what `F5` runs. `Ctrl+Enter` runs `editor.Value()` (full content).
+This is what `F5` runs. `Ctrl+Enter` runs the full content.
 
 ### File save
 
-`SaveCmd()` captures `editor.Value()` and `filePath` into a closure; the file
+`SaveCmd()` captures the editor content and `filePath` into a closure; the file
 write happens in a goroutine. `FileSavedMsg{Err}` is returned. On success the
 state transitions to `fileStateClean`.
 

@@ -18,9 +18,10 @@ type settingsFocus int
 const (
 	settingsFocusScript settingsFocus = iota
 	settingsFocusQuery
+	settingsFocusVim
 	settingsFocusCancel
 	settingsFocusSave
-	settingsFocusCount = 4
+	settingsFocusCount = 5
 )
 
 // Settings is the in-overlay settings form shown when the user presses Ctrl+S.
@@ -28,6 +29,7 @@ type Settings struct {
 	dbName       string // database this settings form is editing
 	scriptPath   textinput.Model
 	tablesQuery  textarea.Model
+	vimMode      bool // global, unlike the two fields above
 	focus        settingsFocus
 	rh           renderHelpers
 	picker       filepicker.Model
@@ -88,6 +90,7 @@ func newSettings(cfg config.Config, dbName string) Settings {
 		dbName:      dbName,
 		scriptPath:  si,
 		tablesQuery: tq,
+		vimMode:     cfg.VimMode,
 		focus:       settingsFocusScript,
 		rh:          newRenderHelpers(),
 		picker:      fp,
@@ -131,10 +134,19 @@ func (s Settings) Update(msg tea.Msg) (Settings, tea.Cmd) {
 		case "esc":
 			return s, func() tea.Msg { return SettingsCancelMsg{} }
 		case "super+s":
-			return s, saveDBConfigCmd(s.dbName, s.currentDBConfig())
+			return s, saveSettingsCmd(s.dbName, s.currentDBConfig(), s.vimMode)
+		case "space":
+			if s.focus == settingsFocusVim {
+				s.vimMode = !s.vimMode
+				return s, nil
+			}
 		case "enter":
+			if s.focus == settingsFocusVim {
+				s.vimMode = !s.vimMode
+				return s, nil
+			}
 			if s.focus == settingsFocusSave {
-				return s, saveDBConfigCmd(s.dbName, s.currentDBConfig())
+				return s, saveSettingsCmd(s.dbName, s.currentDBConfig(), s.vimMode)
 			}
 			if s.focus == settingsFocusCancel {
 				return s, func() tea.Msg { return SettingsCancelMsg{} }
@@ -268,6 +280,23 @@ func (s *Settings) Rows(width, height int) []string {
 		for _, l := range strings.Split(box, "\n") {
 			emit(pad(l))
 		}
+	}
+
+	emit(rh.BlankN(width))
+
+	// Vim mode — global, so it says so.
+	{
+		box := "[ ]"
+		if s.vimMode {
+			box = "[x]"
+		}
+		lblS, boxS := fgS, dimS
+		hint := faintS.Render("  all databases")
+		if s.focus == settingsFocusVim {
+			lblS, boxS = accentS, accentS
+			hint = faintS.Render("  Space to toggle · all databases")
+		}
+		emit(pad(boxS.Render(box) + rh.BlankN(1) + lblS.Render("Vim keys in the query editor") + hint))
 	}
 
 	// Push buttons to bottom, leaving one blank row above them.

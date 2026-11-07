@@ -148,11 +148,16 @@ func (m Modal) renderStatusSep(sb *strings.Builder, l layout, s viewerStyles) {
 }
 
 func (m Modal) renderStatusRow(sb *strings.Builder, l layout, s viewerStyles) {
-	var modeBadge string
+	// Outside the editor the viewer navigates (NORMAL); in it, the badge is
+	// the editor's own vim mode, or INSERT when editing is plain.
+	modeBadge := s.ModeBadgeNormal.Render("NORMAL")
 	if m.focus == paneQuery {
 		modeBadge = s.ModeBadgeInsert.Render("INSERT")
-	} else {
-		modeBadge = s.ModeBadgeNormal.Render("NORMAL")
+		if qp, ok := m.panes[paneQuery].(queryPaneAdapter); ok {
+			if mode := qp.inner.modeLabel(); mode != "" {
+				modeBadge = modeBadgeStyle(mode).Render(mode)
+			}
+		}
 	}
 
 	// Transient status message (errors, save confirmation) takes priority over query stats.
@@ -176,14 +181,27 @@ func (m Modal) renderStatusRow(sb *strings.Builder, l layout, s viewerStyles) {
 		left += s.Bg.Render("  ") + statsOrMsg
 	}
 
-	escHint := " close"
-	if m.focus == paneQuery {
-		escHint = " tables"
+	// While the editor has focus "?" and Esc are its keys, so the hints
+	// name what leaves it instead.
+	var hints string
+	switch {
+	case m.focus == paneQuery && m.vimMode():
+		hints = strings.Join([]string{
+			s.Key.Render("^H") + s.Val.Render(" tables"),
+			s.Key.Render(":w") + s.Val.Render(" save"),
+			s.Key.Render(":q") + s.Val.Render(" close"),
+		}, s.Faint.Render("  "))
+	case m.focus == paneQuery:
+		hints = strings.Join([]string{
+			s.Key.Render("Esc") + s.Val.Render(" tables"),
+			s.Key.Render("^S") + s.Val.Render(" save"),
+		}, s.Faint.Render("  "))
+	default:
+		hints = strings.Join([]string{
+			s.Key.Render("?") + s.Val.Render(" help"),
+			s.Key.Render("Esc") + s.Val.Render(" close"),
+		}, s.Faint.Render("  "))
 	}
-	hints := strings.Join([]string{
-		s.Key.Render("?") + s.Val.Render(" help"),
-		s.Key.Render("Esc") + s.Val.Render(escHint),
-	}, s.Faint.Render("  "))
 
 	width := l.InnerW
 	gap := max(width-lipgloss.Width(left)-lipgloss.Width(hints), 1)

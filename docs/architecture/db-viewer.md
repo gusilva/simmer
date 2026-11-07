@@ -2,7 +2,8 @@
 
 A self-contained full-screen TUI overlay for inspecting SQLite databases
 on connected devices. Launched from the main pane when the user selects a
-`.db` file; dismissed with `Esc` or `q`.
+`.db` file; dismissed with `Esc` or `q` from the explorer or results, or
+`:q` from the editor in vim mode.
 
 > Stateless pane interface + async Cmds + row-slice compositor — no nested Bubble Tea programs.
 
@@ -21,7 +22,9 @@ dbviewer/
   pane.go             — pane interface + three adapters (explorer/query/results)
   explorer.go         — Explorer: tree sidebar (tables/views/indexes/triggers)
   explorer_data.go    — explorerNode tree builder + filteredVisibleItems
-  query_pane.go       — QueryPane: textarea SQL editor + file state
+  query_pane.go       — QueryPane: goeditor SQL editor (vim or plain) + file state
+statement.go        — splitting the buffer into Statements for F5
+editor_theme.go     — chroma style and editor theme from the Simmer palette
   results_pane.go     — ResultsPane: bubbles/table result grid
   settings.go         — Settings: inline config form (script path + tables query)
   render_helpers.go   — renderHelpers: blank/fill/sep primitives
@@ -153,8 +156,16 @@ Key constants:
                     QueryResultMsg, FileSavedMsg) → update model fields
 4. Paste / Clipboard messages → forward to focused pane
 5. Mouse messages → handleMouseClick / handleMouseWheel
-6. Key messages → key switch (global shortcuts then pane forwarding)
+6. Other non-key messages → focused pane, and always the query pane too:
+   the editor's signals and timers are private types it must receive
+7. Key messages → while the editor has focus, every key but the reserved
+   ones goes to it; otherwise the key switch (global shortcuts then pane
+   forwarding)
 ```
+
+Reserved while the editor has focus: `ctrl+h/j/k/l`, `f5`, `ctrl+enter`,
+`ctrl+s`, `super+s`, `super+v`. `Esc` goes to the editor in vim mode and
+focuses the explorer in plain mode.
 
 Global key bindings:
 
@@ -172,7 +183,8 @@ Global key bindings:
 | `ctrl+h` | Focus sidebar (or collapse if already focused) |
 | `space` (sidebar) | Build SELECT query for selected node and run it |
 | `enter` (sidebar) | Expand node / fetch columns |
-| `esc` / `q` | Close overlay |
+| `esc` / `q` | Close overlay (not from the editor) |
+| `:q` (editor, vim) | Close overlay (`goeditor.QuitMsg`) |
 
 ### Paste pipeline
 
@@ -249,12 +261,14 @@ content — not a separate Bubble Tea program or overlay compositor layer.
 type Settings struct {
     scriptPath  textinput.Model   // single-line path input
     tablesQuery textarea.Model    // multi-line SQL input
-    focus       settingsFocus     // Script | Query | Cancel | Save
+    vimMode     bool              // global, saved as vim_mode
+    focus       settingsFocus     // Script | Query | Vim | Cancel | Save
     rh          renderHelpers
 }
 ```
 
-`settingsFocus` cycles: Script → Query → Cancel → Save → Script.
+`settingsFocus` cycles: Script → Query → Vim → Cancel → Save → Script.
+`space` or `enter` on Vim toggles it.
 
 Key bindings inside the form:
 

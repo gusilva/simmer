@@ -97,8 +97,12 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
+		// The DB viewer's query editor owns its keys: "?" searches backwards
+		// and ctrl+d scrolls in vim, so neither may be taken from it.
+		editorKeys := m.dbViewerModal != nil && m.dbViewerModal.EditorFocused() && m.helpOverlay == nil
+
 		// ? toggles context-aware help; esc also closes it.
-		if msg.String() == "?" || (msg.String() == "esc" && m.helpOverlay != nil) {
+		if (msg.String() == "?" && !editorKeys) || (msg.String() == "esc" && m.helpOverlay != nil) {
 			if m.helpOverlay != nil {
 				m.helpOverlay = nil
 				return m, nil
@@ -114,7 +118,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// ctrl+d toggles the DB viewer regardless of focus or overlay state.
 		// [TODO] remove it. Used only for testing and debugging.
-		if msg.String() == "ctrl+d" {
+		if msg.String() == "ctrl+d" && !editorKeys {
 			if m.dbViewerModal != nil {
 				m.dbViewerModal = nil
 				return m, nil

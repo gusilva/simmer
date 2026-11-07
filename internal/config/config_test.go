@@ -425,3 +425,47 @@ func TestSaveLoad_SpecialCharsInDBName(t *testing.T) {
 		t.Errorf("db with special name not preserved: got %+v", loaded.Databases)
 	}
 }
+
+func TestLoad_VimMode(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{"absent defaults to on", `script_path = "/s"`, true},
+		{"off", "vim_mode = false", false},
+		{"on", "vim_mode = true", true},
+		{"unparseable keeps default", `vim_mode = "maybe"`, true},
+		{"per-db key is ignored", "[db.\"app.db\"]\nvim_mode = false", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			restore := writeConfigFile(t, tc.content)
+			defer restore()
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.VimMode != tc.want {
+				t.Errorf("VimMode = %v, want %v", cfg.VimMode, tc.want)
+			}
+		})
+	}
+}
+
+func TestSaveLoad_VimModeOff(t *testing.T) {
+	restore := writeConfigFile(t, "")
+	defer restore()
+	cfg := Default()
+	cfg.VimMode = false
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.VimMode {
+		t.Error("VimMode = true after saving false")
+	}
+}

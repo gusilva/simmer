@@ -108,6 +108,9 @@ func (m *Modal) SetSize(w, h int) {
 	l := computeLayout(w, h)
 	rp := m.panes[paneResults].(resultsPaneAdapter)
 	m.panes[paneResults] = resultsPaneAdapter{rp.inner.withHeight(l.ResultsH)}
+	if qp, ok := m.panes[paneQuery].(queryPaneAdapter); ok {
+		m.panes[paneQuery] = queryPaneAdapter{qp.inner.withSize(l.RightW, l.QueryH)}
+	}
 	if m.settingsOpen && m.settings.pickerActive {
 		m.settings.picker.SetHeight(m.pickerBodyH())
 	}
@@ -122,6 +125,18 @@ func (m Modal) setFocus(idx int) (Modal, tea.Cmd) {
 	var cmd tea.Cmd
 	m.panes[idx], cmd = m.panes[idx].Focus()
 	return m, cmd
+}
+
+// vimMode reports whether the query editor is modal.
+func (m Modal) vimMode() bool {
+	qp, ok := m.panes[paneQuery].(queryPaneAdapter)
+	return ok && qp.inner.VimMode()
+}
+
+// EditorFocused reports whether the query editor has the keyboard, so the
+// app must pass it keys it would otherwise take for itself, such as "?".
+func (m Modal) EditorFocused() bool {
+	return !m.settingsOpen && m.focus == paneQuery
 }
 
 // setQueryText sets the query editor content without changing focus.

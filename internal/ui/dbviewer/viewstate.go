@@ -43,8 +43,8 @@ func (m Modal) SelectedTable() string {
 // marking it as unsaved work.
 func (m *Modal) RestoreQuery(sql string) {
 	if qp, ok := m.panes[paneQuery].(queryPaneAdapter); ok {
-		qp.inner.editor.SetValue(sql)
-		qp.inner.editor.MoveToEnd()
+		qp.inner.editor.SetContent(sql)
+		_ = qp.inner.editor.SetCursorPositionEnd()
 		m.panes[paneQuery] = qp
 	}
 }

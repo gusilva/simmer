@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -38,7 +39,11 @@ func (d DBConfig) EffectiveTablesQuery() string {
 type Config struct {
 	ScriptPath  string // global default
 	TablesQuery string // global default
-	Databases   map[string]DBConfig
+	// VimMode makes the DB viewer's query editor modal (normal, insert,
+	// visual, command). Global only: it is how the user edits, not a
+	// property of any database.
+	VimMode   bool
+	Databases map[string]DBConfig
 }
 
 // Default returns factory settings.
@@ -46,6 +51,7 @@ func Default() Config {
 	return Config{
 		ScriptPath:  "./",
 		TablesQuery: DefaultTablesQuery,
+		VimMode:     true,
 	}
 }
 
@@ -175,6 +181,10 @@ func Load() (Config, error) {
 				cfg.ScriptPath = v
 			case "tables_query":
 				cfg.TablesQuery = v
+			case "vim_mode":
+				if b, err := strconv.ParseBool(v); err == nil {
+					cfg.VimMode = b
+				}
 			}
 		}
 	}
@@ -195,6 +205,7 @@ func Save(cfg Config) error {
 	sb.WriteString("# simmer configuration\n\n")
 	sb.WriteString("script_path = " + quoteTOML(cfg.ScriptPath) + "\n")
 	sb.WriteString("tables_query = " + quoteTOML(cfg.TablesQuery) + "\n")
+	sb.WriteString("vim_mode = " + strconv.FormatBool(cfg.VimMode) + "\n")
 
 	// Write per-db sections in deterministic order (sorted by name).
 	if len(cfg.Databases) > 0 {

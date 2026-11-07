@@ -5,14 +5,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"simmer/internal/config"
 	"simmer/internal/theme"
 
-	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	goeditor "github.com/gusilva/goeditor"
 )
 
 // FileSavedMsg is returned after a save attempt completes.
@@ -28,11 +29,14 @@ const (
 
 const defaultQueryFile = "untitled-1.sql"
 
-// QueryPane renders the query head and the textarea editor in the right pane
+// QueryPane renders the query head and the SQL editor in the right pane
 // above the horizontal divider.
 type QueryPane struct {
 	activeTab    int
-	editor       textarea.Model
+	editor       goeditor.Model
+	vim          bool // the editor is modal (normal/insert/…) rather than plain
+	width        int  // pane size last applied to the editor
+	height       int
 	savePrompt   textinput.Model
 	promptActive bool
 	rh           renderHelpers
@@ -41,42 +45,28 @@ type QueryPane struct {
 	state        fileState
 }
 
-func newQueryPane(cfg config.Config) QueryPane {
-	ta := textarea.New()
-	ta.Placeholder = "Write SQL here…"
-	ta.ShowLineNumbers = true
-	ta.Prompt = " "
-	ta.EndOfBufferCharacter = 0
-	ta.CharLimit = 0
+// queryHeadRows is the query head plus its separator, above the editor.
+const queryHeadRows = 2
 
-	s := textarea.DefaultDarkStyles()
-	s.Focused.Base = lipgloss.NewStyle().Background(theme.ColorBg)
-	s.Focused.Text = lipgloss.NewStyle().Foreground(theme.ColorFg).Background(theme.ColorBg)
-	s.Focused.LineNumber = lipgloss.NewStyle().Foreground(theme.ColorFgFaint).Background(theme.ColorBg)
-	s.Focused.CursorLineNumber = lipgloss.NewStyle().Foreground(theme.ColorAccent).Background(theme.ColorBg).Bold(true)
-	s.Focused.CursorLine = lipgloss.NewStyle().Background(theme.ColorBg)
-	s.Focused.Prompt = lipgloss.NewStyle().Background(theme.ColorBg)
-	s.Focused.EndOfBuffer = lipgloss.NewStyle().Foreground(theme.ColorFgFaint).Background(theme.ColorBg)
-	s.Blurred.Base = lipgloss.NewStyle().Background(theme.ColorBg)
-	s.Blurred.Text = lipgloss.NewStyle().Foreground(theme.ColorFgDim).Background(theme.ColorBg)
-	s.Blurred.LineNumber = lipgloss.NewStyle().Foreground(theme.ColorFgFaint).Background(theme.ColorBg)
-	s.Blurred.CursorLine = lipgloss.NewStyle().Background(theme.ColorBg)
-	s.Blurred.Prompt = lipgloss.NewStyle().Background(theme.ColorBg)
-	s.Blurred.EndOfBuffer = lipgloss.NewStyle().Foreground(theme.ColorFgFaint).Background(theme.ColorBg)
-	ta.SetStyles(s)
+func newQueryPane(cfg config.Config) QueryPane {
+	// Simmer paints the terminal background itself, so the editor must not
+	// ask the terminal: that would read stdin under Bubble Tea's feet.
+	ed := goeditor.New(80, 10, goeditor.WithDarkBackground(true))
+	ed.WithTheme(editorTheme())
+	ed.SetLanguage(sqlLexer, sqlStyle)
+	ed.HideStatusLine(true)
+	ed.SetPlaceholder("Write SQL here…")
+	ed.DisableVimMode(!cfg.VimMode)
 
 	scriptDir := cfg.ScriptPath
 
 	state := fileStateNew
-	content := ""
 	fullPath := filepath.Join(scriptDir, defaultQueryFile)
 	if data, err := os.ReadFile(fullPath); err == nil {
-		content = string(data)
+		ed.SetContent(string(data))
 		state = fileStateClean
 	}
-
-	ta.SetValue(content)
-	ta.Blur()
+	ed.Blur()
 
 	sp := textinput.New()
 	sp.Placeholder = "path/to/query.sql"
@@ -88,7 +78,10 @@ func newQueryPane(cfg config.Config) QueryPane {
 
 	return QueryPane{
 		activeTab:  0,
-		editor:     ta,
+		editor:     ed,
+		vim:        cfg.VimMode,
+		width:      80,
+		height:     10 + queryHeadRows,
 		savePrompt: sp,
 		rh:         newRenderHelpers(),
 		filePath:   defaultQueryFile,
@@ -98,24 +91,25 @@ func newQueryPane(cfg config.Config) QueryPane {
 }
 
 func (p QueryPane) FocusEditor() (QueryPane, tea.Cmd) {
-	cmd := p.editor.Focus()
-	return p, cmd
+	p.editor.Focus()
+	return p, nil
 }
 
 // Value returns the current editor content.
-func (p QueryPane) Value() string { return p.editor.Value() }
+func (p QueryPane) Value() string { return p.editor.GetCurrentContent() }
 
 // StatementUnderCursor returns the Statement under the editor's cursor; see
 // statementAt for how a cursor between Statements is resolved.
 func (p QueryPane) StatementUnderCursor() string {
-	return statementAt(p.editor.Value(), p.editor.Line(), p.editor.Column())
+	pos := p.editor.GetCursorPosition()
+	return statementAt(p.Value(), pos.Row, pos.Col)
 }
 
 // LoadScript loads file content into the editor and marks the file as clean.
 // filePath is just the base filename; scriptDir is kept from the current config.
 func (p QueryPane) LoadScript(content, fileName string) QueryPane {
-	p.editor.SetValue(content)
-	p.editor.MoveToEnd()
+	p.editor.SetContent(content)
+	_ = p.editor.SetCursorPositionEnd()
 	p.filePath = fileName
 	p.state = fileStateClean
 	return p
@@ -123,8 +117,8 @@ func (p QueryPane) LoadScript(content, fileName string) QueryPane {
 
 // SetQuery replaces the editor content and moves the cursor to the end.
 func (p QueryPane) SetQuery(sql string) QueryPane {
-	p.editor.SetValue(sql)
-	p.editor.MoveToEnd()
+	p.editor.SetContent(sql)
+	_ = p.editor.SetCursorPositionEnd()
 	p.state = fileStateDirty
 
 	return p
@@ -137,6 +131,30 @@ func (p QueryPane) BlurEditor() QueryPane {
 
 func (p QueryPane) withScriptDir(dir string) QueryPane {
 	p.scriptDir = dir
+	return p
+}
+
+// withVimMode switches the editor between modal (vim) and plain editing.
+func (p QueryPane) withVimMode(on bool) QueryPane {
+	if p.vim != on {
+		p.editor.DisableVimMode(!on)
+		p.vim = on
+	}
+	return p
+}
+
+// VimMode reports whether the editor is modal.
+func (p QueryPane) VimMode() bool { return p.vim }
+
+// withSize sizes the editor to the pane, minus the query head. It has to
+// happen in Update, not while rendering: the editor scrolls to keep the
+// cursor visible against the size it was last given.
+func (p QueryPane) withSize(width, height int) QueryPane {
+	if p.width == width && p.height == height {
+		return p
+	}
+	p.width, p.height = width, height
+	p.editor.SetSize(width, max(height-queryHeadRows, 1))
 	return p
 }
 
@@ -169,7 +187,7 @@ func (p QueryPane) confirmSave() (QueryPane, tea.Cmd) {
 
 // SaveCmd writes current editor content to scriptDir/filePath.
 func (p QueryPane) SaveCmd() tea.Cmd {
-	content := p.editor.Value()
+	content := p.Value()
 	path := filepath.Join(p.scriptDir, p.filePath)
 
 	return func() tea.Msg {
@@ -181,12 +199,34 @@ func (p QueryPane) SaveCmd() tea.Cmd {
 	}
 }
 
+// editorMessageTTL is how long a message or error stays on the editor's
+// command line.
+const editorMessageTTL = 3 * time.Second
+
 func (p QueryPane) Update(msg tea.Msg) (QueryPane, tea.Cmd) {
-	if sm, ok := msg.(FileSavedMsg); ok {
-		if sm.Err == nil {
-			p.state = fileStateClean
+	switch msg := msg.(type) {
+	case FileSavedMsg:
+		if msg.Err != nil {
+			return p, p.editor.DispatchError(msg.Err, editorMessageTTL)
 		}
-		return p, nil
+		p.state = fileStateClean
+		return p, p.editor.DispatchMessage("written "+p.filePath, editorMessageTTL)
+
+	case goeditor.SaveMsg:
+		// :w writes the Script; :w name.sql writes it under a new name in
+		// the script directory, as the save-as prompt does.
+		if msg.Path != nil {
+			if name := strings.TrimSpace(*msg.Path); name != "" {
+				p.filePath = filepath.Base(name)
+			}
+		}
+		return p, p.SaveCmd()
+
+	case goeditor.ErrorMsg:
+		return p, p.editor.DispatchError(msg.Error, editorMessageTTL)
+
+	case tea.PasteMsg:
+		return p.paste(msg.Content)
 	}
 
 	if p.promptActive {
@@ -205,14 +245,74 @@ func (p QueryPane) Update(msg tea.Msg) (QueryPane, tea.Cmd) {
 		return p, cmd
 	}
 
-	prev := p.editor.Value()
+	prev := p.Value()
 	var cmd tea.Cmd
 	p.editor, cmd = p.editor.Update(msg)
-	if p.editor.Value() != prev {
+	if p.Value() != prev {
 		p.state = fileStateDirty
 	}
 
 	return p, cmd
+}
+
+// paste types text into the editor at the cursor. The editor reads only its
+// own clipboard, so a terminal paste is fed through as keys: that inserts it
+// verbatim (no auto-indent) as one undo step, whatever mode the editor is in.
+func (p QueryPane) paste(text string) (QueryPane, tea.Cmd) {
+	if p.promptActive {
+		var cmd tea.Cmd
+		p.savePrompt, cmd = p.savePrompt.Update(tea.PasteMsg{Content: text})
+		return p, cmd
+	}
+	if text == "" {
+		return p, nil
+	}
+
+	core := p.editor.GetEditor()
+	wasInsert := core.IsInsertMode()
+	if !wasInsert {
+		core.SetInsertMode()
+	}
+	var cmds []tea.Cmd
+	for _, r := range strings.ReplaceAll(text, "\r\n", "\n") {
+		var k tea.KeyPressMsg
+		switch r {
+		case '\n', '\r':
+			k = tea.KeyPressMsg{Code: tea.KeyEnter}
+		case '\t':
+			k = tea.KeyPressMsg{Code: tea.KeyTab}
+		default:
+			k = tea.KeyPressMsg{Code: r, Text: string(r)}
+		}
+		var cmd tea.Cmd
+		p.editor, cmd = p.editor.Update(k)
+		cmds = append(cmds, cmd)
+	}
+	if !wasInsert {
+		core.SetNormalMode()
+	}
+	p.state = fileStateDirty
+	return p, tea.Batch(cmds...)
+}
+
+// modeLabel names the editor's current vim mode, or "" in plain editing.
+func (p QueryPane) modeLabel() string {
+	if !p.vim {
+		return ""
+	}
+	switch {
+	case p.editor.IsInsertMode():
+		return "INSERT"
+	case p.editor.IsVisualLineMode():
+		return "V-LINE"
+	case p.editor.IsVisualMode():
+		return "VISUAL"
+	case p.editor.IsCommandMode():
+		return "COMMAND"
+	case p.editor.IsSearchMode():
+		return "SEARCH"
+	}
+	return "NORMAL"
 }
 
 // Rows returns height strings each exactly width visual cells wide.
@@ -221,7 +321,7 @@ func (p QueryPane) Update(msg tea.Msg) (QueryPane, tea.Cmd) {
 //
 //	row 0        query head  "[q] Query  untitled-1.sql ●
 //	row 1        ─── separator
-//	rows 2..h-1  textarea
+//	rows 2..h-1  editor
 func (p QueryPane) Rows(width, height int, focused bool) []string {
 	rh := p.rh
 	if focused {
@@ -247,16 +347,18 @@ func (p QueryPane) Rows(width, height int, focused bool) []string {
 		return out
 	}
 
-	editorH := height - 2
-	p.editor.SetWidth(width)
-	p.editor.SetHeight(editorH)
+	editorH := height - queryHeadRows
+	// Rendering works on a copy, so sizing here does not stick; Update-time
+	// withSize is what the editor scrolls against. This only covers a
+	// render before the first size arrives.
+	p = p.withSize(width, height)
 
 	editorLines := strings.Split(p.editor.View(), "\n")
 	for i := range editorH {
 		if i < len(editorLines) {
-			out[i+2] = fillTo(editorLines[i])
+			out[i+queryHeadRows] = fillTo(editorLines[i])
 		} else {
-			out[i+2] = rh.BlankN(width)
+			out[i+queryHeadRows] = rh.BlankN(width)
 		}
 	}
 	return out
