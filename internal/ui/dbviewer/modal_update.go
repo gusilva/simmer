@@ -79,6 +79,7 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 				m.panes[paneSidebar] = ep
 			}
 			// Names complete at once; columns follow from one more query.
+			m.tableLabels = tableLabels(tm.Objects)
 			m = m.withQuerySchema(schemaFromObjects(tm.Objects))
 			return m, m.fetchSchemaColumnsCmd()
 		}
@@ -88,7 +89,7 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 	if sm, ok := msg.(SchemaColumnsLoadedMsg); ok {
 		// On failure completion keeps the names alone; Session logged why.
 		if sm.Err == nil {
-			m = m.withQuerySchema(newSQLSchema(sm.Tables))
+			m = m.withQuerySchema(newSQLSchema(sm.Tables).withLabels(m.tableLabels))
 		}
 		return m, nil
 	}

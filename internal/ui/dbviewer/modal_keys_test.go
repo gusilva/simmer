@@ -331,6 +331,9 @@ func TestModal_Completion(t *testing.T) {
 		if tbl, _ := qp.schema.table("users"); len(tbl.Columns) != 1 {
 			t.Errorf("after columns: %+v", tbl)
 		}
+		if got := qp.schema.label("users"); got != "People" {
+			t.Errorf("label after columns = %q, want the tables query's People", got)
+		}
 		m, _ = m.Update(SchemaColumnsLoadedMsg{Err: errors.New("no such function: pragma_table_info")})
 		qp = m.panes[paneQuery].(queryPaneAdapter).inner
 		if _, ok := qp.schema.table("users"); !ok {

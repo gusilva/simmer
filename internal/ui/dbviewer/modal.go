@@ -57,6 +57,9 @@ type Modal struct {
 	// pendingTable is the table to put the explorer cursor on when the
 	// table list arrives (restoring the View state); "" when none.
 	pendingTable string
+	// tableLabels are the display labels the tables query gave, for
+	// completion to show; see sqlSchema.labels.
+	tableLabels map[string]string
 	// live reports whether this Simmer is the Active instance.
 	live bool
 }

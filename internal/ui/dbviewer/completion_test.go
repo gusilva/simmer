@@ -135,3 +135,61 @@ func TestQuoteIdent(t *testing.T) {
 		}
 	}
 }
+
+func TestSQLCompletions_DisplayLabels(t *testing.T) {
+	objs := device.SQLiteObjects{Tables: []device.SchemaObject{
+		{Name: "BO#2", DisplayName: "AssetType"},
+		{Name: "BO#1", DisplayName: "AssetTexts"},
+		{Name: "plain"},
+	}}
+	s := newSQLSchema([]device.SchemaTable{
+		{Name: "BO#1", Columns: []string{"id"}},
+		{Name: "BO#2", Columns: []string{"id"}},
+		{Name: "plain", Columns: []string{"x"}},
+	}).withLabels(tableLabels(objs))
+
+	type item struct{ text, label, desc string }
+	complete := func(text string) []item {
+		tx, line, col := at(text)
+		var out []item
+		for _, c := range sqlCompletions(tx, line, col, s, true) {
+			out = append(out, item{c.Text, c.Label, c.Description})
+		}
+		return out
+	}
+
+	t.Run("label matched and shown, real name inserted, sorted by label", func(t *testing.T) {
+		got := complete("SELECT * FROM Asset|")
+		want := []item{
+			{`"BO#1"`, "AssetTexts", "BO#1"},
+			{`"BO#2"`, "AssetType", "BO#2"},
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("got %v\nwant %v", got, want)
+		}
+	})
+	t.Run("real name still matches", func(t *testing.T) {
+		got := complete("SELECT * FROM BO|")
+		if len(got) != 2 || got[0].label != "AssetTexts" {
+			t.Errorf("got %v", got)
+		}
+	})
+	t.Run("unlabelled table shown as itself", func(t *testing.T) {
+		got := complete("SELECT * FROM pl|")
+		if !slices.Equal(got, []item{{"plain", "plain", ""}}) {
+			t.Errorf("got %v", got)
+		}
+	})
+	t.Run("columns name their table by label", func(t *testing.T) {
+		got := complete(`SELECT a.| FROM "BO#1" a`)
+		if !slices.Equal(got, []item{{"id", "id", "AssetTexts"}}) {
+			t.Errorf("got %v", got)
+		}
+	})
+}
+
+func TestTableLabels_NoneWithoutCustomQuery(t *testing.T) {
+	if l := tableLabels(device.SQLiteObjects{Tables: []device.SchemaObject{{Name: "a"}, {Name: "b", DisplayName: "b"}}}); l != nil {
+		t.Errorf("labels = %v, want nil", l)
+	}
+}

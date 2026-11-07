@@ -183,9 +183,11 @@ verbatim at the cursor as one undo step, in any mode.
 The schema comes in two steps when tables load: the explorer's table and view
 names at once, then every column from one `sqlite_master` ×
 `pragma_table_info` query (`device.ListSchemaColumns`, SQLite 3.16+). If that
-query fails, completion keeps the names and the Session logs why. It offers
-real identifiers only — double-quoted when needed — never the display labels
-a custom tables query adds.
+query fails, completion keeps the names and the Session logs why. It inserts
+real identifiers only — double-quoted when needed. When a custom tables query
+gives tables display labels (`custom_table_name`), the menu shows and matches
+those labels (the real name matches too) and lists tables in label order; the
+inserted text is still the real name.
 
 The menu opens by itself after an identifier character or `.` (120 ms
 debounce), or on `ctrl+space`; `ctrl+n`/`ctrl+p` move, `tab`/`enter`/`ctrl+y`

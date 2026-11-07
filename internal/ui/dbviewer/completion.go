@@ -14,6 +14,10 @@ import (
 type sqlSchema struct {
 	tables []device.SchemaTable
 	byName map[string]int // lower-cased name → index into tables
+	// labels are the display names a custom tables query gives some
+	// tables, lower-cased real name → label. Completion matches and shows
+	// them, but always inserts the real name.
+	labels map[string]string
 }
 
 func newSQLSchema(tables []device.SchemaTable) sqlSchema {
@@ -34,7 +38,38 @@ func schemaFromObjects(objs device.SQLiteObjects) sqlSchema {
 	for _, o := range objs.Views {
 		tables = append(tables, device.SchemaTable{Name: o.Name, IsView: true})
 	}
-	return newSQLSchema(tables)
+	return newSQLSchema(tables).withLabels(tableLabels(objs))
+}
+
+// tableLabels collects the display labels the explorer's listing carries,
+// lower-cased real name → label; nil when the tables query sets none.
+func tableLabels(objs device.SQLiteObjects) map[string]string {
+	var labels map[string]string
+	for _, group := range [][]device.SchemaObject{objs.Tables, objs.Views} {
+		for _, o := range group {
+			if o.DisplayName == "" || o.DisplayName == o.Name {
+				continue
+			}
+			if labels == nil {
+				labels = map[string]string{}
+			}
+			labels[strings.ToLower(o.Name)] = o.DisplayName
+		}
+	}
+	return labels
+}
+
+func (s sqlSchema) withLabels(labels map[string]string) sqlSchema {
+	s.labels = labels
+	return s
+}
+
+// label is what a table is shown as: its display label when it has one.
+func (s sqlSchema) label(name string) string {
+	if l, ok := s.labels[strings.ToLower(name)]; ok {
+		return l
+	}
+	return name
 }
 
 func (s sqlSchema) table(name string) (device.SchemaTable, bool) {
@@ -98,7 +133,7 @@ func sqlCompletions(text string, line, col int, schema sqlSchema, manual bool) [
 		if !ok {
 			return nil
 		}
-		items = columnItems(tbl, prefix)
+		items = columnItems(schema, tbl, prefix)
 
 	case wantsTable(before):
 		// Right after the keyword the menu waits for a letter, as elsewhere.
@@ -118,7 +153,7 @@ func sqlCompletions(text string, line, col int, schema sqlSchema, manual bool) [
 				continue
 			}
 			seen[strings.ToLower(tbl.Name)] = true
-			items = append(items, columnItems(tbl, prefix)...)
+			items = append(items, columnItems(schema, tbl, prefix)...)
 		}
 		items = append(items, wordItems(sqlFunctions, kindFunction, prefix)...)
 		items = append(items, wordItems(sqlKeywords, kindKeyword, prefix)...)
@@ -241,29 +276,42 @@ func matches(name, prefix string) bool {
 	return len(name) > len(prefix) && strings.HasPrefix(strings.ToLower(name), strings.ToLower(prefix))
 }
 
-func columnItems(t device.SchemaTable, prefix string) []core.Completion {
+func columnItems(s sqlSchema, t device.SchemaTable, prefix string) []core.Completion {
 	var out []core.Completion
 	for _, c := range t.Columns {
 		if prefix == "" || matches(c, prefix) {
 			out = append(out, core.Completion{
-				Text: quoteIdent(c), Label: c, Type: kindColumn, Description: t.Name,
+				Text: quoteIdent(c), Label: c, Type: kindColumn, Description: s.label(t.Name),
 			})
 		}
 	}
 	return out
 }
 
+// tableItems offers tables and views by what the explorer shows them as — a
+// display label when the tables query gives one, matched as well as the real
+// name — in that order, inserting the real name.
 func tableItems(s sqlSchema, prefix string) []core.Completion {
 	var out []core.Completion
 	for _, t := range s.tables {
-		if prefix != "" && !matches(t.Name, prefix) {
+		shown := s.label(t.Name)
+		if prefix != "" && !matches(shown, prefix) && !matches(t.Name, prefix) {
 			continue
 		}
 		kind := kindTable
 		if t.IsView {
 			kind = kindView
 		}
-		out = append(out, core.Completion{Text: quoteIdent(t.Name), Label: t.Name, Type: kind})
+		item := core.Completion{Text: quoteIdent(t.Name), Label: shown, Type: kind}
+		if shown != t.Name {
+			item.Description = t.Name
+		}
+		out = append(out, item)
+	}
+	if s.labels != nil {
+		slices.SortStableFunc(out, func(a, b core.Completion) int {
+			return strings.Compare(strings.ToLower(a.Label), strings.ToLower(b.Label))
+		})
 	}
 	return out
 }
