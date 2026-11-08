@@ -1,5 +1,57 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **SQL editor with vim keys.** The SQLite viewer's query pane is now a
+  real editor (goeditor) with normal, insert, visual, command and search
+  modes. The footer badge shows the current mode. Vim mode is on by default
+  and is a global setting: turn it off with "Vim keys in the query editor" in
+  the settings form (`ctrl+s` outside the editor), or `vim_mode = false` in
+  `config.toml`. With it off the editor is always inserting.
+  - `:w` saves the script, `:w name.sql` saves it under a new name in the
+    database's script directory, and `:q` / `:wq` close the viewer.
+  - Esc steps out: insert → normal → explorer. A half-typed command such as
+    `d` is cancelled on the way out, so it never completes on your next key.
+  - A terminal paste goes in verbatim at the cursor as one undo step, in any
+    mode.
+- **Syntax highlighting** for SQL in the editor, in Simmer's own colours.
+- **SQL completion** from the open database. The menu opens as you type (or
+  on `ctrl+space`); `ctrl+n` / `ctrl+p` move, `tab` / `enter` accept, and
+  `esc` closes the menu before anything else. What it offers depends on where
+  the cursor is:
+  - after `alias.` or `table.`: that table's columns, even when the alias is
+    defined later in the statement;
+  - after `FROM`, `JOIN`, `INTO`, `UPDATE`: tables and views;
+  - elsewhere: the statement's columns, SQL functions and keywords, in the
+    case you are typing.
+
+  Tables a custom tables query gives a display name (`custom_table_name`)
+  are listed and matched by that name, and the real table name is inserted,
+  quoted when needed. Columns come from a single query when the database
+  opens. On SQLite older than 3.16 completion falls back to table names.
+
+### Changed
+
+- **F5 runs the statement under the cursor exactly.** Statements are split
+  the way SQLite reads them: a `;` inside a string, a quoted identifier
+  (`"…"`, `` `…` ``, `[…]`) or a comment no longer ends a statement, and a
+  `CREATE TRIGGER … BEGIN … END` body runs as one. The cursor's column counts
+  too, so two statements on one line run separately, and a cursor just after
+  a `;` runs the statement it ends.
+- **`config.toml` follows `XDG_CONFIG_HOME`** when it is set
+  (`$XDG_CONFIG_HOME/simmer/config.toml`), as the saved view already follows
+  `XDG_STATE_HOME`. If you set `XDG_CONFIG_HOME` to anything other than
+  `~/.config`, move your config there.
+- Building from source needs Go 1.26.6 or later.
+
+### Fixed
+
+- Typing `q` in the query editor closed the viewer, and so did Esc.
+- Tables and the completion schema no longer go missing when they arrive
+  while the save-as prompt is open.
+
 ## v1.9.1 — 2026-11-03
 
 ### Added
