@@ -33,6 +33,11 @@ jobs:
       - name: Run tests with coverage
         run: make test-race
 
+      # Tests run against a read-only $HOME: one that saves to the real
+      # config or View state overwrites the files of whoever runs it.
+      - name: Check tests leave $HOME alone
+        run: make home-writes
+
       # Unreachable from both the binary and the tests. Kept blocking: the
       # tree is clean, and the 1,300-line modal that survived here for months
       # is what it exists to prevent.

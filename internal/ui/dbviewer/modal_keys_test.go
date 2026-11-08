@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"simmer/internal/device"
+	"simmer/internal/ui/uitest"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -66,66 +67,14 @@ func typeKeys(m Modal, keys ...string) (Modal, []tea.Cmd) {
 	return m, cmds
 }
 
-// cmdRunner runs commands the way the Bubble Tea runtime does: each in its
-// own goroutine, results gathered as they arrive. One that is still blocked —
-// the editor's signal listener waiting for a signal — keeps running, and its
-// message is collected whenever the signal comes.
-type cmdRunner struct{ out chan tea.Msg }
-
-func newCmdRunner() *cmdRunner { return &cmdRunner{out: make(chan tea.Msg, 256)} }
-
-func (r *cmdRunner) start(cmd tea.Cmd) {
-	if cmd == nil {
-		return
-	}
-	go func() { r.out <- cmd() }()
-}
-
-// collect returns what has arrived until nothing more does for a short while.
-func (r *cmdRunner) collect() []tea.Msg {
-	var msgs []tea.Msg
-	for {
-		select {
-		case msg := <-r.out:
-			if batch, ok := msg.(tea.BatchMsg); ok {
-				for _, c := range batch {
-					r.start(c)
-				}
-				continue
-			}
-			if msg != nil {
-				msgs = append(msgs, msg)
-			}
-		case <-time.After(50 * time.Millisecond):
-			return msgs
-		}
-	}
-}
-
-// settle feeds the messages cmds produce back into m until none are left,
-// the way the Bubble Tea runtime would, and reports whether one closed it.
+// settle runs cmds as the Bubble Tea runtime would and reports whether one
+// closed the viewer.
 func settle(m Modal, cmds []tea.Cmd) (Modal, bool) {
-	r := newCmdRunner()
-	for _, c := range cmds {
-		r.start(c)
-	}
-	closed := false
-	for range 100 {
-		msgs := r.collect()
-		if len(msgs) == 0 {
-			break
-		}
-		for _, msg := range msgs {
-			if _, ok := msg.(closedMsg); ok {
-				closed = true
-				continue
-			}
-			var cmd tea.Cmd
-			m, cmd = m.Update(msg)
-			r.start(cmd)
-		}
-	}
-	return m, closed
+	m, closes := uitest.Settle(m, cmds, func(msg tea.Msg) bool {
+		_, ok := msg.(closedMsg)
+		return ok
+	})
+	return m, len(closes) > 0
 }
 
 func editorText(m Modal) string { return m.panes[paneQuery].(queryPaneAdapter).inner.Value() }
@@ -291,7 +240,7 @@ func TestModal_Completion(t *testing.T) {
 		m := withSchema(newTestModalInEditor(t, true))
 		m = m.setQueryText("SELECT * FROM us")
 		qp := m.panes[paneQuery].(queryPaneAdapter)
-		qp.inner.editor.WithCompletionDebounce(time.Millisecond) // so the real tick fires in settle
+		qp.inner.editor.WithCompletionDebounce(time.Millisecond) // shorter than uitest.Quiet, so the tick fires in settle
 		m.panes[paneQuery] = qp
 		m, cmds := typeKeys(m, "A")
 		m, _ = settle(m, cmds)

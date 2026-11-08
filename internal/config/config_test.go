@@ -227,58 +227,49 @@ func TestUnquoteTOML_NotQuoted(t *testing.T) {
 
 // ---------- Load / Save round-trip ----------
 
-func writeConfigFile(t *testing.T, content string) (restore func()) {
+// writeConfigFile points the config at a private directory for the test and
+// writes content there. The user's own config.toml is never touched.
+func writeConfigFile(t *testing.T, content string) {
 	t.Helper()
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatalf("UserHomeDir: %v", err)
-	}
-	dir := filepath.Join(home, ".config", "simmer")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	if err := os.MkdirAll(filepath.Join(dir, "simmer"), 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	path := filepath.Join(dir, "config.toml")
-
-	// Preserve existing file if present.
-	existing, readErr := os.ReadFile(path)
-
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "simmer", "config.toml"), []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
-	}
-
-	return func() {
-		if readErr == nil {
-			_ = os.WriteFile(path, existing, 0o644)
-		} else {
-			_ = os.Remove(path)
-		}
 	}
 }
 
 func TestLoad_MissingFile(t *testing.T) {
-	// Point to a path that cannot exist by temporarily renaming any real file.
-	home, _ := os.UserHomeDir()
-	path := filepath.Join(home, ".config", "simmer", "config.toml")
-	_, err := os.Stat(path)
-	if err == nil {
-		t.Skip("config file exists; skipping missing-file test to avoid side effects")
-	}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	cfg, err := Load()
 	if err != nil {
 		t.Errorf("expected no error for missing file, got %v", err)
 	}
-	if cfg.ScriptPath == "" {
-		t.Errorf("expected non-empty default ScriptPath")
+	if cfg.ScriptPath == "" || !cfg.VimMode {
+		t.Errorf("expected factory defaults, got %+v", cfg)
+	}
+}
+
+func TestPath_FollowsXDGConfigHome(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "/x/config")
+	if got, _ := Path(); got != "/x/config/simmer/config.toml" {
+		t.Errorf("Path() = %q", got)
+	}
+	t.Setenv("XDG_CONFIG_HOME", "")
+	home, _ := os.UserHomeDir()
+	if got, _ := Path(); got != filepath.Join(home, ".config", "simmer", "config.toml") {
+		t.Errorf("Path() without XDG_CONFIG_HOME = %q", got)
 	}
 }
 
 func TestLoad_GlobalOnly(t *testing.T) {
-	restore := writeConfigFile(t, `
+	writeConfigFile(t, `
 # comment
 script_path = "/my/scripts"
 tables_query = "SELECT name FROM sqlite_master;"
 `)
-	defer restore()
 
 	cfg, err := Load()
 	if err != nil {
@@ -296,7 +287,7 @@ tables_query = "SELECT name FROM sqlite_master;"
 }
 
 func TestLoad_WithDBSection(t *testing.T) {
-	restore := writeConfigFile(t, `
+	writeConfigFile(t, `
 script_path = "/global"
 tables_query = ""
 
@@ -304,7 +295,6 @@ tables_query = ""
 script_path = "/app/scripts"
 tables_query = "SELECT name FROM sqlite_master WHERE type='table';"
 `)
-	defer restore()
 
 	cfg, err := Load()
 	if err != nil {
@@ -326,7 +316,7 @@ tables_query = "SELECT name FROM sqlite_master WHERE type='table';"
 }
 
 func TestLoad_MultipleDBSections(t *testing.T) {
-	restore := writeConfigFile(t, `
+	writeConfigFile(t, `
 script_path = "/global"
 tables_query = ""
 
@@ -338,7 +328,6 @@ tables_query = ""
 script_path = "/second"
 tables_query = "SELECT 2;"
 `)
-	defer restore()
 
 	cfg, err := Load()
 	if err != nil {
@@ -356,8 +345,7 @@ tables_query = "SELECT 2;"
 }
 
 func TestSaveLoad_RoundTrip(t *testing.T) {
-	restore := writeConfigFile(t, "")
-	defer restore()
+	writeConfigFile(t, "")
 
 	original := Config{
 		ScriptPath:  "/global/scripts",
@@ -404,8 +392,7 @@ func TestSaveLoad_RoundTrip(t *testing.T) {
 }
 
 func TestSaveLoad_SpecialCharsInDBName(t *testing.T) {
-	restore := writeConfigFile(t, "")
-	defer restore()
+	writeConfigFile(t, "")
 
 	name := `my "special" db.sqlite`
 	cfg := Config{
@@ -440,8 +427,7 @@ func TestLoad_VimMode(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			restore := writeConfigFile(t, tc.content)
-			defer restore()
+			writeConfigFile(t, tc.content)
 			cfg, err := Load()
 			if err != nil {
 				t.Fatalf("Load: %v", err)
@@ -454,8 +440,7 @@ func TestLoad_VimMode(t *testing.T) {
 }
 
 func TestSaveLoad_VimModeOff(t *testing.T) {
-	restore := writeConfigFile(t, "")
-	defer restore()
+	writeConfigFile(t, "")
 	cfg := Default()
 	cfg.VimMode = false
 	if err := Save(cfg); err != nil {

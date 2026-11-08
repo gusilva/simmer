@@ -103,7 +103,13 @@ func (c Config) WithDB(dbName string, dbcfg DBConfig) Config {
 	return c
 }
 
+// configPath is $XDG_CONFIG_HOME/simmer/config.toml, or ~/.config/… when
+// XDG_CONFIG_HOME is unset — the same rule the View state follows for
+// XDG_STATE_HOME, so a test or a scratch run can point both elsewhere.
 func configPath() (string, error) {
+	if d := os.Getenv("XDG_CONFIG_HOME"); d != "" {
+		return filepath.Join(d, "simmer", "config.toml"), nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("home dir: %w", err)

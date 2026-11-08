@@ -25,7 +25,7 @@
   `simmer db ls`, `simmer db query`, each with `--json` for scripting.
 - **File Browser:** Walk a device's filesystem or an app's own storage — on Android that spans both the private data dir and external app storage. Directories load as you expand them, so shared storage (`/storage/emulated/0/...`) is reachable to any depth, and pressing enter on a `.db` file opens it in the viewer.
 - **Find Files:** `/` narrows the rows already on screen; `ctrl+f` takes the same query to the device and searches every root the tree covers, so a file in a directory you never opened is still found. Enter on a result opens a database or moves the tree to it.
-- **Database Viewer:** Full-screen SQLite inspector — browse tables/views/indexes/triggers, write and run SQL queries, and view results in a scrollable table. Supports custom table-list queries and persists settings to `~/.config/simmer/config.toml`.
+- **Database Viewer:** Full-screen SQLite inspector — browse tables/views/indexes/triggers, write and run SQL queries, and view results in a scrollable table. Supports custom table-list queries and persists settings to `~/.config/simmer/config.toml` (`$XDG_CONFIG_HOME/simmer/config.toml` when that is set).
 - **Modern UI:** Built with the latest Charm v2 terminal stack.
 
 ## 🛠 Tech Stack

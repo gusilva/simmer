@@ -14,6 +14,9 @@ truth for build, test, lint and the rest — read the `Makefile` rather than ass
   `internal/device/integration_device_test.go` instead of writing a throwaway harness.
   Changing what is sent to a device (keyevents, intents, `TriggerDevMenu`) needs a case there.
   RN dev-menu or Metro problems on Android: `docs/android-dev-menu.md`.
+- **Driving the TUI:** `scripts/tui-drive.sh` (usage in its header) for anything unit tests cannot
+  reach — key decoding, rendering, timers. Its scratch config and View state keep your typing out of
+  the user's files; `--resume` reopens their last view, `log` reads the TRACE log.
 - **Recording:** `vhs demo.tape`
 
 ## Architecture & Tech Stack

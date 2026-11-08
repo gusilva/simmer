@@ -5,7 +5,7 @@ GO ?= go
 BINARY ?= simmer
 DEADCODE ?= golang.org/x/tools/cmd/deadcode@v0.52.0
 
-.PHONY: build run test test-race lint fmt-check vet deadcode exclusions check check-device tidy clean
+.PHONY: build run test test-race lint fmt-check vet deadcode exclusions home-writes check check-device tidy clean
 
 ## build: compile the CLI
 build:
@@ -60,8 +60,12 @@ deadcode:
 exclusions:
 	./scripts/check-build-exclusions.sh
 
+## home-writes: fail when a test writes into $HOME (see the script)
+home-writes:
+	./scripts/check-home-writes.sh
+
 ## check: everything CI enforces, including the lint job
-check: exclusions fmt-check vet build test deadcode lint
+check: exclusions fmt-check vet build test home-writes deadcode lint
 
 ## check-device: integration tests against attached simulators and phones
 #
